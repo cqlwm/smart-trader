@@ -85,10 +85,11 @@ class GridStrategy(Strategy):
             last_order = self.orders[-1] if self.orders else None
             if (not last_order) or (last_order and last_order.loss_rate(close_price) >= self.grid_gap_rate):
                 order_id = build_order_id(self.master_side)
-                self.place_order(order_id, self.master_side, self.per_qty)
                 order = Order(custom_id=order_id, side=self.master_side, price=close_price, quantity=self.per_qty,
                               take_profit_rate=self.take_profit_rate, min_profit_rate=self.min_profit_rate)
                 self.orders.append(order)
+                self.place_order(order_id, self.master_side, self.per_qty)
+                return
 
         exit_signal = self.enable_exit_signal and self.signal.is_exit(kline)
 
@@ -105,7 +106,7 @@ class GridStrategy(Strategy):
             flat_order_side = self.master_side.reversal()
             flat_order_id = build_order_id(flat_order_side)
             self.place_order(flat_order_id, flat_order_side, flat_qty)
-            self.orders = new_orders
+        self.orders = new_orders
 
         logger.info(f'{self.symbol} {json_util.dumps(self.orders)}')
         json_util.dump_file({'version': self.version,'orders': self.orders}, self.order_file_path)

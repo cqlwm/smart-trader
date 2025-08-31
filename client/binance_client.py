@@ -28,6 +28,15 @@ def get_tick_size(symbol):
         float: 最小价格间隔，如果未找到则返回 None
     """
     url = "https://api.binance.com/api/v3/exchangeInfo"
+
+    symbol = symbol.upper()
+
+    if symbol in ['BTCUSDT', 'BTCUSDC']:
+        return 0.1
+    if symbol in ['BNBUSDT', 'BNBUSDC', 'SOLUSDT', 'SOLUSDC']:
+        return 0.01
+    if symbol in ['DOGEUSDT', 'DOGEUSDC']:
+        return 0.00001
     
     try:
         # 发送请求获取exchangeInfo数据

@@ -17,6 +17,7 @@ def dumps(obj):
 def dump_file(obj, path):
     with open(path, 'w') as file:
         json.dump(obj, file, default=custom_serializer)
+        file.write('\n')
 
 
 def loads(s):
