@@ -15,7 +15,7 @@ import ssl
 from decimal import Decimal
 from utils import log
 
-logger = log.build_logger('BinanceSwapClient')
+logger = log.build_logger(__name__)
 
 def get_tick_size(symbol):
     """
@@ -27,7 +27,6 @@ def get_tick_size(symbol):
     Returns:
         float: 最小价格间隔，如果未找到则返回 None
     """
-    # url = "https://api.binance.com/api/v3/exchangeInfo"
     url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 
     symbol = symbol.upper()
@@ -212,29 +211,17 @@ class LimitOrderChaser:
         finally:
             loop.close()
 
-# if __name__ == '__main__':
-#     API_KEY = "crem6s2RAVCeD3VqmVrpbTduNYpPy8SY346Tg3DhzBJmdBxjdK4snk3jjRQL789M"
-#     API_SECRET = "6m1H8d4wfetfm6ddZGFD5vWpEIyDIut50BXSaddfoYTd2gzpynaTSy7ZKrEB9FWJ"
-    
-#     chaser = LimitOrderChaser(
-#         api_key=API_KEY,
-#         api_secret=API_SECRET,
-#         symbol="BNBUSDC",
-#         side="SELL",
-#         quantity=0.01,
-#         position_side="LONG"
-#     )
-    
-#     asyncio.get_event_loop().run_until_complete(chaser.start())
-
-class BinanceSwapClient(ExSwapClient):
-    def __init__(self, api_key, api_secret):
+class BinanceSwapClientV2(ExSwapClient):
+    def __init__(self, api_key, api_secret, testnet=True):
         self.api_key = api_key
         self.api_secret = api_secret
         self.exchange = ccxt.binance({
             'apiKey': api_key,
             'secret': api_secret,
-            'options': {'defaultType': 'future'}
+            'options': {
+                'defaultType': 'future',
+                'sandboxMode': testnet
+            },
         })
 
     def balance(self, coin):
@@ -289,61 +276,3 @@ class BinanceSwapClient(ExSwapClient):
 
     def positions(self, symbol=None):
         return self.exchange.fetch_positions([symbol])
-
-
-# 未测试
-class BinanceSpotClient(ExSpotClient):
-    def __init__(self, api_key, api_secret):
-        self.client = ccxt.binance({
-            'apiKey': api_key,
-            'secret': api_secret
-        })
-
-    def balance(self, coin):
-        balance = self.client.fetch_balance()
-        return balance['total'][coin]
-
-    def cancel(self, custom_id, symbol):
-        return self.client.cancel_order(custom_id, symbol)
-
-    def query_order(self, custom_id, symbol):
-        return self.client.fetch_order(custom_id, symbol)
-
-    def place_order(self, custom_id, symbol, order_side, quantity, price=None):
-        order_type = 'limit' if price else 'market'
-        order = self.client.create_order(symbol, order_type, order_side, quantity, price, {
-            'newClientOrderId': custom_id
-        })
-        return order
-
-
-def main():
-    # crem6s2RAVCeD3VqmVrpbTduNYpPy8SY346Tg3DhzBJmdBxjdK4snk3jjRQL789M
-    # 6m1H8d4wfetfm6ddZGFD5vWpEIyDIut50BXSaddfoYTd2gzpynaTSy7ZKrEB9FWJ
-    # this product api key and secret
-    api_key = 'crem6s2RAVCeD3VqmVrpbTduNYpPy8SY346Tg3DhzBJmdBxjdK4snk3jjRQL789M'
-    api_secret = '6m1H8d4wfetfm6ddZGFD5vWpEIyDIut50BXSaddfoYTd2gzpynaTSy7ZKrEB9FWJ'
-    client = BinanceSwapClient(api_key, api_secret)
-    t = client.balance('USDT')
-    print(t)
-
-    # leadsymbols = client.exchange.sapi_get_copytrading_futures_leadsymbol()
-    # print(leadsymbols)
-
-    # custom_id, symbol, order_side, position_side, quantity
-    # custom_id = 'test_order_0119_01'
-    # symbol = 'DOGE/USDT'
-    # order = client.place_order(custom_id=custom_id, symbol=symbol,
-    #                            order_side='buy', position_side='long', quantity='25')
-    # print(order)
-    # cancel_order = client.cancel(custom_id, symbol)
-    # print(cancel_order)
-
-    # query_order = client.query_order(custom_id, symbol)
-    # print(query_order)
-    # positions = client.positions(symbol)
-    # print(positions)
-
-
-if __name__ == '__main__':
-    main()

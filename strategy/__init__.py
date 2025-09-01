@@ -1,8 +1,11 @@
 from abc import ABC, abstractmethod
+import pandas as pd
 from pandas import DataFrame
 import builtins
 from enum import Enum
 from dataclasses import dataclass
+
+from model import Kline
 
 
 class OrderSide(Enum):
@@ -63,6 +66,30 @@ class Order:
         exit_id = self.custom_id.replace(self.side.value, self.side.reversal().value, 1)
         return exit_id if i is None else f'{exit_id}{i}'
 
+
+class StrategyV2(ABC):
+    def __init__(self):
+        self.klines: DataFrame = DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+        self.last_kline: Kline
+
+    def on_kline(self, kline: Kline):
+        pass
+
+    def on_kline_finished(self, kline: Kline):
+        pass
+
+    def run(self, kline: Kline):
+        self.last_kline = kline
+        self.on_kline(kline)
+
+        if self.last_kline.finished:
+            if len(self.klines) > 0 and self.klines['datetime'].iloc[-1] == self.last_kline.datetime:
+                kline_dict = self.last_kline.to_dict()
+                self.klines.iloc[-1] = pd.Series(kline_dict, index=self.klines.columns)
+            else:
+                new_series = pd.Series(self.last_kline.to_dict(), index=self.klines.columns)
+                self.klines.loc[len(self.klines)] = new_series
+            self.on_kline_finished(kline)
 
 class Strategy(ABC):
     def __init__(self):

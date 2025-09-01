@@ -149,10 +149,7 @@ def stream(ks: KlineStream, is_fstream=True):
         logger.debug(f"Pong received: {message}")
         subscribe(ws)
 
-    if is_fstream:
-        websocket_url = "wss://fstream.binance.com/stream"
-    else:
-        websocket_url = "wss://stream.binance.com:9443/ws"
+    websocket_url = "wss://fstream.binance.com/stream"
     ws_session = websocket.WebSocketApp(websocket_url,
                                         on_open=on_open,
                                         on_message=on_message,
@@ -161,3 +158,30 @@ def stream(ks: KlineStream, is_fstream=True):
                                         on_pong=on_pong
                                         )
     ws_session.run_forever(ping_interval=20, ping_timeout=15)
+
+
+def fetch_ohlcv(symbol: str, timeframe: str | None = None, limit: int = 100):
+    if '@kline_' in symbol.lower():
+        match = re.match(r'(\w+)(usdt|usdc|btc)@kline_(\d+\w)', symbol)
+        if match:
+            symbol = f'{match.group(1)}/{match.group(2)}'
+            timeframe = match.group(3)
+
+    if timeframe is None:
+        raise ValueError(f'Invalid symbol: {symbol}')
+    else:
+        exchange = ccxt.binance({
+            'options': {'defaultType': 'future'}
+        })
+        ohlcv = exchange.fetch_ohlcv(symbol.upper(), timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['datetime'] = df['timestamp'].apply(lambda x: datetime.fromtimestamp(x / 1000).strftime('%Y-%m-%d %H:%M:%S'))
+        return df
+
+def main():
+    symbol = 'btcusdt@kline_1m'
+    df = fetch_ohlcv(symbol, limit=10)
+    print(df)
+
+if __name__ == '__main__':
+    main()
