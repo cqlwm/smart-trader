@@ -72,15 +72,15 @@ class StrategyV2(ABC):
         self.klines: DataFrame = DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
         self.last_kline: Kline
 
-    def on_kline(self, kline: Kline):
+    def on_kline(self):
         pass
 
-    def on_kline_finished(self, kline: Kline):
+    def on_kline_finished(self):
         pass
 
     def run(self, kline: Kline):
         self.last_kline = kline
-        self.on_kline(kline)
+        self.on_kline()
 
         if self.last_kline.finished:
             if len(self.klines) > 0 and self.klines['datetime'].iloc[-1] == self.last_kline.datetime:
@@ -89,7 +89,7 @@ class StrategyV2(ABC):
             else:
                 new_series = pd.Series(self.last_kline.to_dict(), index=self.klines.columns)
                 self.klines.loc[len(self.klines)] = new_series
-            self.on_kline_finished(kline)
+            self.on_kline_finished()
 
 class Strategy(ABC):
     def __init__(self):

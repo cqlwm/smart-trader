@@ -1,15 +1,16 @@
 import os
 import secrets
-from abc import abstractmethod
 from typing import List
-from pandas import DataFrame
-from client.ex_client import ExSwapClient, ExSpotClient
-from strategy import Strategy
-from strategy import Order, OrderSide
-from utils import log, json_util
+from client.ex_client import ExSwapClient
+from strategy import StrategyV2
+from strategy import OrderSide
+import logging
+from pydantic import BaseModel
+from model import Symbol
+from strategy import Signal
+import builtins
 
-logger = log.build_logger('grids_strategy')
-
+logger = logging.getLogger(__name__)
 
 def build_order_id(side: OrderSide):
     return f'{side.value}{secrets.token_hex(nbytes=5)}'
@@ -37,112 +38,164 @@ def parse_orders(order_file_path):
     else:
         return None
 
-'''
-{
-    "relaod": {
-        "is_reload": true,
-        "msg": ""
-    },
-    "orders": [
-        {
-            "custom_id": "1",
-            "side": "buy",
-            "price": 100,
-            "quantity": 1,
-            "take_profit_rate": 0.006
+class Order(BaseModel):
+    custom_id: str
+    side: OrderSide
+    price: float
+    quantity: float
+    take_profit_rate: float
+    min_profit_rate: float = 0.002
+
+    def total_value(self):
+        return self.price * self.quantity
+
+    # profit_level：表示盈利级别，值为 -1不可盈利，0损失手续费，1可盈利，2达到止盈标准
+    def profit_level(self, current_price) -> int:
+        compare_fun = builtins.float.__gt__
+        if self.side == OrderSide.SELL:
+            compare_fun = builtins.float.__lt__
+
+        if compare_fun(current_price, self.take_profit_price()):
+            return 2
+        elif compare_fun(current_price, self.breakeven_price()):
+            return 1
+        elif compare_fun(current_price, self.price):
+            return 0
+
+        return -1
+
+    # 盈亏率
+    def profit_and_loss_ratio(self, current_price):
+        loss_rate = float("{:.6f}".format(abs(current_price - self.price) / self.price))
+        if self.profit_level(current_price) < 0:
+            return -loss_rate
+        else:
+            return loss_rate
+
+    def _profit(self, rate):
+        rate_base = 1
+        if self.side == OrderSide.SELL:
+            rate_base = -1
+        return self.price * (1 + rate * rate_base)
+
+    def take_profit_price(self):
+        return self._profit(self.take_profit_rate)
+
+    def breakeven_price(self):
+        return self._profit(self.min_profit_rate)
+
+class OrderRecorder:
+    def __init__(self, order_file_path: str):
+        self.order_file_path = order_file_path
+        self.orders = []
+        self.reload = {
+            "is_reload": False,
+            "msg": ""
         }
-    ],
-    "metrics": {
-        # 历史订单
-        "history_orders": [],
-        # 盈亏
-        "total_profit": 0,
-        # 持仓量
-        "position_qty": 0,
-        # 持仓均价
-        "position_avg_price": 0,
-        # 持仓成本
-        "position_cost": 0
-    }
-}
-'''
-class OrderFile:
-    def __init__(self, version: int, orders: List[Order]):
-        self.version = version
-        self.orders = orders
+        self.metrics = {
+            # 历史订单
+            "history_orders": [],
+            # 盈亏
+            "total_profit": 0,
+            # 持仓量
+            "position_qty": 0,
+            # 持仓均价
+            "position_avg_price": 0,
+            # 持仓成本
+            "position_cost": 0
+        }
 
-class GridStrategy(Strategy):
+class SignalGridStrategyConfig(BaseModel):
+    ex_client: ExSwapClient
+    order_recorder: OrderRecorder
+    symbol: Symbol
+    position_side: str = 'long'
+    master_side: OrderSide = OrderSide.BUY
+    per_order_qty: float = 0.02
+    grid_spacing_rate: float = 0.0012
+    max_order: int = 10000
+    highest_price: float = 1000000
+    lowest_price: float = 0
 
-    def __init__(self, ex_client: ExSwapClient, symbol: str, position_side: str, master_side: OrderSide,
-                 strategy_key: str,
-                 per_qty: float = 0.02, take_profit_rate=0.006, upper_limit: float = 1000000, lower_limit: float = 0):
+    enable_exit_signal: bool = False
+    signal: Signal | None = None
+    signal_min_take_profit_rate: float = 0.002
+
+    enable_fixed_profit_taking: bool = False
+    fixed_take_profit_rate: float = 0.006
+
+    place_order_type: str = 'chaser'
+
+
+class SignalGridStrategy(StrategyV2):
+
+    def __init__(self, config: SignalGridStrategyConfig):
         super().__init__()
-        self.ex_client = ex_client
-        self.position_side = position_side
-        self.symbol = symbol
-        self.master_side = master_side
-        self.per_qty = per_qty
-        self.take_profit_rate = take_profit_rate
-        self.upper_limit = upper_limit
-        self.lower_limit = lower_limit
-        self.signal = None
-        self.enable_exit_signal = False
-        self.fixed_profit_taking = True
-        self.min_profit_rate = 0.002
-        self.grid_gap_rate = 0.0012
-        self.max_order = 10000
+        self.config = config
+        self.orders = []
 
-        self.orders: List[Order] = []
-        self.version = 1
-        self.order_file_path = f'{strategy_key}.json'
+    def place_order(self, order_id: str, side: OrderSide, qty: float, price: float | None = None):
+        self.config.ex_client.place_order(order_id, self.config.symbol.binance(), side.value, self.config.position_side, qty, price)
+    
+    def check_open_order(self) -> bool:
 
-        file_orders = parse_orders(self.order_file_path)
-        if file_orders:
-            self.version = file_orders['version']
-            self.orders = file_orders['orders']
+        # 检查订单是否到达上限
+        if len(self.orders) >= self.config.max_order:
+            return False
+        
+        # 检查是否有入场信号
+        if self.config.signal:
+            if not self.config.signal.is_entry(self.klines):
+                return False
+        
+        # 检查当前价格是否在可交易的价格区间
+        close_price = self.last_kline.close
+        if close_price < self.config.lowest_price or close_price > self.config.highest_price:
+            return False
+        
+        if self.config.master_side == OrderSide.BUY:
+            recent_price_order = min(self.orders, key=lambda order: order.price)
+        else:
+            recent_price_order = max(self.orders, key=lambda order: order.price)
 
-    def place_order(self, order_id: str, side: OrderSide, qty: float, price: float = None):
-        self.ex_client.place_order(order_id, self.symbol, side.value, self.position_side, qty, price)
+        if (not recent_price_order) or (recent_price_order and recent_price_order.profit_and_loss_ratio(close_price) <= -self.config.grid_spacing_rate): 
+            order_id = build_order_id(self.config.master_side)
+            order = Order(
+                custom_id=order_id, 
+                side=self.config.master_side, 
+                price=close_price, 
+                quantity=self.config.per_order_qty,
+                take_profit_rate=self.config.fixed_take_profit_rate, 
+                min_profit_rate=self.config.signal_min_take_profit_rate
+            )
+            self.orders.append(order)
+            self.place_order(order_id, self.config.master_side, self.config.per_order_qty)
+            return True
+        return False
 
-    def run(self, kline: DataFrame):
-        file_order_data = parse_orders(self.order_file_path)
-        if file_order_data:
-            file_version = file_order_data['version']
-            if file_version > self.version:
-                self.version = file_version
-                self.orders = file_order_data['orders']
-
-        close_price = kline.iloc[-1]['close']
-        can_place_order = len(self.orders) < self.max_order
-        entry_signal = self.signal.is_entry(kline)
-        within_price_range = self.upper_limit >= close_price >= self.lower_limit
-
-        if can_place_order and entry_signal and within_price_range:
-            last_order = self.orders[-1] if self.orders else None
-            if (not last_order) or (last_order and last_order.loss_rate(close_price) >= self.grid_gap_rate):
-                order_id = build_order_id(self.master_side)
-                order = Order(custom_id=order_id, side=self.master_side, price=close_price, quantity=self.per_qty,
-                              take_profit_rate=self.take_profit_rate, min_profit_rate=self.min_profit_rate)
-                self.orders.append(order)
-                self.place_order(order_id, self.master_side, self.per_qty)
-                return
-
-        exit_signal = self.enable_exit_signal and self.signal.is_exit(kline)
+    def check_close_order(self):
+        exit_signal = self.config.enable_exit_signal and self.config.signal and self.config.signal.is_exit(self.klines)
 
         new_orders: List[Order] = []
         flat_qty = 0
         for order in self.orders:
-            profit_level = order.profit_level(close_price)
-            if (profit_level == 2 and self.fixed_profit_taking) or (profit_level == 1 and exit_signal):
+            profit_level = order.profit_level(self.last_kline.close)
+            if (profit_level == 2 and self.config.enable_fixed_profit_taking) or (profit_level == 1 and exit_signal):
                 flat_qty += order.quantity
             else:
                 new_orders.append(order)
 
         if flat_qty > 0:
-            flat_order_side = self.master_side.reversal()
+            flat_order_side = self.config.master_side.reversal()
             flat_order_id = build_order_id(flat_order_side)
             self.place_order(flat_order_id, flat_order_side, flat_qty)
-        self.orders = new_orders
+        
+        # 即使flat_qty==0，也需要更新订单，因为可以移除手动修改的0数量订单
+        if len(self.orders) != len(new_orders):
+            self.orders = new_orders
+            # logger.info(f'{self.symbol} {json_util.dumps(self.orders)}')
+            # json_util.dump_file({'version': self.config.version,'orders': self.orders}, self.config.order_file_path)
 
-        logger.info(f'{self.symbol} {json_util.dumps(self.orders)}')
-        json_util.dump_file({'version': self.version,'orders': self.orders}, self.order_file_path)
+    def on_kline_finished(self):
+        if not self.check_open_order():
+            self.check_close_order()
