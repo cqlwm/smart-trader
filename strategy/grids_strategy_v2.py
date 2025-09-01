@@ -1,4 +1,3 @@
-import os
 import secrets
 from typing import List
 from client.ex_client import ExSwapClient
@@ -15,39 +14,13 @@ logger = logging.getLogger(__name__)
 def build_order_id(side: OrderSide):
     return f'{side.value}{secrets.token_hex(nbytes=5)}'
 
-
-def parse_orders(order_file_path):
-    if os.path.exists(order_file_path):
-        with open(order_file_path, 'r') as file:
-            orders_data = json_util.loads(file.read())
-            version = orders_data['version']
-            orders = []
-            for order in orders_data['orders']:
-                try:
-                    side = OrderSide(order['side'])
-                except ValueError:
-                    raise ValueError(f"Invalid order side: {order['side']}")
-                orders.append(Order(
-                    custom_id=order['custom_id'],
-                    side=side,
-                    price=order['price'],
-                    quantity=order['quantity'],
-                    take_profit_rate=order['take_profit_rate'],
-                ))
-        return {'version': version, 'orders': orders}
-    else:
-        return None
-
 class Order(BaseModel):
     custom_id: str
     side: OrderSide
     price: float
     quantity: float
-    take_profit_rate: float
-    min_profit_rate: float = 0.002
-
-    def total_value(self):
-        return self.price * self.quantity
+    fixed_take_profit_rate: float
+    signal_min_take_profit_rate: float
 
     # profit_level：表示盈利级别，值为 -1不可盈利，0损失手续费，1可盈利，2达到止盈标准
     def profit_level(self, current_price) -> int:
@@ -55,9 +28,9 @@ class Order(BaseModel):
         if self.side == OrderSide.SELL:
             compare_fun = builtins.float.__lt__
 
-        if compare_fun(current_price, self.take_profit_price()):
+        if compare_fun(current_price, self._profit(self.fixed_take_profit_rate)):
             return 2
-        elif compare_fun(current_price, self.breakeven_price()):
+        elif compare_fun(current_price, self._profit(self.signal_min_take_profit_rate)):
             return 1
         elif compare_fun(current_price, self.price):
             return 0
@@ -78,41 +51,53 @@ class Order(BaseModel):
             rate_base = -1
         return self.price * (1 + rate * rate_base)
 
-    def take_profit_price(self):
-        return self._profit(self.take_profit_rate)
+class OrderRecorder(BaseModel):
+    '''
+    订单记录器
+    @param order_file_path 订单文件路径
+    @param orders 当前订单
+    @param history_orders 历史订单
+    @param is_reload 程序中通常不会直接设置该值, 而是在需要重新加载时在本地备份文件中设置True
+    @param reload_msg 重新加载消息
+    @param total_profit 总利润
+    '''
+    order_file_path: str
+    orders: List[Order] = []
+    history_orders: List[Order] = []
+    is_reload: bool = False
+    reload_msg: str = ""
+    total_profit: float = 0
 
-    def breakeven_price(self):
-        return self._profit(self.min_profit_rate)
+    def record(self, current_orders: List[Order]):
+        if len(current_orders) == len(self.orders):
+            return
+        current_orders = current_orders.copy()
+        if len(current_orders) < len(self.orders):
+            self.history_orders += list(set(self.orders) - set(current_orders))
+        self.orders = current_orders
 
-class OrderRecorder:
-    def __init__(self, order_file_path: str):
-        self.order_file_path = order_file_path
-        self.orders = []
-        self.reload = {
-            "is_reload": False,
-            "msg": ""
-        }
-        self.metrics = {
-            # 历史订单
-            "history_orders": [],
-            # 盈亏
-            "total_profit": 0,
-            # 持仓量
-            "position_qty": 0,
-            # 持仓均价
-            "position_avg_price": 0,
-            # 持仓成本
-            "position_cost": 0
-        }
+        with open(self.order_file_path, 'w') as f:
+            f.write(self.model_dump_json())
+
+    def check_reload(self, force: bool = False) -> List[Order] | None:
+        '''
+        从本地文件中读取订单，并检查是否需要重新加载
+        @param force 强制重新加载
+        '''
+        with open(self.order_file_path, 'r') as f:
+            _recorder = OrderRecorder.model_validate_json(f.read())
+            if _recorder.is_reload or force:
+                self.orders = _recorder.orders
+                return self.orders
+        return None
 
 class SignalGridStrategyConfig(BaseModel):
     ex_client: ExSwapClient
-    order_recorder: OrderRecorder
     symbol: Symbol
     position_side: str = 'long'
     master_side: OrderSide = OrderSide.BUY
     per_order_qty: float = 0.02
-    grid_spacing_rate: float = 0.0012
+    grid_spacing_rate: float = 0.01
     max_order: int = 10000
     highest_price: float = 1000000
     lowest_price: float = 0
@@ -123,8 +108,9 @@ class SignalGridStrategyConfig(BaseModel):
 
     enable_fixed_profit_taking: bool = False
     fixed_take_profit_rate: float = 0.006
+    order_recorder: OrderRecorder = OrderRecorder(order_file_path='grids_strategy_v2.json')
 
-    place_order_type: str = 'chaser'
+    # place_order_type: str = 'chaser'
 
 
 class SignalGridStrategy(StrategyV2):
@@ -132,7 +118,7 @@ class SignalGridStrategy(StrategyV2):
     def __init__(self, config: SignalGridStrategyConfig):
         super().__init__()
         self.config = config
-        self.orders = []
+        self.orders: List[Order] = self.config.order_recorder.check_reload() or []
 
     def place_order(self, order_id: str, side: OrderSide, qty: float, price: float | None = None):
         self.config.ex_client.place_order(order_id, self.config.symbol.binance(), side.value, self.config.position_side, qty, price)
@@ -165,8 +151,8 @@ class SignalGridStrategy(StrategyV2):
                 side=self.config.master_side, 
                 price=close_price, 
                 quantity=self.config.per_order_qty,
-                take_profit_rate=self.config.fixed_take_profit_rate, 
-                min_profit_rate=self.config.signal_min_take_profit_rate
+                fixed_take_profit_rate=self.config.fixed_take_profit_rate, 
+                signal_min_take_profit_rate=self.config.signal_min_take_profit_rate
             )
             self.orders.append(order)
             self.place_order(order_id, self.config.master_side, self.config.per_order_qty)
@@ -193,9 +179,14 @@ class SignalGridStrategy(StrategyV2):
         # 即使flat_qty==0，也需要更新订单，因为可以移除手动修改的0数量订单
         if len(self.orders) != len(new_orders):
             self.orders = new_orders
-            # logger.info(f'{self.symbol} {json_util.dumps(self.orders)}')
-            # json_util.dump_file({'version': self.config.version,'orders': self.orders}, self.config.order_file_path)
 
     def on_kline_finished(self):
+        self.orders = self.config.order_recorder.check_reload() or self.orders
+
         if not self.check_open_order():
             self.check_close_order()
+
+        self.config.order_recorder.record(self.orders)
+
+
+        

@@ -228,13 +228,16 @@ class LimitOrderChaser:
 #     asyncio.get_event_loop().run_until_complete(chaser.start())
 
 class BinanceSwapClient(ExSwapClient):
-    def __init__(self, api_key, api_secret):
+    def __init__(self, api_key, api_secret, is_test=False):
         self.api_key = api_key
         self.api_secret = api_secret
         self.exchange = ccxt.binance({
             'apiKey': api_key,
             'secret': api_secret,
-            'options': {'defaultType': 'future'}
+            'options': {
+                'defaultType': 'future',
+                'sandboxMode': is_test,
+            }
         })
 
     def balance(self, coin):

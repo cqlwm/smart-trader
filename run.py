@@ -1,14 +1,16 @@
 from datetime import datetime
 import json
 from DataEventLoop import BinanceDataEventLoop, Task
+from client.binance_client import BinanceSwapClient
 from model import Symbol, Kline
 from strategy import StrategyV2
+from strategy.grids_strategy_v2 import SignalGridStrategyConfig, SignalGridStrategy
 
 class SimpleStrategyV2(StrategyV2):
     def __init__(self):
         super().__init__()
 
-    def on_kline_finished(self, kline: Kline):
+    def on_kline_finished(self):
         print("####👇")
         print(self.klines)
         print("####👆")
@@ -43,5 +45,17 @@ if __name__ == '__main__':
     data_event_loop = BinanceDataEventLoop(kline_subscribes=[
         btcusdt.binance_ws_sub_kline('1m'), 
     ])
-    data_event_loop.add_task(StrategyTask(SimpleStrategyV2()))
+    binance_client = BinanceSwapClient(
+        api_key="777669c469d163669b3cb2d7a4585d3b96ae43dca184692089d5dbdfebe960b5",
+        api_secret="32288d111051f3ba22be9be6428eea14b570524311831087e0b34a2fe819dd1c",
+        is_test=True,
+    )
+    data_event_loop.add_task(StrategyTask(SignalGridStrategy(SignalGridStrategyConfig(
+        ex_client=binance_client,
+        symbol=btcusdt,
+        per_order_qty=0.001,
+        grid_spacing_rate=0.0001,
+        enable_fixed_profit_taking=True,
+        fixed_take_profit_rate=0.0001,
+    ))))
     data_event_loop.start()
