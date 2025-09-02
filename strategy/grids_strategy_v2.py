@@ -1,10 +1,11 @@
+import os
 import secrets
 from typing import List
 from client.ex_client import ExSwapClient
 from strategy import StrategyV2
 from strategy import OrderSide
 import logging
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from model import Symbol
 from strategy import Signal
 import builtins
@@ -84,6 +85,10 @@ class OrderRecorder(BaseModel):
         从本地文件中读取订单，并检查是否需要重新加载
         @param force 强制重新加载
         '''
+        if not self.order_file_path:
+            return None
+        if not os.path.exists(self.order_file_path):
+            return None
         with open(self.order_file_path, 'r') as f:
             _recorder = OrderRecorder.model_validate_json(f.read())
             if _recorder.is_reload or force:
@@ -92,6 +97,8 @@ class OrderRecorder(BaseModel):
         return None
 
 class SignalGridStrategyConfig(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
     symbol: Symbol
     position_side: str = 'long'
     master_side: OrderSide = OrderSide.BUY
@@ -138,10 +145,13 @@ class SignalGridStrategy(StrategyV2):
         if close_price < self.config.lowest_price or close_price > self.config.highest_price:
             return False
         
-        if self.config.master_side == OrderSide.BUY:
-            recent_price_order = min(self.orders, key=lambda order: order.price)
+        if self.orders:
+            if self.config.master_side == OrderSide.BUY:
+                recent_price_order = min(self.orders, key=lambda order: order.price)
+            else:
+                recent_price_order = max(self.orders, key=lambda order: order.price)
         else:
-            recent_price_order = max(self.orders, key=lambda order: order.price)
+            recent_price_order = None
 
         if (not recent_price_order) or (recent_price_order and recent_price_order.profit_and_loss_ratio(close_price) <= -self.config.grid_spacing_rate): 
             order_id = build_order_id(self.config.master_side)

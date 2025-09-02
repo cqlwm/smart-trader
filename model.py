@@ -6,6 +6,9 @@ class Symbol(BaseModel):
     base: str
     quote: str
 
+    def __init__(self, base: str, quote: str):
+        super().__init__(base=base.upper(), quote=quote.upper())
+
     def ccxt(self):
         return f'{self.base}/{self.quote}'
 

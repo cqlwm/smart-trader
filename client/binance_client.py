@@ -238,9 +238,9 @@ class BinanceSwapClient(ExSwapClient):
             'secret': api_secret,
             'options': {
                 'defaultType': 'future',
-                'sandboxMode': is_test,
             }
         })
+        self.exchange.set_sandbox_mode(is_test)
         self.create_chaser = lambda symbol, order_side, quantity, position_side: LimitOrderChaser(
             api_key=api_key,
             api_secret=api_secret,
@@ -282,7 +282,7 @@ class BinanceSwapClient(ExSwapClient):
         return order
 
     def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price=None, **kwargs):
-        self.place_order(custom_id, symbol.binance(), order_side, kwargs['position_side'], quantity, price)
+        self.place_order(custom_id, symbol.binance(), order_side.name, kwargs['position_side'], quantity, price)
 
     def close_position(self, symbol, position_side, auto_cancel=True):
         positions = self.positions(symbol)
