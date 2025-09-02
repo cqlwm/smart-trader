@@ -69,8 +69,8 @@ class Order:
         return exit_id if i is None else f'{exit_id}{i}'
 
 class StrategyV2(ABC):
-    def __init__(self, ex_client: ExClient):
-        self.ex_client: ExClient = ex_client
+    def __init__(self):
+        self.ex_client: ExClient
         self.klines: DataFrame = DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
         self.last_kline: Kline
 

@@ -1,15 +1,15 @@
-from datetime import datetime
 import json
 import re
 from DataEventLoop import BinanceDataEventLoop, Task
+from bidirectional_grid_rotation_task import BidirectionalGridRotationTask
 from client.binance_client import BinanceSwapClient
 from model import Symbol, Kline
-from strategy import StrategyV2
+from strategy import OrderSide, StrategyV2
 from strategy.grids_strategy_v2 import SignalGridStrategyConfig, SignalGridStrategy
 
 class SimpleStrategyV2(StrategyV2):
     def __init__(self):
-        super().__init__()
+        super().__init__(None)
 
     def on_kline_finished(self):
         print("####👇")
@@ -56,11 +56,29 @@ if __name__ == '__main__':
         api_secret="32288d111051f3ba22be9be6428eea14b570524311831087e0b34a2fe819dd1c",
         is_test=True,
     )
-    data_event_loop.add_task(StrategyTask(SignalGridStrategy(SignalGridStrategyConfig(
-        symbol=btcusdt,
-        per_order_qty=0.001,
-        grid_spacing_rate=0.0001,
-        enable_fixed_profit_taking=True,
-        fixed_take_profit_rate=0.0001,
-    ), binance_client)))
+    data_event_loop.add_task(StrategyTask(BidirectionalGridRotationTask(
+        SignalGridStrategy(SignalGridStrategyConfig(
+            symbol=btcusdt,
+            position_side='long',
+            master_side=OrderSide.BUY,
+            per_order_qty=0.001,
+            grid_spacing_rate=0.0001,
+            enable_fixed_profit_taking=True,
+            fixed_take_profit_rate=0.0001,
+            max_order=10,
+            order_file_path='data/grids_strategy_v2_long_buy.json',
+        ), binance_client),
+        SignalGridStrategy(SignalGridStrategyConfig(
+            symbol=btcusdt,
+            position_side='short',
+            master_side=OrderSide.SELL,
+            per_order_qty=0.001,
+            grid_spacing_rate=0.0001,
+            enable_fixed_profit_taking=True,
+            fixed_take_profit_rate=0.0001,
+            max_order=10,
+            order_file_path='data/grids_strategy_v2_short_sell.json',
+        ), binance_client),
+    )))
     data_event_loop.start()
+

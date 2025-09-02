@@ -4,18 +4,6 @@ from typing import List
 import websocket
 import logging
 import random
-import json
-import re
-import threading
-from typing import List
-
-import websocket
-
-from utils import log
-import ccxt
-import pandas as pd
-from datetime import datetime, timezone
-from strategy import Strategy
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +67,7 @@ class BinanceDataEventLoop(DataEventLoop):
         self.loop(message)
 
     def on_error(self, _, error):
-        logger.error('BinanceDataEventLoop Error', error)
+        logger.error('BinanceDataEventLoop Error: %s', error)
 
     def on_close(self, _, close_status_code, close_msg):
         logger.warning(f"### BinanceDataEventLoop Closed ### {close_status_code}: {close_msg}")

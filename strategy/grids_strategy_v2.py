@@ -126,17 +126,19 @@ class SignalGridStrategyConfig(BaseModel):
 
     enable_fixed_profit_taking: bool = False
     fixed_take_profit_rate: float = 0.006
-    order_recorder: OrderRecorder = OrderRecorder(order_file_path='/Users/li/projects/qt/smart-trader/data/grids_strategy_v2.json')
 
     # place_order_type: str = 'chaser'
+    order_file_path: str = 'data/grids_strategy_v2.json'
 
 
 class SignalGridStrategy(StrategyV2):
 
     def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient):
-        super().__init__(ex_client)
+        super().__init__()
         self.config = config
-        self.orders: List[Order] = self.config.order_recorder.check_reload(force=True) or []
+        self.ex_client = ex_client
+        self.order_recorder: OrderRecorder = OrderRecorder(order_file_path=self.config.order_file_path)
+        self.orders: List[Order] = self.order_recorder.check_reload(force=True) or []
 
     def place_order(self, order_id: str, side: OrderSide, qty: float, price: float | None = None):
         self.ex_client.place_order_v2(custom_id=order_id, symbol=self.config.symbol, order_side=side, quantity=qty, price=price, position_side=self.config.position_side)
@@ -207,11 +209,11 @@ class SignalGridStrategy(StrategyV2):
         return flat_orders
 
     def on_kline_finished(self):
-        self.orders = self.config.order_recorder.check_reload() or self.orders
+        self.orders = self.order_recorder.check_reload() or self.orders
 
         if not self.check_open_order():
             close_orders = self.check_close_order()
         else:
             close_orders = []
 
-        self.config.order_recorder.record(self.orders, close_orders)
+        self.order_recorder.record(self.orders, close_orders)
