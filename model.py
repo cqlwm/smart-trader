@@ -1,11 +1,11 @@
 from datetime import datetime
+from pydantic import BaseModel
 
 
-class Symbol:
-    def __init__(self, base: str, quote: str):
-        self.base = base.upper()
-        self.quote = quote.upper()
-    
+class Symbol(BaseModel):
+    base: str
+    quote: str
+
     def ccxt(self):
         return f'{self.base}/{self.quote}'
 
@@ -14,20 +14,17 @@ class Symbol:
     
     def binance_ws_sub_kline(self, timeframe: str):
         return f'{self.binance()}@kline_{timeframe}'.lower()
+    
+    def to_str(self, exchange_name: str):
+        if exchange_name == 'binance':
+            return self.binance()
+        else:
+            return self.ccxt()
 
-'''
-                row = {
-                    'datetime': dt_str,
-                    'timestamp': timestamp,
-                    'open': open_price,
-                    'high': high_price,
-                    'low': low_price,
-                    'close': close_price,
-                    'volume': volume
-                }
-'''
 class Kline:
-    def __init__(self, open: float, high: float, low: float, close: float, volume: float, timestamp: int, finished: bool):
+    def __init__(self, symbol: Symbol, timeframe: str, open: float, high: float, low: float, close: float, volume: float, timestamp: int, finished: bool):
+        self.symbol = symbol
+        self.timeframe = timeframe
         self.open = open
         self.high = high
         self.low = low

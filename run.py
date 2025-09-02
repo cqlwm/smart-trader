@@ -1,5 +1,6 @@
 from datetime import datetime
 import json
+import re
 from DataEventLoop import BinanceDataEventLoop, Task
 from client.binance_client import BinanceSwapClient
 from model import Symbol, Kline
@@ -29,7 +30,12 @@ class StrategyTask(Task):
         kline = data_obj.get('data', {}).get('k', None)
         
         if is_kline and kline:
+            match = re.match(r'(\w+)(usdt|usdc|btc)@kline_(\d+\w)', kline_key)
+            if not match:
+                raise ValueError(f'Invalid kline key: {kline_key}')
             kline = Kline(
+                symbol=Symbol(base=match.group(1), quote=match.group(2)),
+                timeframe=match.group(3),
                 open=float(kline['o']),
                 high=float(kline['h']),
                 low=float(kline['l']),
@@ -51,11 +57,10 @@ if __name__ == '__main__':
         is_test=True,
     )
     data_event_loop.add_task(StrategyTask(SignalGridStrategy(SignalGridStrategyConfig(
-        ex_client=binance_client,
         symbol=btcusdt,
         per_order_qty=0.001,
         grid_spacing_rate=0.0001,
         enable_fixed_profit_taking=True,
         fixed_take_profit_rate=0.0001,
-    ))))
+    ), binance_client)))
     data_event_loop.start()

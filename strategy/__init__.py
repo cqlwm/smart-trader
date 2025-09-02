@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
 import pandas as pd
 from pandas import DataFrame
 import builtins
 from enum import Enum
 from dataclasses import dataclass
 
+from client.ex_client import ExClient
 from model import Kline
 
 
@@ -66,9 +68,9 @@ class Order:
         exit_id = self.custom_id.replace(self.side.value, self.side.reversal().value, 1)
         return exit_id if i is None else f'{exit_id}{i}'
 
-
 class StrategyV2(ABC):
-    def __init__(self):
+    def __init__(self, ex_client: ExClient):
+        self.ex_client: ExClient = ex_client
         self.klines: DataFrame = DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
         self.last_kline: Kline
 
@@ -79,6 +81,12 @@ class StrategyV2(ABC):
         pass
 
     def run(self, kline: Kline):
+        if len(self.klines) == 0:
+            ohlcv = self.ex_client.fetch_ohlcv(kline.symbol, kline.timeframe, 300)
+            df = pd.DataFrame(ohlcv, columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+            df['datetime'] = df['datetime'].apply(lambda x: datetime.fromtimestamp(x / 1000).strftime('%Y-%m-%d %H:%M:%S'))
+            self.klines = df
+        
         self.last_kline = kline
         self.on_kline()
 

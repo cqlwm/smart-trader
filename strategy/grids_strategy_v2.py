@@ -92,7 +92,6 @@ class OrderRecorder(BaseModel):
         return None
 
 class SignalGridStrategyConfig(BaseModel):
-    ex_client: ExSwapClient
     symbol: Symbol
     position_side: str = 'long'
     master_side: OrderSide = OrderSide.BUY
@@ -115,13 +114,13 @@ class SignalGridStrategyConfig(BaseModel):
 
 class SignalGridStrategy(StrategyV2):
 
-    def __init__(self, config: SignalGridStrategyConfig):
-        super().__init__()
+    def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient):
+        super().__init__(ex_client)
         self.config = config
         self.orders: List[Order] = self.config.order_recorder.check_reload() or []
 
     def place_order(self, order_id: str, side: OrderSide, qty: float, price: float | None = None):
-        self.config.ex_client.place_order(order_id, self.config.symbol.binance(), side.value, self.config.position_side, qty, price)
+        self.ex_client.place_order_v2(custom_id=order_id, symbol=self.config.symbol, order_side=side, quantity=qty, price=price, position_side=self.config.position_side)
     
     def check_open_order(self) -> bool:
 

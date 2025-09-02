@@ -1,3 +1,4 @@
+from typing import List
 import ccxt
 from ccxt.base.types import OrderType
 
@@ -13,6 +14,8 @@ import requests
 from urllib.parse import urlencode
 import ssl
 from decimal import Decimal
+from model import Symbol
+from strategy import OrderSide
 from utils import log
 
 logger = log.build_logger('BinanceSwapClient')
@@ -229,8 +232,7 @@ class LimitOrderChaser:
 
 class BinanceSwapClient(ExSwapClient):
     def __init__(self, api_key, api_secret, is_test=False):
-        self.api_key = api_key
-        self.api_secret = api_secret
+        self.exchange_name = 'binance'
         self.exchange = ccxt.binance({
             'apiKey': api_key,
             'secret': api_secret,
@@ -239,6 +241,15 @@ class BinanceSwapClient(ExSwapClient):
                 'sandboxMode': is_test,
             }
         })
+        self.create_chaser = lambda symbol, order_side, quantity, position_side: LimitOrderChaser(
+            api_key=api_key,
+            api_secret=api_secret,
+            symbol=symbol,
+            side=order_side,
+            quantity=quantity,
+            position_side=position_side
+        )
+            
 
     def balance(self, coin):
         balance = self.exchange.fetch_balance()
@@ -259,14 +270,7 @@ class BinanceSwapClient(ExSwapClient):
 
     def place_order(self, custom_id, symbol, order_side, position_side, quantity, price=None):
         if not price:
-            order_chaser = LimitOrderChaser(
-                api_key=self.api_key,
-                api_secret=self.api_secret,
-                symbol=symbol,
-                side=order_side,
-                quantity=quantity,
-                position_side=position_side
-            )
+            order_chaser = self.create_chaser(symbol, order_side, quantity, position_side)
             order_chaser.run()
             if order_chaser.order:
                 return order_chaser.order
@@ -276,6 +280,9 @@ class BinanceSwapClient(ExSwapClient):
                                            amount=quantity, price=price,
                                            params={'newClientOrderId': custom_id, 'positionSide': position_side})
         return order
+
+    def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price=None, **kwargs):
+        self.place_order(custom_id, symbol.binance(), order_side, kwargs['position_side'], quantity, price)
 
     def close_position(self, symbol, position_side, auto_cancel=True):
         positions = self.positions(symbol)
