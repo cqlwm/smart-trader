@@ -1,5 +1,5 @@
 import json
-import logging
+import log
 import os
 import re
 from DataEventLoop import BinanceDataEventLoop, Task
@@ -11,7 +11,7 @@ from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
 from strategy.grids_strategy_v2 import SignalGridStrategyConfig, SignalGridStrategy
 
-logger = logging.getLogger(__name__)
+logger = log.getLogger(__name__)
 
 class SimpleStrategyV2(StrategyV2):
     def __init__(self):

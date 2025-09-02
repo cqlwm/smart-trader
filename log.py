@@ -11,6 +11,6 @@ logging.basicConfig(
     ]
 )
 
-def build_logger(name: str):
+def getLogger(name: str):
     logger = logging.getLogger(name)
     return logger
