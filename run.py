@@ -1,10 +1,13 @@
 import json
+import os
 import re
 from DataEventLoop import BinanceDataEventLoop, Task
 from bidirectional_grid_rotation_task import BidirectionalGridRotationTask
 from client.binance_client import BinanceSwapClient
 from model import Symbol, Kline
 from strategy import OrderSide, StrategyV2
+from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
+from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
 from strategy.grids_strategy_v2 import SignalGridStrategyConfig, SignalGridStrategy
 
 class SimpleStrategyV2(StrategyV2):
@@ -51,10 +54,14 @@ if __name__ == '__main__':
     data_event_loop = BinanceDataEventLoop(kline_subscribes=[
         btcusdt.binance_ws_sub_kline('1m'), 
     ])
+    
+    api_key = os.environ.get('BINANCE_API_KEY')
+    api_secret = os.environ.get('BINANCE_API_SECRET')
+    is_test = os.environ.get('BINANCE_IS_TEST') == 'True'
     binance_client = BinanceSwapClient(
-        api_key="777669c469d163669b3cb2d7a4585d3b96ae43dca184692089d5dbdfebe960b5",
-        api_secret="32288d111051f3ba22be9be6428eea14b570524311831087e0b34a2fe819dd1c",
-        is_test=True,
+        api_key=api_key,
+        api_secret=api_secret,
+        is_test=is_test,
     )
     data_event_loop.add_task(StrategyTask(BidirectionalGridRotationTask(
         long_strategy=SignalGridStrategy(SignalGridStrategyConfig(
@@ -66,6 +73,7 @@ if __name__ == '__main__':
             enable_fixed_profit_taking=True,
             fixed_take_profit_rate=0.0001,
             max_order=10,
+            signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY.value)),
             order_file_path='data/grids_strategy_v2_long_buy.json',
         ), binance_client),
         short_strategy=SignalGridStrategy(SignalGridStrategyConfig(
@@ -77,6 +85,7 @@ if __name__ == '__main__':
             enable_fixed_profit_taking=True,
             fixed_take_profit_rate=0.0001,
             max_order=10,
+            signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL.value)),
             order_file_path='data/grids_strategy_v2_short_sell.json',
         ), binance_client),
     )))

@@ -3,7 +3,7 @@ import numpy as np
 
 from strategy import Signal
 
-_timestamp = 'timestamp'
+_timestamp = 'datetime'
 _high = 'high'
 _low = 'low'
 _close = 'close'
