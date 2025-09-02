@@ -50,9 +50,9 @@ class StrategyTask(Task):
             self.strategy.run(kline)
 
 if __name__ == '__main__':
-    btcusdt = Symbol(base='btc', quote='usdt')
+    dogeusdt = Symbol(base='doge', quote='usdt')
     data_event_loop = BinanceDataEventLoop(kline_subscribes=[
-        btcusdt.binance_ws_sub_kline('1m'), 
+        dogeusdt.binance_ws_sub_kline('1m'), 
     ])
     
     api_key = os.environ.get('BINANCE_API_KEY')
@@ -65,26 +65,30 @@ if __name__ == '__main__':
     )
     data_event_loop.add_task(StrategyTask(BidirectionalGridRotationTask(
         long_strategy=SignalGridStrategy(SignalGridStrategyConfig(
-            symbol=btcusdt,
+            symbol=dogeusdt,
             position_side='long',
             master_side=OrderSide.BUY,
-            per_order_qty=0.001,
-            grid_spacing_rate=0.0001,
-            enable_fixed_profit_taking=True,
-            fixed_take_profit_rate=0.0001,
+            per_order_qty=30,
+            grid_spacing_rate=0.001,
             max_order=10,
+            enable_fixed_profit_taking=True,
+            fixed_take_profit_rate=0.01,
+            enable_exit_signal=True,
+            signal_min_take_profit_rate=0.002,
             signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY.value)),
             order_file_path='data/grids_strategy_v2_long_buy.json',
         ), binance_client),
         short_strategy=SignalGridStrategy(SignalGridStrategyConfig(
-            symbol=btcusdt,
+            symbol=dogeusdt,
             position_side='short',
             master_side=OrderSide.SELL,
-            per_order_qty=0.001,
-            grid_spacing_rate=0.0001,
-            enable_fixed_profit_taking=True,
-            fixed_take_profit_rate=0.0001,
+            per_order_qty=30,
+            grid_spacing_rate=0.001,
             max_order=10,
+            enable_fixed_profit_taking=True,
+            fixed_take_profit_rate=0.01,
+            enable_exit_signal=True,
+            signal_min_take_profit_rate=0.002,
             signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL.value)),
             order_file_path='data/grids_strategy_v2_short_sell.json',
         ), binance_client),

@@ -4,4 +4,4 @@ WORKDIR /usr/local/app
 COPY ./requirements.txt .
 RUN pip install -r requirements.txt
 
-CMD ["python", "main.py"]
+CMD ["python", "run.py"]
