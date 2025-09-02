@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from DataEventLoop import BinanceDataEventLoop, Task
@@ -9,6 +10,8 @@ from strategy import OrderSide, StrategyV2
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
 from strategy.grids_strategy_v2 import SignalGridStrategyConfig, SignalGridStrategy
+
+logger = logging.getLogger(__name__)
 
 class SimpleStrategyV2(StrategyV2):
     def __init__(self):
@@ -50,25 +53,32 @@ class StrategyTask(Task):
             self.strategy.run(kline)
 
 if __name__ == '__main__':
-    dogeusdt = Symbol(base='doge', quote='usdt')
-    data_event_loop = BinanceDataEventLoop(kline_subscribes=[
-        dogeusdt.binance_ws_sub_kline('1m'), 
-    ])
-    
     api_key = os.environ.get('BINANCE_API_KEY')
     api_secret = os.environ.get('BINANCE_API_SECRET')
     is_test = os.environ.get('BINANCE_IS_TEST') == 'True'
+    if not api_key or not api_secret:
+        raise ValueError('BINANCE_API_KEY and BINANCE_API_SECRET must be set')
+    else:
+        logger.info(f'api_key: {api_key[:5]}*****, api_secret: {api_secret[:5]}*****, is_test: {is_test}')
+
     binance_client = BinanceSwapClient(
         api_key=api_key,
         api_secret=api_secret,
         is_test=is_test,
     )
+
+    bnbusdc = Symbol(base='bnb', quote='usdc')
+    per_order_qty = 0.01
+
+    data_event_loop = BinanceDataEventLoop(kline_subscribes=[
+        bnbusdc.binance_ws_sub_kline('1m'), 
+    ])
     data_event_loop.add_task(StrategyTask(BidirectionalGridRotationTask(
         long_strategy=SignalGridStrategy(SignalGridStrategyConfig(
-            symbol=dogeusdt,
+            symbol=bnbusdc,
             position_side='long',
             master_side=OrderSide.BUY,
-            per_order_qty=30,
+            per_order_qty=per_order_qty,
             grid_spacing_rate=0.001,
             max_order=10,
             enable_fixed_profit_taking=True,
@@ -79,10 +89,10 @@ if __name__ == '__main__':
             order_file_path='data/grids_strategy_v2_long_buy.json',
         ), binance_client),
         short_strategy=SignalGridStrategy(SignalGridStrategyConfig(
-            symbol=dogeusdt,
+            symbol=bnbusdc,
             position_side='short',
             master_side=OrderSide.SELL,
-            per_order_qty=30,
+            per_order_qty=per_order_qty,
             grid_spacing_rate=0.001,
             max_order=10,
             enable_fixed_profit_taking=True,
