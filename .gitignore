@@ -3,3 +3,4 @@ __pycache__
 binance_*.json
 .python-version
 uv.lock
+data

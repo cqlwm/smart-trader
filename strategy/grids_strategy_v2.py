@@ -22,6 +22,15 @@ class Order(BaseModel):
     quantity: float
     fixed_take_profit_rate: float
     signal_min_take_profit_rate: float
+    close_price: float | None = None
+
+    def __hash__(self):
+        return hash(self.custom_id)
+
+    def __eq__(self, other):
+        if isinstance(other, Order):
+            return self.custom_id == other.custom_id
+        return False
 
     # profit_level：表示盈利级别，值为 -1不可盈利，0损失手续费，1可盈利，2达到止盈标准
     def profit_level(self, current_price) -> int:
@@ -69,16 +78,19 @@ class OrderRecorder(BaseModel):
     reload_msg: str = ""
     total_profit: float = 0
 
-    def record(self, current_orders: List[Order]):
-        if len(current_orders) == len(self.orders):
-            return
-        current_orders = current_orders.copy()
-        if len(current_orders) < len(self.orders):
-            self.history_orders += list(set(self.orders) - set(current_orders))
-        self.orders = current_orders
+    def record(self, latest_orders: List[Order], close_orders: List[Order]):
+        changed = False
+        if len(latest_orders) != len(self.orders):
+            self.orders = latest_orders
+            changed = True
 
-        with open(self.order_file_path, 'w') as f:
-            f.write(self.model_dump_json())
+        if close_orders:
+            self.history_orders += close_orders
+            changed = True
+
+        if changed:
+            with open(self.order_file_path, 'w') as f:
+                f.write(self.model_dump_json())
 
     def check_reload(self, force: bool = False) -> List[Order] | None:
         '''
@@ -114,7 +126,7 @@ class SignalGridStrategyConfig(BaseModel):
 
     enable_fixed_profit_taking: bool = False
     fixed_take_profit_rate: float = 0.006
-    order_recorder: OrderRecorder = OrderRecorder(order_file_path='grids_strategy_v2.json')
+    order_recorder: OrderRecorder = OrderRecorder(order_file_path='/Users/li/projects/qt/smart-trader/data/grids_strategy_v2.json')
 
     # place_order_type: str = 'chaser'
 
@@ -124,7 +136,7 @@ class SignalGridStrategy(StrategyV2):
     def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient):
         super().__init__(ex_client)
         self.config = config
-        self.orders: List[Order] = self.config.order_recorder.check_reload() or []
+        self.orders: List[Order] = self.config.order_recorder.check_reload(force=True) or []
 
     def place_order(self, order_id: str, side: OrderSide, qty: float, price: float | None = None):
         self.ex_client.place_order_v2(custom_id=order_id, symbol=self.config.symbol, order_side=side, quantity=qty, price=price, position_side=self.config.position_side)
@@ -168,15 +180,18 @@ class SignalGridStrategy(StrategyV2):
             return True
         return False
 
-    def check_close_order(self):
+    def check_close_order(self) -> List[Order]:
         exit_signal = self.config.enable_exit_signal and self.config.signal and self.config.signal.is_exit(self.klines)
 
         new_orders: List[Order] = []
+        flat_orders: List[Order] = []
         flat_qty = 0
         for order in self.orders:
             profit_level = order.profit_level(self.last_kline.close)
             if (profit_level == 2 and self.config.enable_fixed_profit_taking) or (profit_level == 1 and exit_signal):
                 flat_qty += order.quantity
+                order.close_price = self.last_kline.close
+                flat_orders.append(order)
             else:
                 new_orders.append(order)
 
@@ -188,14 +203,15 @@ class SignalGridStrategy(StrategyV2):
         # 即使flat_qty==0，也需要更新订单，因为可以移除手动修改的0数量订单
         if len(self.orders) != len(new_orders):
             self.orders = new_orders
+        
+        return flat_orders
 
     def on_kline_finished(self):
         self.orders = self.config.order_recorder.check_reload() or self.orders
 
         if not self.check_open_order():
-            self.check_close_order()
+            close_orders = self.check_close_order()
+        else:
+            close_orders = []
 
-        self.config.order_recorder.record(self.orders)
-
-
-        
+        self.config.order_recorder.record(self.orders, close_orders)

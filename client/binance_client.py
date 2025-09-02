@@ -63,11 +63,11 @@ def get_tick_size(symbol):
 
 
 class LimitOrderChaser:
-    def __init__(self, api_key, api_secret, symbol, side, quantity, position_side="LONG"):
+    def __init__(self, api_key, api_secret, symbol, side, quantity, position_side="LONG", is_test=False):
         print(f"symbol:{symbol}, side:{side}, quantity:{quantity}, position_side:{position_side}")
         self.api_key = api_key
         self.api_secret = api_secret
-        self.base_url = "https://fapi.binance.com"
+        self.base_url = "https://testnet.binancefuture.com" if is_test else "https://fapi.binance.com"
         self.symbol = symbol.replace('/', '')
         self.side = side.upper()
         self.quantity = quantity
@@ -247,7 +247,8 @@ class BinanceSwapClient(ExSwapClient):
             symbol=symbol,
             side=order_side,
             quantity=quantity,
-            position_side=position_side
+            position_side=position_side,
+            is_test=is_test
         )
             
 
