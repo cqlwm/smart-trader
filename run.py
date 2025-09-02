@@ -57,7 +57,7 @@ if __name__ == '__main__':
         is_test=True,
     )
     data_event_loop.add_task(StrategyTask(BidirectionalGridRotationTask(
-        SignalGridStrategy(SignalGridStrategyConfig(
+        long_strategy=SignalGridStrategy(SignalGridStrategyConfig(
             symbol=btcusdt,
             position_side='long',
             master_side=OrderSide.BUY,
@@ -68,7 +68,7 @@ if __name__ == '__main__':
             max_order=10,
             order_file_path='data/grids_strategy_v2_long_buy.json',
         ), binance_client),
-        SignalGridStrategy(SignalGridStrategyConfig(
+        short_strategy=SignalGridStrategy(SignalGridStrategyConfig(
             symbol=btcusdt,
             position_side='short',
             master_side=OrderSide.SELL,
