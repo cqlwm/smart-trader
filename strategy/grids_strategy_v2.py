@@ -160,10 +160,8 @@ class SignalGridStrategy(StrategyV2):
             return False
         
         if self.orders:
-            if self.config.master_side == OrderSide.BUY:
-                recent_price_order = min(self.orders, key=lambda order: order.price)
-            else:
-                recent_price_order = max(self.orders, key=lambda order: order.price)
+            extremum_fun = min if self.config.master_side == OrderSide.BUY else max
+            recent_price_order = extremum_fun(self.orders, key=lambda order: order.price)
         else:
             recent_price_order = None
 
