@@ -16,9 +16,9 @@ import ssl
 from decimal import Decimal
 from model import Symbol
 from strategy import OrderSide
-from utils import log
+import log
 
-logger = log.build_logger('BinanceSwapClient')
+logger = log.getLogger('BinanceSwapClient')
 
 def get_tick_size(symbol):
     """

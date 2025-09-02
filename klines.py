@@ -5,13 +5,13 @@ from typing import List
 
 import websocket
 
-from utils import log
+import log
 import ccxt
 import pandas as pd
 from datetime import datetime, timezone
 from strategy import Strategy
 
-logger = log.build_logger(__name__)
+logger = log.getLogger(__name__)
 
 
 def __extract_trade_info__(s):

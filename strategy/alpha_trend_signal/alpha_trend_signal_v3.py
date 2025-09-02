@@ -3,9 +3,9 @@ from pandas import DataFrame
 from strategy import Signal
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_signal_v2 import AlphaTrendSignalV2
-from utils import log
+import log
 
-logger = log.build_logger(__name__)
+logger = log.getLogger(__name__)
 _close = 'close'
 _buy_signal = 'buy_signal'
 _sell_signal = 'sell_signal'

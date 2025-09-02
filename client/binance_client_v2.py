@@ -13,9 +13,9 @@ import requests
 from urllib.parse import urlencode
 import ssl
 from decimal import Decimal
-from utils import log
+import log
 
-logger = log.build_logger(__name__)
+logger = log.getLogger(__name__)
 
 def get_tick_size(symbol):
     """

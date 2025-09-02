@@ -5,9 +5,9 @@ import threading
 from ccxt.base.types import OrderType, OrderSide
 
 from client.ex_client import ExSwapClient, ExSpotClient
-from utils import log
+import log
 
-logger = log.build_logger(__name__)
+logger = log.getLogger(__name__)
 
 symbol_locks = {
     'LOCK': threading.Lock(),

@@ -3,10 +3,10 @@ from argparse import ArgumentError
 from plans import bybit_swap_plan, okx_swap_plan, binance_plan
 from strategy import simple_grid_strategy
 import os
-from utils import log
+import log
 from klines import KlineStream
 
-logger = log.build_logger('Application')
+logger = log.getLogger('Application')
 
 if __name__ == '__main__':
     strategy_name = os.getenv('START_STRATEGY', 'simple_grid_strategy')

@@ -6,9 +6,10 @@ from pandas import DataFrame
 from client.ex_client import ExSwapClient, ExSpotClient
 from strategy import Strategy
 from strategy import Order, OrderSide
-from utils import log, json_util
+import log
+from utils import json_util
 
-logger = log.build_logger('grids_strategy')
+logger = log.getLogger('grids_strategy')
 
 
 def build_order_id(side: OrderSide):
