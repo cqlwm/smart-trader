@@ -5,7 +5,8 @@ from typing import List
 from pandas import DataFrame
 from client.ex_client import ExSwapClient, ExSpotClient
 from strategy import Strategy
-from strategy import Order, OrderSide
+from strategy import Order
+from model import OrderSide
 import log
 from utils import json_util
 

@@ -6,7 +6,7 @@ from client.ex_client import ExSwapClient
 
 import requests
 from model import Symbol
-from strategy import OrderSide
+from model import OrderSide
 import log
 
 logger = log.getLogger('BinanceSwapClient')

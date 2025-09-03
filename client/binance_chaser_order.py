@@ -7,7 +7,7 @@ import time
 import ssl
 from decimal import Decimal
 from model import OrderStatus, Symbol
-from strategy import OrderSide
+from model import OrderSide
 import log
 from client.binance_client import get_tick_size
 
@@ -184,4 +184,3 @@ class LimitOrderChaser:
             loop.run_until_complete(self.start())
         finally:
             loop.close()
-        

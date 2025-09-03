@@ -6,7 +6,8 @@ from DataEventLoop import BinanceDataEventLoop, Task
 from bidirectional_grid_rotation_task import BidirectionalGridRotationTask
 from client.binance_client import BinanceSwapClient
 from model import Symbol, Kline
-from strategy import OrderSide, StrategyV2
+from strategy import StrategyV2
+from model import OrderSide
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
 from strategy.grids_strategy_v2 import SignalGridStrategyConfig, SignalGridStrategy
@@ -104,4 +105,3 @@ if __name__ == '__main__':
         ), binance_client),
     )))
     data_event_loop.start()
-

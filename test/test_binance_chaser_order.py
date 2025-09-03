@@ -4,7 +4,7 @@ from client.binance_chaser_order import LimitOrderChaser
 from client.binance_client import BinanceSwapClient
 import log
 from model import Symbol
-from strategy import OrderSide
+from model import OrderSide
 
 logger = log.getLogger(__name__)
 

@@ -7,15 +7,7 @@ from enum import Enum
 from dataclasses import dataclass
 
 from client.ex_client import ExClient
-from model import Kline
-
-
-class OrderSide(Enum):
-    BUY = 'buy'
-    SELL = 'sell'
-
-    def reversal(self):
-        return OrderSide.SELL if self == OrderSide.BUY else OrderSide.BUY
+from model import Kline, OrderSide
 
 
 @dataclass

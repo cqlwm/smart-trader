@@ -2,6 +2,14 @@ from datetime import datetime
 from pydantic import BaseModel
 from enum import Enum
 
+
+class OrderSide(Enum):
+    BUY = 'buy'
+    SELL = 'sell'
+
+    def reversal(self):
+        return OrderSide.SELL if self == OrderSide.BUY else OrderSide.BUY
+
 # order status
         # statuses: dict = {
         #     'NEW': 'open',

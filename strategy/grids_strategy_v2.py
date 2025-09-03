@@ -3,7 +3,7 @@ import secrets
 from typing import List
 from client.ex_client import ExSwapClient
 from strategy import StrategyV2
-from strategy import OrderSide
+from model import OrderSide
 import logging
 from pydantic import BaseModel, ConfigDict
 from model import Symbol
