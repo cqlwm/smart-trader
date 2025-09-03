@@ -1,6 +1,27 @@
 from datetime import datetime
 from pydantic import BaseModel
+from enum import Enum
 
+# order status
+        # statuses: dict = {
+        #     'NEW': 'open',
+        #     'PARTIALLY_FILLED': 'open',
+        #     'ACCEPTED': 'open',
+        #     'FILLED': 'closed',
+        #     'CANCELED': 'canceled',
+        #     'CANCELLED': 'canceled',
+        #     'PENDING_CANCEL': 'canceling',  # currently unused
+        #     'REJECTED': 'rejected',
+        #     'EXPIRED': 'expired',
+        #     'EXPIRED_IN_MATCH': 'expired',
+        # }
+
+class OrderStatus(Enum):
+    OPEN = 'open'
+    CLOSED = 'closed'
+    CANCELED = 'canceled'
+    REJECTED = 'rejected'
+    EXPIRED = 'expired'
 
 class Symbol(BaseModel):
     base: str

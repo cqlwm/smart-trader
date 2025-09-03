@@ -1,26 +1,17 @@
-from typing import List
 import ccxt
 from ccxt.base.types import OrderType
 
-from client.ex_client import ExClient, ExSwapClient, ExSpotClient
+from client.binance_chaser_order import LimitOrderChaser
+from client.ex_client import ExSwapClient
 
-import asyncio
-import websockets
-import json
-import time
-import hmac
-import hashlib
 import requests
-from urllib.parse import urlencode
-import ssl
-from decimal import Decimal
 from model import Symbol
 from strategy import OrderSide
 import log
 
 logger = log.getLogger('BinanceSwapClient')
 
-def get_tick_size(symbol):
+def get_tick_size(symbol: Symbol | str):
     """
     获取指定交易对的最小价格间隔(tickSize)
     
@@ -33,7 +24,10 @@ def get_tick_size(symbol):
     # url = "https://api.binance.com/api/v3/exchangeInfo"
     url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 
-    symbol = symbol.upper()
+    if isinstance(symbol, Symbol):
+        symbol = symbol.binance()
+    else:
+        symbol = symbol.upper()
 
     if symbol in ['BTCUSDT', 'BTCUSDC']:
         return 0.1
@@ -61,8 +55,6 @@ def get_tick_size(symbol):
         print(f"获取tickSize时发生错误: {str(e)}")
         return None
 
-
-
 class BinanceSwapClient(ExSwapClient):
     def __init__(self, api_key, api_secret, is_test=False):
         self.exchange_name = 'binance'
@@ -80,7 +72,6 @@ class BinanceSwapClient(ExSwapClient):
             side=order_side,
             quantity=quantity,
             position_side=position_side,
-            is_test=is_test
         )
             
 
@@ -88,18 +79,17 @@ class BinanceSwapClient(ExSwapClient):
         balance = self.exchange.fetch_balance()
         return balance[coin.upper()]['free']
 
-    def cancel(self, custom_id, symbol):
-        return self.exchange.cancel_order(id='', symbol=symbol, params={
+    def cancel(self, custom_id: str, symbol: Symbol):
+        return self.exchange.cancel_order(id='', symbol=symbol.ccxt(), params={
             'origClientOrderId': custom_id
         })
 
     #     'status': 'closed'
-    def query_order(self, custom_id, symbol):
-        order = self.exchange.fetch_order(id='', symbol=symbol, params={
+    def query_order(self, custom_id: str, symbol: Symbol):
+        order = self.exchange.fetch_order(id='', symbol=symbol.ccxt(), params={
             'origClientOrderId': custom_id
         })
-        res = {'state': order['status']}
-        return res
+        return order
 
     def place_order(self, custom_id, symbol, order_side, position_side, quantity, price=None):
         if not price:
@@ -120,7 +110,7 @@ class BinanceSwapClient(ExSwapClient):
         if kwargs.get("chaser"):
             order_chaser = self.create_chaser(symbol, order_side, quantity, position_side)
             order_chaser.run()
-            if order_chaser.order:
+            if order_chaser.order and order_chaser.order['status'] == 'closed':
                 return order_chaser.order
             
         params = {
@@ -128,8 +118,8 @@ class BinanceSwapClient(ExSwapClient):
             'positionSide': position_side
         }
 
-        if kwargs.get('time_in_force'):
-            params['timeInForce'] = kwargs['time_in_force']
+        if kwargs.get('time_in_force') or kwargs.get('timeInForce'):
+            params['timeInForce'] = kwargs['time_in_force'] or kwargs['timeInForce']
 
         order = self.exchange.create_order(
             symbol=symbol.binance(), 
@@ -157,28 +147,3 @@ class BinanceSwapClient(ExSwapClient):
 
     def positions(self, symbol=None):
         return self.exchange.fetch_positions([symbol])
-
-# 未测试
-class BinanceSpotClient(ExSpotClient):
-    def __init__(self, api_key, api_secret):
-        self.client = ccxt.binance({
-            'apiKey': api_key,
-            'secret': api_secret
-        })
-
-    def balance(self, coin):
-        balance = self.client.fetch_balance()
-        return balance['total'][coin]
-
-    def cancel(self, custom_id, symbol):
-        return self.client.cancel_order(custom_id, symbol)
-
-    def query_order(self, custom_id, symbol):
-        return self.client.fetch_order(custom_id, symbol)
-
-    def place_order(self, custom_id, symbol, order_side, quantity, price=None):
-        order_type = 'limit' if price else 'market'
-        order = self.client.create_order(symbol, order_type, order_side, quantity, price, {
-            'newClientOrderId': custom_id
-        })
-        return order

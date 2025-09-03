@@ -1,20 +1,12 @@
-from typing import List
-import ccxt
-from ccxt.base.types import OrderType
-
-from client.ex_client import ExClient, ExSwapClient, ExSpotClient
+from client.ex_client import ExSwapClient
 
 import asyncio
 import websockets
 import json
 import time
-import hmac
-import hashlib
-import requests
-from urllib.parse import urlencode
 import ssl
 from decimal import Decimal
-from model import Kline, Symbol
+from model import OrderStatus, Symbol
 from strategy import OrderSide
 import log
 from client.binance_client import get_tick_size
@@ -22,11 +14,10 @@ from client.binance_client import get_tick_size
 logger = log.getLogger(__name__)
 
 class LimitOrderChaser:
-    def __init__(self, client: ExSwapClient, symbol: Symbol, side: OrderSide, quantity: float, position_side: str = "LONG", is_test: bool = False):
+    def __init__(self, client: ExSwapClient, symbol: Symbol, side: OrderSide, quantity: float, position_side: str = "LONG"):
         print(f"symbol:{symbol}, side:{side}, quantity:{quantity}, position_side:{position_side}")
         self.client = client
-        self.base_url = "https://testnet.binancefuture.com" if is_test else "https://fapi.binance.com"
-        self.symbol = symbol
+        self.symbol: Symbol = symbol
         self.side = side
         self.quantity = quantity
         self.position_side = position_side.upper()
@@ -35,29 +26,31 @@ class LimitOrderChaser:
         self.tick_size: float = get_tick_size(self.symbol) or 0.01
         self.price_precision = len(str(Decimal(str(self.tick_size))).split('.')[1])
 
-    def place_limit_order(self, price):
-        logger.info("下单：%s, %s, %s, %s", self.symbol, self.side, self.quantity, price)
+    def place_order_gtx(self, price):
+        custom_id=str(time.time())
+        logger.info("下单：%s, %s, %s, %s, %s", self.symbol.ccxt(), self.side, self.quantity, price, custom_id)
         result = self.client.place_order_v2(
-            custom_id=str(time.time()),
+            custom_id=custom_id,
             symbol=self.symbol,
             order_side=self.side,
             quantity=self.quantity,
             price=float(f"{Decimal(price):.{self.price_precision}f}"),
-            timeInForce="GTX",
+            position_side=self.position_side,
+            time_in_force="GTX",
         )
-        logger.info("下单返回：%s", result)
+        logger.debug("下单返回：%s", result)
         return result
 
     def query_order(self, order_id):
-        logger.info("查询订单：%s", order_id)
+        logger.debug("查询订单：%s", order_id)
         result = self.client.query_order(order_id, self.symbol)
-        logger.info("查询订单返回：%s", result)
+        logger.debug("查询订单返回：%s", result)
         return result
 
     def cancel_order(self, order_id):
-        logger.info("撤单：%s", order_id)
+        logger.debug("撤单：%s", order_id)
         result = self.client.cancel(order_id, self.symbol)
-        logger.info("撤单返回：%s", result)
+        logger.debug("撤单返回：%s", result)
         return result
 
     def chase(self, latest_price: float):
@@ -82,47 +75,49 @@ class LimitOrderChaser:
             
             if self.order:
                 try:
-                    latest_order = self.query_order(self.order['orderId'])
+                    latest_order = self.query_order(self.order['clientOrderId'])
                     if not latest_order:
                         logger.error("查询订单失败，订单可能已被删除")
                         self.order = None
                         return False
                         
-                    if latest_order['status'] == 'FILLED':
-                        logger.info(f"订单 {self.order['orderId']} 已成交")
+                    if latest_order['status'] == OrderStatus.CLOSED.value:
+                        logger.info(f"订单 {self.order['clientOrderId']} 已成交")
                         return True
-                    elif latest_order['status'] == 'CANCELED':
-                        logger.info(f"订单 {self.order['orderId']} 已取消，重新下单")
+                    elif latest_order['status'] in [OrderStatus.CANCELED.value, OrderStatus.REJECTED.value, OrderStatus.EXPIRED.value]:
+                        logger.info(f"订单 {self.order['clientOrderId']} 已取消，重新下单")
                         self.order = None
-                    elif latest_order['status'] in ['NEW', 'PARTIALLY_FILLED']:
-                        current_price = float(latest_order['price'])
-                        price_diff = abs(current_price - limit_price)
+                    elif latest_order['status'] == OrderStatus.OPEN.value:
+                        latest_order_price = latest_order['price']
+                        price_diff = abs(latest_order_price - limit_price)
                         price_more_competitive = price_diff > self.tick_size * 3
                         
                         if price_more_competitive:
-                            logger.info(f"发现更优价格，撤销订单 {self.order['orderId']}，当前价格: {current_price}, 目标价格: {limit_price}")
-                            cancel_result = self.cancel_order(self.order['orderId'])
+                            logger.info(f"撤销订单 {self.order['clientOrderId']}，价格: {latest_order_price}, 重置价格: {limit_price}")
+                            cancel_result = self.cancel_order(self.order['clientOrderId'])
                             if cancel_result:
-                                self.order = None
+                                if cancel_result['status'] == OrderStatus.CANCELED.value:
+                                    self.order = None
+                                elif cancel_result['status'] == OrderStatus.CLOSED.value:
+                                    return True
                             else:
-                                logger.warning("撤单失败，保持现有订单")
+                                logger.warning("撤单失败, cancel_order 返回 None")
                                 return False
                         else:
                             return False
                     else:
                         logger.warning(f"未知订单状态: {latest_order['status']}")
                         return False
-                        
                 except Exception as e:
                     logger.error(f"查询或处理订单时出错: {e}")
                     return False
             
             if not self.order:
                 try:
-                    order_result = self.place_limit_order(limit_price)
-                    if order_result and order_result.get('orderId'):
+                    order_result = self.place_order_gtx(limit_price)
+                    if order_result and order_result.get('clientOrderId'):
                         self.order = order_result
-                        logger.info(f"新订单已下单: {order_result['orderId']}, 价格: {limit_price}")
+                        logger.info(f"新订单已下单: {order_result['clientOrderId']}, 价格: {limit_price}")
                     else:
                         logger.error(f"下单失败: {order_result}")
                         return False
@@ -138,20 +133,11 @@ class LimitOrderChaser:
 
 
     async def start(self, update_interval=1):
-        ws_url = "wss://fstream3.binance.com/ws" if not self.base_url.startswith("https://testnet") else "wss://fstream.binancefuture.com/ws"
-        
+        ws_url = f"wss://fstream.binance.com/ws/{self.symbol.binance().lower()}@miniTicker"
         try:
             async with websockets.connect(ws_url, ssl=self.ssl_context) as ws:
-                subscribe_message = {
-                    "method": "SUBSCRIBE",
-                    "params": [f"{str(self.symbol).lower()}@miniTicker"],
-                    "id": 12
-                }
-                await ws.send(json.dumps(subscribe_message))
-                logger.info(f"已订阅 {self.symbol} 的价格更新")
-
                 counter = 0
-                max_iterations = 1000
+                max_iterations = 100
                 
                 while counter < max_iterations:
                     try:
@@ -188,7 +174,7 @@ class LimitOrderChaser:
                         continue
                         
         except Exception as e:
-            logger.error(f"WebSocket连接错误: {e}")
+            logger.error(e)
             raise
         
     def run(self):
@@ -198,3 +184,4 @@ class LimitOrderChaser:
             loop.run_until_complete(self.start())
         finally:
             loop.close()
+        

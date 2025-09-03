@@ -4,7 +4,7 @@ from typing import List
 from model import Symbol
 from ccxt.base.exchange import Exchange
 
-from strategy import OrderSide
+# from strategy import OrderSide
 
 
 
@@ -13,21 +13,21 @@ class ExClient(ABC):
     exchange: Exchange
 
     @abstractmethod
-    def balance(self, coin):
+    def balance(self, coin: str):
         pass
 
     @abstractmethod
-    def cancel(self, custom_id, symbol):
+    def cancel(self, custom_id: str, symbol: Symbol):
         pass
 
     @abstractmethod
-    def query_order(self, custom_id, symbol):
+    def query_order(self, custom_id: str, symbol: Symbol):
         pass
 
     def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> List[list]:
         return self.exchange.fetch_ohlcv(symbol.ccxt(), timeframe, limit=limit)
     
-    def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price=None, **kwargs):
+    def place_order_v2(self, custom_id: str, symbol: Symbol, order_side, quantity: float, price=None, **kwargs):
         pass
 
 class ExSwapClient(ExClient):
