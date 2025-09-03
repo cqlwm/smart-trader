@@ -26,6 +26,7 @@ class LimitOrderChaser:
         self.order = None
         self.tick_size: float = tick_size
         self.price_precision = len(str(Decimal(str(self.tick_size))).split('.')[1])
+        self.max_iterations = 40
 
     def place_order_gtx(self, price):
         custom_id=f'{self.side.value}{secrets.token_hex(nbytes=5)}'
@@ -84,6 +85,7 @@ class LimitOrderChaser:
                         
                     if latest_order['status'] == OrderStatus.CLOSED.value:
                         logger.info(f"订单 {self.order['clientOrderId']} 已成交")
+                        self.order = latest_order
                         return True
                     elif latest_order['status'] in [OrderStatus.CANCELED.value, OrderStatus.REJECTED.value, OrderStatus.EXPIRED.value]:
                         logger.info(f"订单 {self.order['clientOrderId']} 已取消，重新下单")
@@ -100,6 +102,7 @@ class LimitOrderChaser:
                                 if cancel_result['status'] == OrderStatus.CANCELED.value:
                                     self.order = None
                                 elif cancel_result['status'] == OrderStatus.CLOSED.value:
+                                    self.order = cancel_result
                                     return True
                             else:
                                 logger.warning("撤单失败, cancel_order 返回 None")
@@ -138,9 +141,8 @@ class LimitOrderChaser:
         try:
             async with websockets.connect(ws_url, ssl=self.ssl_context) as ws:
                 counter = 0
-                max_iterations = 100
                 
-                while counter < max_iterations:
+                while counter < self.max_iterations:
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=10)
                         msg_str = str(msg)
@@ -155,15 +157,15 @@ class LimitOrderChaser:
                             # logger.info("订阅确认")
                         
                         counter += 1
-                        if counter >= max_iterations:
-                            logger.warning(f"达到最大迭代次数 {max_iterations}，停止追单")
+                        if counter >= self.max_iterations:
+                            logger.warning(f"达到最大迭代次数 {self.max_iterations}，停止追单")
                             if self.order:
                                 self.cancel_order(self.order['clientOrderId'])
                             break
                             
                     except asyncio.TimeoutError:
-                        logger.warning("WebSocket接收超时，重新尝试")
-                        counter += 25
+                        logger.warning("WebSocket接收超时, 重新尝试")
+                        counter += 20
                         
         except Exception as e:
             logger.error(e)

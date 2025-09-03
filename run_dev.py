@@ -50,11 +50,11 @@ if __name__ == "__main__":
                         max_order=10,
                         enable_fixed_profit_taking=True,
                         fixed_take_profit_rate=0.01,
-                        enable_exit_signal=True,
-                        signal_min_take_profit_rate=0.002,
-                        signal=AlphaTrendGridsSignal(
-                            AlphaTrendSignal(OrderSide.BUY.value)
-                        ),
+                        # enable_exit_signal=True,
+                        # signal_min_take_profit_rate=0.002,
+                        # signal=AlphaTrendGridsSignal(
+                        #     AlphaTrendSignal(OrderSide.BUY.value)
+                        # ),
                         order_file_path="data/grids_strategy_v2_long_buy.json",
                     ),
                     binance_client,
@@ -69,11 +69,11 @@ if __name__ == "__main__":
                         max_order=10,
                         enable_fixed_profit_taking=True,
                         fixed_take_profit_rate=0.01,
-                        enable_exit_signal=True,
-                        signal_min_take_profit_rate=0.002,
-                        signal=AlphaTrendGridsSignal(
-                            AlphaTrendSignal(OrderSide.SELL.value)
-                        ),
+                        # enable_exit_signal=True,
+                        # signal_min_take_profit_rate=0.002,
+                        # signal=AlphaTrendGridsSignal(
+                        #     AlphaTrendSignal(OrderSide.SELL.value)
+                        # ),
                         order_file_path="data/grids_strategy_v2_short_sell.json",
                     ),
                     binance_client,
