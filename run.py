@@ -14,15 +14,6 @@ from strategy.grids_strategy_v2 import SignalGridStrategyConfig, SignalGridStrat
 
 logger = log.getLogger(__name__)
 
-class SimpleStrategyV2(StrategyV2):
-    def __init__(self):
-        super().__init__(None)
-
-    def on_kline_finished(self):
-        print("####👇")
-        print(self.klines)
-        print("####👆")
-
 class StrategyTask(Task):
     def __init__(self, strategy: StrategyV2):
         super().__init__()
@@ -86,7 +77,7 @@ if __name__ == '__main__':
             fixed_take_profit_rate=0.01,
             enable_exit_signal=True,
             signal_min_take_profit_rate=0.002,
-            # signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY.value)),
+            signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY.value)),
             order_file_path='data/grids_strategy_v2_long_buy.json',
         ), binance_client),
         short_strategy=SignalGridStrategy(SignalGridStrategyConfig(
@@ -100,7 +91,7 @@ if __name__ == '__main__':
             fixed_take_profit_rate=0.01,
             enable_exit_signal=True,
             signal_min_take_profit_rate=0.002,
-            # signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL.value)),
+            signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL.value)),
             order_file_path='data/grids_strategy_v2_short_sell.json',
         ), binance_client),
     )))
