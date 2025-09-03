@@ -59,7 +59,7 @@ if __name__ == '__main__':
         is_test=is_test,
     )
 
-    bnbusdc = Symbol(base='bnb', quote='usdt')
+    bnbusdc = Symbol(base='bnb', quote='usdc')
     per_order_qty = 0.01
 
     data_event_loop = BinanceDataEventLoop(kline_subscribes=[
