@@ -165,35 +165,3 @@ class OkxSpotClient(ExSpotClient):
 
         return self.exchange.create_order(symbol, order_type, order_side, quantity, price, params)
 
-
-def _test():
-    okx_client = OkxSwapClient(
-        api_key="90b3ca95-27b9-4786-aca1-e73e5f3112f8",
-        secret="1DB945126584273D4C5E7843FD2764D7",
-        password="147258azS.",
-        test=True)
-
-    def place_order(i):
-        okx_client.place_order(
-            custom_id=str(int(time.time())) + str(i),
-            symbol='SOL-USDT-SWAP',
-            order_side='buy',
-            position_side='long',
-            quantity=1,
-        )
-
-    threads = []
-    for i in range(5):
-        t = threading.Thread(target=place_order, args=(i,))
-        threads.append(t)
-        t.start()
-
-    # 等待所有线程完成
-    for t in threads:
-        t.join()
-
-
-if __name__ == '__main__':
-    _test()
-    print('test ok')
-    time.sleep(100)
