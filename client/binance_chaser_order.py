@@ -9,12 +9,12 @@ from decimal import Decimal
 from model import OrderStatus, Symbol
 from model import OrderSide
 import log
-from client.binance_client import get_tick_size
 
 logger = log.getLogger(__name__)
 
 class LimitOrderChaser:
-    def __init__(self, client: ExSwapClient, symbol: Symbol, side: OrderSide, quantity: float, position_side: str = "LONG"):
+    def __init__(self, client: ExSwapClient, symbol: Symbol, side: OrderSide, quantity: float, 
+                 tick_size: float, position_side: str = "LONG"):
         print(f"symbol:{symbol}, side:{side}, quantity:{quantity}, position_side:{position_side}")
         self.client = client
         self.symbol: Symbol = symbol
@@ -23,7 +23,7 @@ class LimitOrderChaser:
         self.position_side = position_side.upper()
         self.ssl_context = ssl._create_unverified_context()
         self.order = None
-        self.tick_size: float = get_tick_size(self.symbol) or 0.01
+        self.tick_size: float = tick_size
         self.price_precision = len(str(Decimal(str(self.tick_size))).split('.')[1])
 
     def place_order_gtx(self, price):

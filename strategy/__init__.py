@@ -3,7 +3,6 @@ from datetime import datetime
 import pandas as pd
 from pandas import DataFrame
 import builtins
-from enum import Enum
 from dataclasses import dataclass
 
 from client.ex_client import ExClient

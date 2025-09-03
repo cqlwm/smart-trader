@@ -21,7 +21,6 @@ def get_tick_size(symbol: Symbol | str):
     Returns:
         float: 最小价格间隔，如果未找到则返回 None
     """
-    # url = "https://api.binance.com/api/v3/exchangeInfo"
     url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 
     if isinstance(symbol, Symbol):
@@ -48,9 +47,7 @@ def get_tick_size(symbol: Symbol | str):
                 for filter_info in symbol_info['filters']:
                     if filter_info['filterType'] == 'PRICE_FILTER':
                         return float(filter_info['tickSize'])
-        
         return None
-    
     except Exception as e:
         print(f"获取tickSize时发生错误: {str(e)}")
         return None
@@ -71,9 +68,9 @@ class BinanceSwapClient(ExSwapClient):
             symbol=symbol,
             side=order_side,
             quantity=quantity,
+            tick_size=get_tick_size(symbol) or 0.01,
             position_side=position_side,
         )
-            
 
     def balance(self, coin):
         balance = self.exchange.fetch_balance()
@@ -84,25 +81,11 @@ class BinanceSwapClient(ExSwapClient):
             'origClientOrderId': custom_id
         })
 
-    #     'status': 'closed'
     def query_order(self, custom_id: str, symbol: Symbol):
         order = self.exchange.fetch_order(id='', symbol=symbol.ccxt(), params={
             'origClientOrderId': custom_id
         })
         return order
-
-    def place_order(self, custom_id, symbol, order_side, position_side, quantity, price=None):
-        if not price:
-            order_chaser = self.create_chaser(symbol, order_side, quantity, position_side)
-            order_chaser.run()
-            if order_chaser.order:
-                return order_chaser.order
-
-        order_type: OrderType = 'limit' if price else 'market'
-        order = self.exchange.create_order(symbol=symbol, type=order_type, side=order_side,
-                                           amount=quantity, price=price,
-                                           params={'newClientOrderId': custom_id, 'positionSide': position_side})
-        return order        
 
     def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price: float | None = None, **kwargs):
         position_side = kwargs['position_side']
