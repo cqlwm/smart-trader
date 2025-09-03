@@ -68,7 +68,7 @@ if __name__ == '__main__':
         is_test=is_test,
     )
 
-    bnbusdc = Symbol(base='bnb', quote='usdc')
+    bnbusdc = Symbol(base='bnb', quote='usdt')
     per_order_qty = 0.01
 
     data_event_loop = BinanceDataEventLoop(kline_subscribes=[
@@ -86,7 +86,7 @@ if __name__ == '__main__':
             fixed_take_profit_rate=0.01,
             enable_exit_signal=True,
             signal_min_take_profit_rate=0.002,
-            signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY.value)),
+            # signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY.value)),
             order_file_path='data/grids_strategy_v2_long_buy.json',
         ), binance_client),
         short_strategy=SignalGridStrategy(SignalGridStrategyConfig(
@@ -100,7 +100,7 @@ if __name__ == '__main__':
             fixed_take_profit_rate=0.01,
             enable_exit_signal=True,
             signal_min_take_profit_rate=0.002,
-            signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL.value)),
+            # signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL.value)),
             order_file_path='data/grids_strategy_v2_short_sell.json',
         ), binance_client),
     )))

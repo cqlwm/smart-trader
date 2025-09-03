@@ -27,5 +27,6 @@ if __name__ == '__main__':
         symbol=Symbol('BTC', 'USDT'),
         side=OrderSide.BUY,
         quantity=0.001,
+        tick_size=0.1,
     )
     chaser.run()

@@ -4,7 +4,7 @@ from typing import List
 from model import Symbol
 from ccxt.base.exchange import Exchange
 
-from strategy import OrderSide
+from model import OrderSide
 
 
 
