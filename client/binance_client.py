@@ -2,7 +2,7 @@ from typing import List
 import ccxt
 from ccxt.base.types import OrderType
 
-from client.ex_client import ExSwapClient, ExSpotClient
+from client.ex_client import ExClient, ExSwapClient, ExSpotClient
 
 import asyncio
 import websockets
@@ -62,158 +62,6 @@ def get_tick_size(symbol):
         return None
 
 
-class LimitOrderChaser:
-    def __init__(self, api_key, api_secret, symbol, side, quantity, position_side="LONG", is_test=False):
-        print(f"symbol:{symbol}, side:{side}, quantity:{quantity}, position_side:{position_side}")
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.base_url = "https://testnet.binancefuture.com" if is_test else "https://fapi.binance.com"
-        self.symbol = symbol.replace('/', '')
-        self.side = side.upper()
-        self.quantity = quantity
-        self.position_side = position_side.upper()
-        self.ssl_context = ssl._create_unverified_context()
-        self.order = None
-        self.tick_size = get_tick_size(self.symbol)
-        self.price_precision = len(str(Decimal(str(self.tick_size))).split('.')[1])
-
-    def sign_params(self, params):
-        query_string = urlencode(params)
-        signature = hmac.new(self.api_secret.encode('utf-8'),
-                           query_string.encode('utf-8'),
-                           hashlib.sha256).hexdigest()
-        params['signature'] = signature
-        return params
-
-    def place_limit_order(self, price):
-        path = "/fapi/v1/order"
-        params = {
-            "symbol": self.symbol,
-            "side": self.side,
-            "type": "LIMIT",
-            "timeInForce": "GTX",
-            "quantity": self.quantity,
-            "price": float(f"{Decimal(price):.{self.price_precision}f}"),
-            "positionSide": self.position_side,
-            "recvWindow": 5000,
-            "timestamp": int(time.time() * 1000)
-        }
-        params = self.sign_params(params)
-        headers = {"X-MBX-APIKEY": self.api_key}
-        response = requests.post(self.base_url + path, params=params, headers=headers)
-        result = response.json()
-        print("下单返回：", result)
-        return result
-
-    def query_order(self, order_id):
-        path = "/fapi/v1/order"
-        params = {
-            "symbol": self.symbol,
-            "orderId": order_id,
-            "recvWindow": 5000,
-            "timestamp": int(time.time() * 1000)
-        }
-        params = self.sign_params(params)
-        headers = {"X-MBX-APIKEY": self.api_key}
-        response = requests.get(self.base_url + path, params=params, headers=headers)
-        return response.json()
-
-    def cancel_order(self, order_id):
-        path = "/fapi/v1/order"
-        params = {
-            "symbol": self.symbol,
-            "orderId": order_id,
-            "recvWindow": 5000,
-            "timestamp": int(time.time() * 1000)
-        }
-        params = self.sign_params(params)
-        headers = {"X-MBX-APIKEY": self.api_key}
-        response = requests.delete(self.base_url + path, params=params, headers=headers)
-        result = response.json()
-        print("撤单返回：", result)
-        return result
-
-    async def start(self, update_interval=1):
-        async with websockets.connect("wss://fstream.binance.com/ws", ssl=self.ssl_context) as ws:
-            subscribe_message = {
-                "method": "SUBSCRIBE",
-                "params": [f"{self.symbol.lower()}@miniTicker"],
-                "id": 12
-            }
-            await ws.send(json.dumps(subscribe_message))
-            print(f"已订阅 {self.symbol} 的最优挂单价格更新")
-
-            counter = 0
-            while True:
-                try:
-                    msg = await ws.recv()
-                    data = json.loads(msg)
-                    if 'c' in data and data['e'] == '24hrMiniTicker':
-                        best_bid = float(data['c']) - self.tick_size
-                        best_ask = float(data['c']) + self.tick_size
-
-                        print(f"最优买单价: {best_bid}, 最优卖单价: {best_ask}")
-                    else:
-                        print('无效数据')
-                        await asyncio.sleep(update_interval)
-                        continue
-
-                    target_price = best_bid if self.side.upper() == "BUY" else best_ask
-                    print(f"当前目标价：{target_price}")
-
-                    if self.order:
-                        current_order_price = float(self.order.get('price', 0))
-                        print(f"当前挂单价格：{current_order_price}, 价差：{abs(current_order_price - target_price)}")
-
-                        self.order = self.query_order(self.order['orderId'])
-                        print(f"订单状态：{self.order['status']}")
-                        
-                        if self.order.get("status") == "FILLED":
-                            print(f"订单 {self.order['orderId']} 已完成，退出循环。")
-                            break
-
-                        try:
-                            # 判断新价格是否更容易成交
-                            price_more_competitive = abs(current_order_price - target_price) > self.tick_size * 3
-                            if self.order.get("status") == "NEW" and price_more_competitive:
-                                print(f"发现更优价格，撤销订单 {self.order['orderId']}")
-                                self.cancel_order(self.order['orderId'])
-                                self.order = None
-                            
-                            counter += 1
-                            if counter > 100:
-                                print(f"超过最大轮训次数，撤销订单 {self.order['orderId']}")
-                                self.cancel_order(self.order['orderId'])
-                                self.order = None
-                                break
-
-                        except Exception as e:
-                            print(f"取消订单时出错：{e}")
-                            await asyncio.sleep(update_interval)
-                            continue
-
-                    if not self.order:
-                        formatted_price = f"{target_price}"
-                        order_response = self.place_limit_order(formatted_price)
-                        if order_response.get("status") == "CANCELED" or order_response.get('code'):
-                            print("订单因市价触发被立即取消。")
-                            self.order = None
-                        else:
-                            self.order = order_response
-                            print(f"新挂单：方向 {self.side.upper()}，价格 {formatted_price}，持仓方向 {self.position_side}")
-                        
-                    await asyncio.sleep(update_interval)
-                except Exception as e:
-                    logger.exception(e)
-                    await asyncio.sleep(update_interval)
-        
-    def run(self):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(self.start())
-        finally:
-            loop.close()
 
 class BinanceSwapClient(ExSwapClient):
     def __init__(self, api_key, api_secret, is_test=False):
@@ -227,8 +75,7 @@ class BinanceSwapClient(ExSwapClient):
         })
         self.exchange.set_sandbox_mode(is_test)
         self.create_chaser = lambda symbol, order_side, quantity, position_side: LimitOrderChaser(
-            api_key=api_key,
-            api_secret=api_secret,
+            client=self,
             symbol=symbol,
             side=order_side,
             quantity=quantity,
@@ -265,10 +112,35 @@ class BinanceSwapClient(ExSwapClient):
         order = self.exchange.create_order(symbol=symbol, type=order_type, side=order_side,
                                            amount=quantity, price=price,
                                            params={'newClientOrderId': custom_id, 'positionSide': position_side})
-        return order
+        return order        
 
-    def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price=None, **kwargs):
-        self.place_order(custom_id, symbol.binance(), order_side.name, kwargs['position_side'], quantity, price)
+    def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price: float | None = None, **kwargs):
+        position_side = kwargs['position_side']
+
+        if kwargs.get("chaser"):
+            order_chaser = self.create_chaser(symbol, order_side, quantity, position_side)
+            order_chaser.run()
+            if order_chaser.order:
+                return order_chaser.order
+            
+        params = {
+            'newClientOrderId': custom_id, 
+            'positionSide': position_side
+        }
+
+        if kwargs.get('time_in_force'):
+            params['timeInForce'] = kwargs['time_in_force']
+
+        order = self.exchange.create_order(
+            symbol=symbol.binance(), 
+            type='limit' if price else 'market', 
+            side=order_side.value, 
+            amount=quantity, 
+            price=price, 
+            params=params
+        )
+
+        return order        
 
     def close_position(self, symbol, position_side, auto_cancel=True):
         positions = self.positions(symbol)
