@@ -141,7 +141,7 @@ class SignalGridStrategy(StrategyV2):
         self.orders: List[Order] = self.order_recorder.check_reload(force=True) or []
 
     def place_order(self, order_id: str, side: OrderSide, qty: float, price: float | None = None):
-        self.ex_client.place_order_v2(custom_id=order_id, symbol=self.config.symbol, order_side=side, quantity=qty, price=price, position_side=self.config.position_side)
+        self.ex_client.place_order_v2(custom_id=order_id, symbol=self.config.symbol, order_side=side, quantity=qty, price=price, position_side=self.config.position_side, chaser=True)
     
     def check_open_order(self) -> bool:
 

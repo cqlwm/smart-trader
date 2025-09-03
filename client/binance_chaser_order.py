@@ -1,3 +1,4 @@
+import secrets
 from client.ex_client import ExSwapClient
 
 import asyncio
@@ -27,7 +28,7 @@ class LimitOrderChaser:
         self.price_precision = len(str(Decimal(str(self.tick_size))).split('.')[1])
 
     def place_order_gtx(self, price):
-        custom_id=str(time.time())
+        custom_id=f'{self.side.value}{secrets.token_hex(nbytes=5)}'
         logger.info("下单：%s, %s, %s, %s, %s", self.symbol.ccxt(), self.side, self.quantity, price, custom_id)
         result = self.client.place_order_v2(
             custom_id=custom_id,
@@ -142,40 +143,30 @@ class LimitOrderChaser:
                 while counter < max_iterations:
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=10)
-                        data = json.loads(msg)
-                        
-                        if 'c' in data and data.get('e') == '24hrMiniTicker':
+                        msg_str = str(msg)
+                        if '"c"' in msg_str and '24hrMiniTicker' in msg_str:
+                            data = json.loads(msg)
                             current_price = float(data['c'])
-                            logger.debug(f"收到价格更新: {current_price}")
-                            
                             chase_result = self.chase(current_price)
                             if chase_result:
                                 logger.info("订单已成交，退出追单循环")
                                 break
-                        elif data.get('id') == 12:
-                            logger.info("订阅确认")
+                        # elif '"id"' in msg_str and '12' in msg_str:
+                            # logger.info("订阅确认")
                         
                         counter += 1
                         if counter >= max_iterations:
                             logger.warning(f"达到最大迭代次数 {max_iterations}，停止追单")
                             if self.order:
-                                self.cancel_order(self.order['orderId'])
+                                self.cancel_order(self.order['clientOrderId'])
                             break
                             
                     except asyncio.TimeoutError:
                         logger.warning("WebSocket接收超时，重新尝试")
-                        continue
-                    except json.JSONDecodeError as e:
-                        logger.error(f"JSON解析错误: {e}")
-                        continue
-                    except Exception as e:
-                        logger.error(f"处理WebSocket消息时出错: {e}")
-                        await asyncio.sleep(update_interval)
-                        continue
+                        counter += 25
                         
         except Exception as e:
             logger.error(e)
-            raise
         
     def run(self):
         loop = asyncio.new_event_loop()
@@ -184,3 +175,5 @@ class LimitOrderChaser:
             loop.run_until_complete(self.start())
         finally:
             loop.close()
+        
+        return self.order and self.order['status'] == OrderStatus.CLOSED.value

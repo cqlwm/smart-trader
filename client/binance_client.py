@@ -1,5 +1,4 @@
 import ccxt
-from ccxt.base.types import OrderType
 
 from client.binance_chaser_order import LimitOrderChaser
 from client.ex_client import ExSwapClient
@@ -21,7 +20,6 @@ def get_tick_size(symbol: Symbol | str):
     Returns:
         float: 最小价格间隔，如果未找到则返回 None
     """
-    url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 
     if isinstance(symbol, Symbol):
         symbol = symbol.binance()
@@ -37,7 +35,7 @@ def get_tick_size(symbol: Symbol | str):
     
     try:
         # 发送请求获取exchangeInfo数据
-        response = requests.get(url)
+        response = requests.get("https://fapi.binance.com/fapi/v1/exchangeInfo")
         data = response.json()
         
         # 遍历所有交易对信息
@@ -92,10 +90,12 @@ class BinanceSwapClient(ExSwapClient):
 
         if kwargs.get("chaser"):
             order_chaser = self.create_chaser(symbol, order_side, quantity, position_side)
-            order_chaser.run()
-            if order_chaser.order and order_chaser.order['status'] == 'closed':
+            ok = order_chaser.run()
+            if ok:
                 return order_chaser.order
-            
+            else:
+                logger.error("追单失败, 市价执行")
+
         params = {
             'newClientOrderId': custom_id, 
             'positionSide': position_side
@@ -112,7 +112,6 @@ class BinanceSwapClient(ExSwapClient):
             price=price, 
             params=params
         )
-
         return order        
 
     def close_position(self, symbol, position_side, auto_cancel=True):
