@@ -1,3 +1,5 @@
+import json
+import os
 from model import Kline
 from strategy import StrategyV2
 from strategy.grids_strategy_v2 import SignalGridStrategy
@@ -6,6 +8,7 @@ from strategy.grids_strategy_v2 import SignalGridStrategy
 class BidirectionalGridRotationTask(StrategyV2):
     def __init__(self, long_strategy: SignalGridStrategy, short_strategy: SignalGridStrategy):
         super().__init__()
+        self.config_path = "data/bidirectional_grid_rotation_task.json"
         self.short_strategy = short_strategy
         self.long_strategy = long_strategy
         self.rotation_increment = 10
@@ -13,6 +16,18 @@ class BidirectionalGridRotationTask(StrategyV2):
         self._init_current_strategy()
     
     def _init_current_strategy(self):
+        # 判断config是否存在
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, "r") as f:
+                    config = json.load(f)
+                    if config.get("current_strategy"):
+                        self.rotation()
+                        if config["current_strategy"] == "long" and self.current_strategy != self.long_strategy:
+                            self.rotation()
+            except Exception:
+                pass
+
         if len(self.long_strategy.orders) > len(self.short_strategy.orders):
             self.rotation()
         else:
@@ -39,6 +54,9 @@ class BidirectionalGridRotationTask(StrategyV2):
     def run(self, kline: Kline):
         if self.is_order_full(self.current_strategy):
             self.rotation()
+            # 保存当前策略
+            with open(self.config_path, "w") as f:
+                json.dump({"current_strategy": self.current_strategy.config.position_side}, f)
         
         self.long_strategy.run(kline)
         self.short_strategy.run(kline)

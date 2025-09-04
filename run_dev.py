@@ -37,48 +37,45 @@ if __name__ == "__main__":
             symbol.binance_ws_sub_kline("1m"),
         ]
     )
-    data_event_loop.add_task(
-        StrategyTask(
-            BidirectionalGridRotationTask(
-                long_strategy=SignalGridStrategy(
-                    SignalGridStrategyConfig(
-                        symbol=symbol,
-                        position_side="long",
-                        master_side=OrderSide.BUY,
-                        per_order_qty=per_order_qty,
-                        grid_spacing_rate=0.001,
-                        max_order=10,
-                        enable_fixed_profit_taking=True,
-                        fixed_take_profit_rate=0.01,
-                        # enable_exit_signal=True,
-                        # signal_min_take_profit_rate=0.002,
-                        # signal=AlphaTrendGridsSignal(
-                        #     AlphaTrendSignal(OrderSide.BUY.value)
-                        # ),
-                        order_file_path="data/grids_strategy_v2_long_buy.json",
-                    ),
-                    binance_client,
-                ),
-                short_strategy=SignalGridStrategy(
-                    SignalGridStrategyConfig(
-                        symbol=symbol,
-                        position_side="short",
-                        master_side=OrderSide.SELL,
-                        per_order_qty=per_order_qty,
-                        grid_spacing_rate=0.001,
-                        max_order=10,
-                        enable_fixed_profit_taking=True,
-                        fixed_take_profit_rate=0.01,
-                        # enable_exit_signal=True,
-                        # signal_min_take_profit_rate=0.002,
-                        # signal=AlphaTrendGridsSignal(
-                        #     AlphaTrendSignal(OrderSide.SELL.value)
-                        # ),
-                        order_file_path="data/grids_strategy_v2_short_sell.json",
-                    ),
-                    binance_client,
-                ),
-            )
-        )
+    long_strategy=SignalGridStrategy(
+        SignalGridStrategyConfig(
+            symbol=symbol,
+            position_side="long",
+            master_side=OrderSide.BUY,
+            per_order_qty=per_order_qty,
+            grid_spacing_rate=0.001,
+            max_order=10,
+            enable_fixed_profit_taking=True,
+            fixed_take_profit_rate=0.01,
+            # enable_exit_signal=True,
+            # signal_min_take_profit_rate=0.002,
+            # signal=AlphaTrendGridsSignal(
+            #     AlphaTrendSignal(OrderSide.BUY.value)
+            # ),
+            order_file_path="data/grids_strategy_v2_long_buy.json",
+        ),
+        binance_client,
     )
+    long_strategy.init_kline_nums = 10
+    short_strategy=SignalGridStrategy(
+        SignalGridStrategyConfig(
+            symbol=symbol,
+            position_side="short",
+            master_side=OrderSide.SELL,
+            per_order_qty=per_order_qty,
+            grid_spacing_rate=0.001,
+            max_order=10,
+            enable_fixed_profit_taking=True,
+            fixed_take_profit_rate=0.01,
+            # enable_exit_signal=True,
+            # signal_min_take_profit_rate=0.002,
+            # signal=AlphaTrendGridsSignal(
+            #     AlphaTrendSignal(OrderSide.SELL.value)
+            # ),
+            order_file_path="data/grids_strategy_v2_short_sell.json",
+        ),
+        binance_client,
+    )
+    short_strategy.init_kline_nums = 10
+    data_event_loop.add_task(StrategyTask(BidirectionalGridRotationTask(long_strategy, short_strategy)))
     data_event_loop.start()

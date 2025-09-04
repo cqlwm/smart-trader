@@ -64,6 +64,7 @@ class StrategyV2(ABC):
         self.ex_client: ExClient
         self.klines: DataFrame = DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
         self.last_kline: Kline
+        self.init_kline_nums = 300
 
     def on_kline(self):
         pass
@@ -73,7 +74,7 @@ class StrategyV2(ABC):
 
     def run(self, kline: Kline):
         if len(self.klines) == 0:
-            ohlcv = self.ex_client.fetch_ohlcv(kline.symbol, kline.timeframe, 300)
+            ohlcv = self.ex_client.fetch_ohlcv(kline.symbol, kline.timeframe, self.init_kline_nums)
             df = pd.DataFrame(ohlcv, columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
             df['datetime'] = df['datetime'].apply(lambda x: datetime.fromtimestamp(x / 1000).strftime('%Y-%m-%d %H:%M:%S'))
             self.klines = df

@@ -130,6 +130,8 @@ class LimitOrderChaser:
 
     def end_check(self, is_end: bool = False):
         if self.order:
+            if self.order['status'] == OrderStatus.CLOSED.value:
+                return True
             if self.chase(self.order['price']):
                 return True
             else:
@@ -137,7 +139,7 @@ class LimitOrderChaser:
         else:
             return False
 
-    async def start(self, update_interval=1):
+    async def start(self):
         ws_url = f"wss://fstream.binance.com/ws/{self.symbol.binance().lower()}@miniTicker"
         async with websockets.connect(ws_url, ssl=self.ssl_context) as ws:
             counter = 0
