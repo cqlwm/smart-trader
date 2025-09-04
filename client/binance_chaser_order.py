@@ -139,7 +139,7 @@ class LimitOrderChaser:
         else:
             return False
 
-    async def start(self):
+    async def start(self, update_interval=1):
         ws_url = f"wss://fstream.binance.com/ws/{self.symbol.binance().lower()}@miniTicker"
         async with websockets.connect(ws_url, ssl=self.ssl_context) as ws:
             counter = 0
@@ -154,6 +154,7 @@ class LimitOrderChaser:
                         if chase_result:
                             logger.info("订单已成交，退出追单循环")
                             break
+                        await asyncio.sleep(update_interval)
                     
                     counter += 1
                     if counter >= self.max_iterations:
