@@ -81,7 +81,7 @@ class OrderRecorder(BaseModel):
     def record(self, latest_orders: List[Order], close_orders: List[Order]):
         changed = False
         if len(latest_orders) != len(self.orders):
-            self.orders = latest_orders
+            self.orders = latest_orders.copy()
             changed = True
 
         if close_orders:
@@ -105,7 +105,7 @@ class OrderRecorder(BaseModel):
             _recorder = OrderRecorder.model_validate_json(f.read())
             if _recorder.is_reload or force:
                 self.orders = _recorder.orders
-                return self.orders
+                return self.orders.copy()
         return None
 
 class SignalGridStrategyConfig(BaseModel):
