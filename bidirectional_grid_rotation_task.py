@@ -3,7 +3,9 @@ import os
 from model import Kline
 from strategy import StrategyV2
 from strategy.grids_strategy_v2 import SignalGridStrategy
+import log
 
+logger = log.getLogger(__name__)
 
 class BidirectionalGridRotationTask(StrategyV2):
     def __init__(self, long_strategy: SignalGridStrategy, short_strategy: SignalGridStrategy):
@@ -16,23 +18,21 @@ class BidirectionalGridRotationTask(StrategyV2):
         self._init_current_strategy()
     
     def _init_current_strategy(self):
-        # 判断config是否存在
+        start_strategy = 'long'
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, "r") as f:
                     config = json.load(f)
                     if config.get("current_strategy"):
-                        self.rotation()
-                        if config["current_strategy"] == "long" and self.current_strategy != self.long_strategy:
-                            self.rotation()
+                        start_strategy = config["current_strategy"]
             except Exception:
                 pass
+        
+        self.rotation()
+        if start_strategy == "long" and self.current_strategy != self.long_strategy:
+            self.rotation()
 
-        if len(self.long_strategy.orders) > len(self.short_strategy.orders):
-            self.rotation()
-        else:
-            self.current_strategy = self.short_strategy
-            self.rotation()
+        logger.info(f"start strategy: {self.current_strategy.config.position_side}-{self.current_strategy.config.master_side}")
     
     def is_order_full(self, strategy: SignalGridStrategy):
         return len(strategy.orders) >= strategy.config.max_order
