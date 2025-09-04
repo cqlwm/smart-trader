@@ -29,12 +29,12 @@ if __name__ == "__main__":
         is_test=is_test,
     )
 
-    bnbusdc = Symbol(base="bnb", quote="usdt")
+    symbol = Symbol(base="btc", quote="usdt")
     per_order_qty = 0.01
 
     data_event_loop = BinanceDataEventLoop(
         kline_subscribes=[
-            bnbusdc.binance_ws_sub_kline("1m"),
+            symbol.binance_ws_sub_kline("1m"),
         ]
     )
     data_event_loop.add_task(
@@ -42,7 +42,7 @@ if __name__ == "__main__":
             BidirectionalGridRotationTask(
                 long_strategy=SignalGridStrategy(
                     SignalGridStrategyConfig(
-                        symbol=bnbusdc,
+                        symbol=symbol,
                         position_side="long",
                         master_side=OrderSide.BUY,
                         per_order_qty=per_order_qty,
@@ -61,7 +61,7 @@ if __name__ == "__main__":
                 ),
                 short_strategy=SignalGridStrategy(
                     SignalGridStrategyConfig(
-                        symbol=bnbusdc,
+                        symbol=symbol,
                         position_side="short",
                         master_side=OrderSide.SELL,
                         per_order_qty=per_order_qty,

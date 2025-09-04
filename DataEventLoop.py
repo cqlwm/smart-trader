@@ -95,6 +95,6 @@ class BinanceDataEventLoop(DataEventLoop):
 
     def on_pong(self, ws, message):
         logger.debug("Pong")
-        if random.randint(0, 100) < 10:
+        if random.randint(1, 100) == 1:
             self._subscribe(ws)
 
