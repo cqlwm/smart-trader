@@ -82,25 +82,30 @@ class LimitOrderChaser:
         limit_price = best_bid if self.side == OrderSide.BUY else best_ask
         
         if self.order:
-            latest_order = self.query_order(self.order['clientOrderId'])
-            if not latest_order:
+            query_order_result = self.query_order(self.order['clientOrderId'])
+            if not query_order_result:
                 self.order = None
                 return False
                 
-            if latest_order['status'] == OrderStatus.CLOSED.value:
+            if query_order_result['status'] == OrderStatus.CLOSED.value:
                 logger.info(f"订单 {self.order['clientOrderId']} 已成交")
-                self.order = latest_order
+                self.order = query_order_result
                 return True
             
-            if latest_order['status'] in [OrderStatus.CANCELED.value, OrderStatus.REJECTED.value, OrderStatus.EXPIRED.value]:
+            if query_order_result['status'] in [OrderStatus.CANCELED.value, OrderStatus.REJECTED.value, OrderStatus.EXPIRED.value]:
                 logger.info(f"订单 {self.order['clientOrderId']} 已取消")
                 self.order = None
                 return False
 
-            if latest_order['status'] == OrderStatus.OPEN.value:
-                latest_order_price = latest_order['price']
-                if abs(latest_order_price - limit_price) > self.tick_size * 3:
-                    logger.info(f"撤销订单 {self.order['clientOrderId']}，订单价格: {latest_order_price}, 重置订单价格: {limit_price}")
+            if query_order_result['status'] == OrderStatus.OPEN.value:
+                if float(query_order_result['info']['executedQty']) > 0:
+                    # 订单只要部分成交就认为是已成交
+                    query_order_result['status'] = OrderStatus.CLOSED.value
+                    self.order = query_order_result
+                    return True
+                
+                if abs(query_order_result['price'] - limit_price) > self.tick_size * 3:
+                    logger.info(f"撤销订单 {self.order['clientOrderId']}，订单价格: {query_order_result['price']}, 重置订单价格: {limit_price}")
                     cancel_result = self.cancel_order(self.order['clientOrderId'])
                     if cancel_result and cancel_result['status'] == OrderStatus.CANCELED.value:
                         # 订单取消成功重置order；如果失败，下一轮插叙确认状态
