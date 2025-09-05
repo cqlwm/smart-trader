@@ -1,5 +1,5 @@
 from DataEventLoop import BinanceDataEventLoop
-from bidirectional_grid_rotation_task import BidirectionalGridRotationTask
+from strategy.bidirectional_grid_rotation_strategy import BidirectionalGridRotationStrategy
 from client.binance_client import BinanceSwapClient
 import log
 import os
@@ -78,7 +78,7 @@ if __name__ == "__main__":
     )
     short_strategy.init_kline_nums = 10
 
-    rotation_strategy = BidirectionalGridRotationTask(long_strategy, short_strategy)
+    rotation_strategy = BidirectionalGridRotationStrategy(long_strategy, short_strategy)
     rotation_strategy.rotation_increment = 1
     data_event_loop.add_task(StrategyTask(rotation_strategy))
     data_event_loop.start()

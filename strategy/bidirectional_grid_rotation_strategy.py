@@ -7,7 +7,7 @@ import log
 
 logger = log.getLogger(__name__)
 
-class BidirectionalGridRotationTask(StrategyV2):
+class BidirectionalGridRotationStrategy(StrategyV2):
     def __init__(self, long_strategy: SignalGridStrategy, short_strategy: SignalGridStrategy):
         super().__init__()
         self.config_path = "data/bidirectional_grid_rotation_task.json"

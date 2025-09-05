@@ -3,7 +3,7 @@ import log
 import os
 import re
 from DataEventLoop import BinanceDataEventLoop, Task
-from bidirectional_grid_rotation_task import BidirectionalGridRotationTask
+from strategy.bidirectional_grid_rotation_strategy import BidirectionalGridRotationStrategy
 from client.binance_client import BinanceSwapClient
 from model import Symbol, Kline
 from strategy import StrategyV2
@@ -65,7 +65,7 @@ if __name__ == '__main__':
     data_event_loop = BinanceDataEventLoop(kline_subscribes=[
         bnbusdc.binance_ws_sub_kline('1m'), 
     ])
-    data_event_loop.add_task(StrategyTask(BidirectionalGridRotationTask(
+    data_event_loop.add_task(StrategyTask(BidirectionalGridRotationStrategy(
         long_strategy=SignalGridStrategy(SignalGridStrategyConfig(
             symbol=bnbusdc,
             position_side='long',
