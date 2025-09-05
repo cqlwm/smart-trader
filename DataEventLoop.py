@@ -11,14 +11,14 @@ logger = logging.getLogger(__name__)
 class Task:
     def __init__(self):
         self.name: str
-        self.is_running: bool = False
+        # self.is_running: bool = False
 
-    def run0(self, data: str):
-        if self.is_running:
-            return
-        self.is_running = True
-        self.run(data)
-        self.is_running = False
+    # def run0(self, data: str):
+    #     if self.is_running:
+    #         return
+    #     self.is_running = True
+    #     self.run(data)
+    #     self.is_running = False
     
     def run(self, data: str):
         pass
@@ -34,7 +34,7 @@ class DataEventLoop:
 
     def loop(self, data: str):
         for task in self.tasks:
-            self.executor.submit(task.run0, data)
+            self.executor.submit(task.run, data)
 
     def start(self):
         pass

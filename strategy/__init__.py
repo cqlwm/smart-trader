@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
+import threading
 import pandas as pd
 from pandas import DataFrame
 import builtins
@@ -65,6 +66,9 @@ class StrategyV2(ABC):
         self.klines: DataFrame = DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
         self.last_kline: Kline
         self.init_kline_nums = 300
+        # 新增两个锁
+        self.on_kline_finished_lock = threading.Lock()
+        self.on_kline_lock = threading.Lock()
 
     def on_kline(self):
         pass
@@ -80,7 +84,12 @@ class StrategyV2(ABC):
             self.klines = df
         
         self.last_kline = kline
-        self.on_kline()
+
+        if self.on_kline_lock.acquire(blocking=False):
+            try:
+                self.on_kline()
+            finally:
+                self.on_kline_lock.release()
 
         if self.last_kline.finished:
             if len(self.klines) > 0 and self.klines['datetime'].iloc[-1] == self.last_kline.datetime:
@@ -89,7 +98,12 @@ class StrategyV2(ABC):
             else:
                 new_series = pd.Series(self.last_kline.to_dict(), index=self.klines.columns)
                 self.klines.loc[len(self.klines)] = new_series
-            self.on_kline_finished()
+            
+            if self.on_kline_finished_lock.acquire(blocking=False):
+                try:
+                    self.on_kline_finished()
+                finally:
+                    self.on_kline_finished_lock.release()
 
 class Strategy(ABC):
     def __init__(self):
