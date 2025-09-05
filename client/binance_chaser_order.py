@@ -168,8 +168,7 @@ class LimitOrderChaser:
                             if chase_result and self.order:
                                 logger.info(f"结束追单, 订单 {self.order['clientOrderId']} {'已挂单' if only_open else '已成交'}")
                                 break
-                            
-                            await asyncio.sleep(1 if self.order else 0.5)
+                            await asyncio.sleep(1)
                         counter += 1
                     logger.info(f"追单迭代次数 {counter}")
                 except asyncio.TimeoutError:
