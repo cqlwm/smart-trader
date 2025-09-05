@@ -49,7 +49,7 @@ class BidirectionalGridRotationTask(StrategyV2):
     def balance_max_order(self):
         max_order_diff = self.current_strategy.config.max_order - len(self.current_strategy.orders) - self.rotation_increment
         if max_order_diff > 0:
-            self.current_strategy.config.max_order += max_order_diff
+            self.current_strategy.config.max_order -= max_order_diff
 
     def run(self, kline: Kline):
         if self.is_order_full(self.current_strategy):
