@@ -23,6 +23,7 @@ class Order(BaseModel):
     fixed_take_profit_rate: float
     signal_min_take_profit_rate: float
     close_price: float | None = None
+    status: str | None = None
 
     def __hash__(self):
         return hash(self.custom_id)
@@ -178,10 +179,10 @@ class SignalGridStrategy(StrategyV2):
             self.orders.append(order)
             place_order_result = self.place_order(order_id, self.config.master_side, self.config.per_order_qty)
             if place_order_result:
-                if place_order_result.get('price'):
-                    order.price = place_order_result['price']
                 if place_order_result.get('clientOrderId'):
                     order.custom_id = place_order_result['clientOrderId']
+                    order.price = place_order_result['price']
+                    order.status = place_order_result['status']
             return True
         return False
 
@@ -194,6 +195,10 @@ class SignalGridStrategy(StrategyV2):
         for order in self.orders:
             profit_level = order.profit_level(self.last_kline.close)
             if (profit_level == 2 and self.config.enable_fixed_profit_taking) or (profit_level == 1 and exit_signal):
+                if order.status == 'open':
+                    query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
+                    if query_order and query_order['status'] != 'closed':
+                        continue
                 flat_qty += order.quantity
                 order.close_price = self.last_kline.close
                 flat_orders.append(order)
@@ -203,7 +208,10 @@ class SignalGridStrategy(StrategyV2):
         if flat_qty > 0:
             flat_order_side = self.config.master_side.reversal()
             flat_order_id = build_order_id(flat_order_side)
-            self.place_order(flat_order_id, flat_order_side, flat_qty)
+            place_order_result = self.place_order(flat_order_id, flat_order_side, flat_qty)
+            if place_order_result:
+                for order in flat_orders:
+                    order.close_price = place_order_result['price']
         
         # 即使flat_qty==0，也需要更新订单，因为可以移除手动修改的0数量订单
         if len(self.orders) != len(new_orders):

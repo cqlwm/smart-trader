@@ -32,7 +32,7 @@ class BidirectionalGridRotationTask(StrategyV2):
         if start_strategy == "long" and self.current_strategy != self.long_strategy:
             self.rotation()
 
-        logger.info(f"start strategy: {self.current_strategy.config.position_side}-{self.current_strategy.config.master_side}")
+        logger.info(f"BidirectionalGridRotation Start with {self.current_strategy.config.position_side}-{self.current_strategy.config.master_side.value}")
     
     def is_order_full(self, strategy: SignalGridStrategy):
         return len(strategy.orders) >= strategy.config.max_order
