@@ -199,6 +199,8 @@ class SignalGridStrategy(StrategyV2):
                     query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
                     if query_order and query_order['status'] != 'closed':
                         continue
+                    else:
+                        order.status = 'closed'
                 flat_qty += order.quantity
                 order.close_price = self.last_kline.close
                 flat_orders.append(order)
