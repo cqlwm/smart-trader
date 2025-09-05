@@ -54,7 +54,7 @@ class BidirectionalGridRotationTask(StrategyV2):
     def run(self, kline: Kline):
         if self.is_order_full(self.current_strategy):
             self.rotation()
-            # 保存当前策略
+            logger.info(f"Rotation to {self.current_strategy.config.position_side}-{self.current_strategy.config.master_side.value}")
             with open(self.config_path, "w") as f:
                 json.dump({"current_strategy": self.current_strategy.config.position_side}, f)
         

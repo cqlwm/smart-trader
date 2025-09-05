@@ -15,7 +15,7 @@ logger = log.getLogger(__name__)
 class LimitOrderChaser:
     def __init__(self, client: ExSwapClient, symbol: Symbol, side: OrderSide, quantity: float, 
                  tick_size: float, position_side: str = "LONG"):
-        logger.info(f"symbol:{symbol}, side:{side}, quantity:{quantity}, position_side:{position_side}")
+        logger.info(f"Init Chaser : {symbol.ccxt()}, {side.name}, {quantity}, {position_side}")
         self.client = client
         self.symbol: Symbol = symbol
         self.side = side
@@ -122,7 +122,6 @@ class LimitOrderChaser:
                 place_order_result = self.place_order_gtx(limit_price)
                 if place_order_result and place_order_result.get('status'):
                     self.order = place_order_result
-                    logger.info(f"新订单已下单: {place_order_result['clientOrderId']}, 价格: {limit_price}")
                     return place_order_result['status'] == OrderStatus.CLOSED.value
             except Exception as e:
                 if '"code":-5022' in str(e.args):

@@ -44,7 +44,7 @@ if __name__ == "__main__":
             master_side=OrderSide.BUY,
             per_order_qty=per_order_qty,
             grid_spacing_rate=0.001,
-            max_order=10,
+            max_order=1,
             enable_fixed_profit_taking=True,
             fixed_take_profit_rate=0.01,
             # enable_exit_signal=True,
@@ -64,7 +64,7 @@ if __name__ == "__main__":
             master_side=OrderSide.SELL,
             per_order_qty=per_order_qty,
             grid_spacing_rate=0.001,
-            max_order=10,
+            max_order=1,
             enable_fixed_profit_taking=True,
             fixed_take_profit_rate=0.01,
             # enable_exit_signal=True,
@@ -77,5 +77,8 @@ if __name__ == "__main__":
         binance_client,
     )
     short_strategy.init_kline_nums = 10
-    data_event_loop.add_task(StrategyTask(BidirectionalGridRotationTask(long_strategy, short_strategy)))
+
+    rotation_strategy = BidirectionalGridRotationTask(long_strategy, short_strategy)
+    rotation_strategy.rotation_increment = 1
+    data_event_loop.add_task(StrategyTask(rotation_strategy))
     data_event_loop.start()
