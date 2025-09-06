@@ -60,7 +60,6 @@ if __name__ == '__main__':
     )
 
     bnbusdc = Symbol(base='bnb', quote='usdc')
-    per_order_qty = 0.01
 
     data_event_loop = BinanceDataEventLoop(kline_subscribes=[
         bnbusdc.binance_ws_sub_kline('1m'), 
@@ -70,7 +69,7 @@ if __name__ == '__main__':
             symbol=bnbusdc,
             position_side='long',
             master_side=OrderSide.BUY,
-            per_order_qty=per_order_qty,
+            per_order_qty=0.05,
             grid_spacing_rate=0.001,
             max_order=10,
             enable_fixed_profit_taking=True,
@@ -84,7 +83,7 @@ if __name__ == '__main__':
             symbol=bnbusdc,
             position_side='short',
             master_side=OrderSide.SELL,
-            per_order_qty=per_order_qty,
+            per_order_qty=0.05,
             grid_spacing_rate=0.001,
             max_order=10,
             enable_fixed_profit_taking=True,
