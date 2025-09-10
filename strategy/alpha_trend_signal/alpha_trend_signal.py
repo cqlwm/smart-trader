@@ -63,7 +63,7 @@ def _alpha_trend_signal(df, atr_multiple=1.0, period=8):
 
 
 class AlphaTrendSignal(Signal):
-    def __init__(self, side, atr_multiple=1.0, period=8, additional_signal=None):
+    def __init__(self, side, atr_multiple=1.0, period=8):
         super().__init__(side)
         self.atr_multiple = atr_multiple
         self.period = period
@@ -71,11 +71,6 @@ class AlphaTrendSignal(Signal):
         self.datetime = None
         self.current_signal = 0
         self.current_kline_status = 0
-
-        if additional_signal is not None:
-            self.additional_signal = additional_signal
-        else:
-            self.additional_signal = self
 
     def _compute_signal(self, df):
         df = _alpha_trend_signal(df, self.atr_multiple, self.period)
@@ -92,11 +87,7 @@ class AlphaTrendSignal(Signal):
 
         if self.current_signal == 0 or self.current_signal != signal:
             self.current_signal = signal
-            additional_signal = self.additional_signal.current_signal
-            if additional_signal == signal or additional_signal == 0:
-                return signal
-            else:
-                return 0
+            return signal
         else:
             return 0
 

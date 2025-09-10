@@ -18,7 +18,7 @@
         "signal_min_take_profit_rate": 0.002,
         "rotation_config": {
             "rotation_increment": 10,
-            "config_path": "data/bnb_usdc_bidirectional_grid_rotation.json"
+            "config_path": "data/bidirectional_grid_rotation_bnb_usdc.json"
         }
       },
       "order_files": {

@@ -79,8 +79,8 @@ if __name__ == '__main__':
                 config=config['rotation_config'],
             )
 
-            strategy.long_strategy.init_kline_nums = 1
-            strategy.short_strategy.init_kline_nums = 1
+            strategy.long_strategy.init_kline_nums = 300
+            strategy.short_strategy.init_kline_nums = 300
             strategy.rotation_increment = 1
             
             data_event_loop.add_task(StrategyTask(strategy))
