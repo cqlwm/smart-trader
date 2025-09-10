@@ -63,7 +63,16 @@ class Order:
 class StrategyV2(ABC):
     def __init__(self):
         self.ex_client: ExClient
-        self.klines: DataFrame = DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+        # 指定列的数据类型，包括finished列
+        self.klines: DataFrame = DataFrame({
+            'datetime': pd.Series(dtype='str'),
+            'open': pd.Series(dtype='float64'),
+            'high': pd.Series(dtype='float64'),
+            'low': pd.Series(dtype='float64'),
+            'close': pd.Series(dtype='float64'),
+            'volume': pd.Series(dtype='float64'),
+            'finished': pd.Series(dtype='boolean')  # 使用boolean类型支持NaN
+        })
         self.last_kline: Kline
         self.init_kline_nums = 300
         # 新增两个锁
