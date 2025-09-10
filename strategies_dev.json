@@ -1,0 +1,56 @@
+{
+  "strategies": [
+    {
+      "name": "bnb_usdc_bidirectional",
+      "symbol": {
+        "base": "bnb",
+        "quote": "usdt"
+      },
+      "strategy_type": "bidirectional_grid_rotation",
+      "timeframe": "1m",
+      "config": {
+        "per_order_qty": 0.05,
+        "grid_spacing_rate": 0.001,
+        "max_order": 10,
+        "enable_fixed_profit_taking": true,
+        "fixed_take_profit_rate": 0.01,
+        "enable_exit_signal": true,
+        "signal_min_take_profit_rate": 0.002,
+        "rotation_config": {
+            "rotation_increment": 10,
+            "config_path": "data/bnb_usdt_bidirectional_grid_rotation.json"
+        }
+      },
+      "order_files": {
+        "long": "data/grids_strategy_v2_long_buy_bnb_usdt.json",
+        "short": "data/grids_strategy_v2_short_sell_bnb_usdt.json"
+      }
+    },
+    {
+      "name": "hype_usdt_bidirectional",
+      "symbol": {
+        "base": "hype",
+        "quote": "usdt"
+      },
+      "strategy_type": "bidirectional_grid_rotation_false",
+      "timeframe": "1m",
+      "config": {
+        "per_order_qty": 1,
+        "grid_spacing_rate": 0.002,
+        "max_order": 10,
+        "enable_fixed_profit_taking": true,
+        "fixed_take_profit_rate": 0.01,
+        "enable_exit_signal": true,
+        "signal_min_take_profit_rate": 0.005,
+        "rotation_config": {
+            "rotation_increment": 10,
+            "config_path": "data/hype_usdt_bidirectional_grid_rotation.json"
+        }
+      },
+      "order_files": {
+        "long": "data/grids_strategy_v2_long_buy_hype_usdt.json",
+        "short": "data/grids_strategy_v2_short_sell_hype_usdt.json"
+      }
+    }
+  ]
+}

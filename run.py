@@ -59,39 +59,59 @@ if __name__ == '__main__':
         is_test=is_test,
     )
 
-    bnbusdc = Symbol(base='bnb', quote='usdc')
+    # 加载策略配置
+    with open('strategies.json', 'r') as f:
+        strategies_config = json.load(f)
 
-    data_event_loop = BinanceDataEventLoop(kline_subscribes=[
-        bnbusdc.binance_ws_sub_kline('1m'), 
-    ])
-    data_event_loop.add_task(StrategyTask(BidirectionalGridRotationStrategy(
-        long_strategy=SignalGridStrategy(SignalGridStrategyConfig(
-            symbol=bnbusdc,
-            position_side='long',
-            master_side=OrderSide.BUY,
-            per_order_qty=0.05,
-            grid_spacing_rate=0.001,
-            max_order=10,
-            enable_fixed_profit_taking=True,
-            fixed_take_profit_rate=0.01,
-            enable_exit_signal=True,
-            signal_min_take_profit_rate=0.002,
-            signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY.value)),
-            order_file_path='data/grids_strategy_v2_long_buy.json',
-        ), binance_client),
-        short_strategy=SignalGridStrategy(SignalGridStrategyConfig(
-            symbol=bnbusdc,
-            position_side='short',
-            master_side=OrderSide.SELL,
-            per_order_qty=0.05,
-            grid_spacing_rate=0.001,
-            max_order=10,
-            enable_fixed_profit_taking=True,
-            fixed_take_profit_rate=0.01,
-            enable_exit_signal=True,
-            signal_min_take_profit_rate=0.002,
-            signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL.value)),
-            order_file_path='data/grids_strategy_v2_short_sell.json',
-        ), binance_client),
-    )))
+    kline_subscribes = []
+    data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
+
+    for strategy_config in strategies_config['strategies']:
+        symbol = Symbol(
+            base=strategy_config['symbol']['base'],
+            quote=strategy_config['symbol']['quote']
+        )
+        
+        # 添加K线订阅
+        kline_subscribes.append(symbol.binance_ws_sub_kline(strategy_config['timeframe']))
+
+        if strategy_config['strategy_type'] == 'bidirectional_grid_rotation':
+            config = strategy_config['config']
+            
+            strategy = BidirectionalGridRotationStrategy(
+                long_strategy=SignalGridStrategy(SignalGridStrategyConfig(
+                    symbol=symbol,
+                    position_side='long',
+                    master_side=OrderSide.BUY,
+                    per_order_qty=config['per_order_qty'],
+                    grid_spacing_rate=config['grid_spacing_rate'],
+                    max_order=config['max_order'],
+                    enable_fixed_profit_taking=config['enable_fixed_profit_taking'],
+                    fixed_take_profit_rate=config['fixed_take_profit_rate'],
+                    enable_exit_signal=config['enable_exit_signal'],
+                    signal_min_take_profit_rate=config['signal_min_take_profit_rate'],
+                    signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY.value)),
+                    order_file_path=strategy_config['order_files']['long'],
+                ), binance_client),
+                short_strategy=SignalGridStrategy(SignalGridStrategyConfig(
+                    symbol=symbol,
+                    position_side='short',
+                    master_side=OrderSide.SELL,
+                    per_order_qty=config['per_order_qty'],
+                    grid_spacing_rate=config['grid_spacing_rate'],
+                    max_order=config['max_order'],
+                    enable_fixed_profit_taking=config['enable_fixed_profit_taking'],
+                    fixed_take_profit_rate=config['fixed_take_profit_rate'],
+                    enable_exit_signal=config['enable_exit_signal'],
+                    signal_min_take_profit_rate=config['signal_min_take_profit_rate'],
+                    signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL.value)),
+                    order_file_path=strategy_config['order_files']['short'],
+                ), binance_client),
+                config=config['rotation_config'],
+            )
+            
+            data_event_loop.add_task(StrategyTask(strategy))
+            logger.info(f"Added strategy for {symbol.base.upper()}{symbol.quote.upper()}")
+
     data_event_loop.start()
+

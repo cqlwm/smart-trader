@@ -8,12 +8,12 @@ import log
 logger = log.getLogger(__name__)
 
 class BidirectionalGridRotationStrategy(StrategyV2):
-    def __init__(self, long_strategy: SignalGridStrategy, short_strategy: SignalGridStrategy):
+    def __init__(self, long_strategy: SignalGridStrategy, short_strategy: SignalGridStrategy, config: dict):
         super().__init__()
-        self.config_path = "data/bidirectional_grid_rotation_task.json"
+        self.config_path = config['config_path']
         self.short_strategy = short_strategy
         self.long_strategy = long_strategy
-        self.rotation_increment = 10
+        self.rotation_increment = config['rotation_increment']
         self.current_strategy = self.long_strategy
         self._init_current_strategy()
     
