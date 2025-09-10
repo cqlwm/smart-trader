@@ -106,9 +106,6 @@ class StrategyV2(ABC):
         if self.last_kline.finished:
             if len(self.klines) > 0 and self.klines['datetime'].iloc[-1] == self.last_kline.datetime:
                 kline_dict = self.last_kline.to_dict()
-                logger.info(f'kline finished: {kline_dict}')
-                logger.info(f'kline finished: {self.klines.columns}')
-                logger.info(f'kline finished: {self.klines.iloc[-1]}')
                 self.klines.iloc[-1] = pd.Series(kline_dict, index=self.klines.columns)
             else:
                 new_series = pd.Series(self.last_kline.to_dict(), index=self.klines.columns)

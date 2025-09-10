@@ -1,5 +1,6 @@
 import talib as ta
 import numpy as np
+import pandas as pd
 
 from strategy import Signal
 
@@ -52,8 +53,8 @@ def _alpha_trend_signal(df, atr_multiple=1.0, period=8):
                 i, _atr_base_high]
 
     # 计算买卖信号
-    df[_buy_signal] = df[_alpha_trend] > df[_alpha_trend].shift(2)
-    df[_sell_signal] = df[_alpha_trend] < df[_alpha_trend].shift(2)
+    df[_buy_signal] = pd.Series(df[_alpha_trend] > df[_alpha_trend].shift(2), dtype='boolean')
+    df[_sell_signal] = pd.Series(df[_alpha_trend] < df[_alpha_trend].shift(2), dtype='boolean')
 
     # 更新上次计算的位置
     df[_last_calculated] = len(df) - 1
@@ -86,9 +87,9 @@ class AlphaTrendSignal(Signal):
             _alpha_trend_signal(df, self.atr_multiple, self.period)
 
         signal = 0
-        if df[_buy_signal].iloc[-1]:
+        if pd.notna(df[_buy_signal].iloc[-1]) and df[_buy_signal].iloc[-1]:
             signal = 1
-        if df[_sell_signal].iloc[-1]:
+        if pd.notna(df[_sell_signal].iloc[-1]) and df[_sell_signal].iloc[-1]:
             signal = -1
 
         if signal == 0:
