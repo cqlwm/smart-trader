@@ -71,7 +71,7 @@ class StrategyV2(ABC):
             'low': pd.Series(dtype='float64'),
             'close': pd.Series(dtype='float64'),
             'volume': pd.Series(dtype='float64'),
-            'finished': pd.Series(dtype='boolean')  # 使用boolean类型支持NaN
+            'finished': pd.Series(dtype='boolean')
         })
         self.last_kline: Kline
         self.init_kline_nums = 300
@@ -90,7 +90,8 @@ class StrategyV2(ABC):
             ohlcv = self.ex_client.fetch_ohlcv(kline.symbol, kline.timeframe, self.init_kline_nums)
             df = pd.DataFrame(ohlcv, columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
             df['datetime'] = df['datetime'].apply(lambda x: datetime.fromtimestamp(x / 1000).strftime('%Y-%m-%d %H:%M:%S'))
-            self.klines = df
+            df['finished'] = True
+            self.klines = pd.concat([self.klines, df], ignore_index=True)
         
         self.last_kline = kline
 
