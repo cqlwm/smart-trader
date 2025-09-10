@@ -1,6 +1,7 @@
 import talib as ta
 import numpy as np
 import pandas as pd
+from pandas import DataFrame
 
 from strategy import Signal
 
@@ -66,7 +67,7 @@ def _alpha_trend_signal(df, atr_multiple=1.0, period=8):
 class AlphaTrendSignal(Signal):
     def __init__(self, side, atr_multiple=1.0, period=8, additional_signal=None):
         super().__init__(side)
-        self.df = None
+        self.df: DataFrame | None = None
         self.atr_multiple = atr_multiple
         self.period = period
 
@@ -106,14 +107,14 @@ class AlphaTrendSignal(Signal):
             return 0
 
 
-    def run(self, df):
-        last_time = df[_timestamp].iloc[-1]
+    def run(self, klines: DataFrame) -> int:
+        last_time = klines[_timestamp].iloc[-1]
         if self.timestamp == last_time:
             return self.kline_status
         else:
             self.timestamp = last_time
 
-        self.kline_status = self._compute_signal(df)
+        self.kline_status = self._compute_signal(klines)
         return self.kline_status
 
 
@@ -121,6 +122,8 @@ class AlphaTrendSignal(Signal):
         _alpha_trend_signal(self.df, self.atr_multiple, self.period)
         if self.current_signal == 0:
             df = self.df
+            if df is None:
+                return
             last_index_bs = df[df[_buy_signal]].last_valid_index()
             last_index_ss = df[df[_sell_signal]].last_valid_index()
             if last_index_bs is None and last_index_ss is None:

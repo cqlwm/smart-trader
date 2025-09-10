@@ -152,7 +152,7 @@ class SignalGridStrategy(StrategyV2):
         
         # 检查是否有入场信号
         if self.config.signal:
-            if not self.config.signal.is_entry(self.klines):
+            if not self.config.signal.is_entry(self.klines_to_dataframe()):
                 return False
         
         # 检查当前价格是否在可交易的价格区间
@@ -187,7 +187,7 @@ class SignalGridStrategy(StrategyV2):
         return False
 
     def check_close_order(self) -> List[Order]:
-        exit_signal = self.config.enable_exit_signal and self.config.signal and self.config.signal.is_exit(self.klines)
+        exit_signal = self.config.enable_exit_signal and self.config.signal and self.config.signal.is_exit(self.klines_to_dataframe())
 
         new_orders: List[Order] = []
         flat_orders: List[Order] = []

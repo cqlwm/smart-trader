@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from datetime import datetime
 import threading
 import pandas as pd
 from pandas import DataFrame
 import builtins
 from dataclasses import dataclass
+from typing import List, Dict
 
 from client.ex_client import ExClient
 from model import Kline, OrderSide
@@ -58,28 +58,33 @@ class Order:
     def breakeven_price(self):
         return self._profit(self.min_profit_rate)
 
-    def exit_id(self, i: int = None):
+    def exit_id(self, i: int | None = None):
         exit_id = self.custom_id.replace(self.side.value, self.side.reversal().value, 1)
         return exit_id if i is None else f'{exit_id}{i}'
 
 class StrategyV2(ABC):
     def __init__(self):
         self.ex_client: ExClient
-        # 指定列的数据类型，包括finished列
-        self.klines: DataFrame = DataFrame({
-            'datetime': pd.Series(dtype='str'),
-            'open': pd.Series(dtype='float64'),
-            'high': pd.Series(dtype='float64'),
-            'low': pd.Series(dtype='float64'),
-            'close': pd.Series(dtype='float64'),
-            'volume': pd.Series(dtype='float64'),
-            'finished': pd.Series(dtype='boolean')
-        })
+        self.klines: List[Dict] = []
         self.last_kline: Kline
         self.init_kline_nums = 300
-        # 新增两个锁
         self.on_kline_finished_lock = threading.Lock()
         self.on_kline_lock = threading.Lock()
+    
+    def klines_to_dataframe(self) -> DataFrame:
+        """将klines转换为DataFrame进行分析"""
+        if not self.klines:
+            return DataFrame({
+                'datetime': pd.Series(dtype='str'),
+                'open': pd.Series(dtype='float64'),
+                'high': pd.Series(dtype='float64'),
+                'low': pd.Series(dtype='float64'),
+                'close': pd.Series(dtype='float64'),
+                'volume': pd.Series(dtype='float64'),
+                'finished': pd.Series(dtype='boolean')
+            })
+        
+        return DataFrame(self.klines)
 
     def on_kline(self):
         pass
@@ -90,10 +95,20 @@ class StrategyV2(ABC):
     def run(self, kline: Kline):
         if len(self.klines) == 0:
             ohlcv = self.ex_client.fetch_ohlcv(kline.symbol, kline.timeframe, self.init_kline_nums)
-            df = pd.DataFrame(ohlcv, columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
-            df['datetime'] = df['datetime'].apply(lambda x: datetime.fromtimestamp(x / 1000).strftime('%Y-%m-%d %H:%M:%S'))
-            df['finished'] = True
-            self.klines = pd.concat([self.klines, df], ignore_index=True)
+            for row in ohlcv:
+                timestamp, open_price, high_price, low_price, close_price, volume = row
+                historical_kline = Kline(
+                    symbol=kline.symbol,
+                    timeframe=kline.timeframe,
+                    open=open_price,
+                    high=high_price,
+                    low=low_price,
+                    close=close_price,
+                    volume=volume,
+                    timestamp=timestamp,
+                    finished=True
+                )
+                self.klines.append(historical_kline.to_dict())
         
         self.last_kline = kline
 
@@ -104,12 +119,11 @@ class StrategyV2(ABC):
                 self.on_kline_lock.release()
 
         if self.last_kline.finished:
-            if len(self.klines) > 0 and self.klines['datetime'].iloc[-1] == self.last_kline.datetime:
-                kline_dict = self.last_kline.to_dict()
-                self.klines.iloc[-1] = pd.Series(kline_dict, index=self.klines.columns)
+            # 检查是否需要更新最后一个kline或添加新的kline
+            if len(self.klines) > 0 and self.klines[-1]['datetime'] == self.last_kline.datetime:
+                self.klines[-1] = self.last_kline.to_dict()
             else:
-                new_series = pd.Series(self.last_kline.to_dict(), index=self.klines.columns)
-                self.klines.loc[len(self.klines)] = new_series
+                self.klines.append(self.last_kline.to_dict())
             
             if self.on_kline_finished_lock.acquire(blocking=False):
                 try:
@@ -117,38 +131,27 @@ class StrategyV2(ABC):
                 finally:
                     self.on_kline_finished_lock.release()
 
-class Strategy(ABC):
-    def __init__(self):
-        self.df = None
+
+class Signal:
+    def __init__(self, side: OrderSide):
+        self.side: OrderSide = side
 
     @abstractmethod
-    def run(self, kline: DataFrame):
+    def run(self, klines: DataFrame) -> int:
         pass
 
-
-class Signal(Strategy):
-    def __init__(self, side: str):
-        super().__init__()
-        if side not in ['buy','sell']:
-            raise Exception('side must be buy or sell')
-        self.side = side
-
-    @abstractmethod
-    def run(self, kline: DataFrame) -> int:
-        pass
-
-    def is_entry(self, df) -> bool:
+    def is_entry(self, df: DataFrame) -> bool:
         signal = self.run(df)
-        if self.side == 'buy':
+        if self.side == OrderSide.BUY:
             return signal == 1
-        elif self.side == 'sell':
+        elif self.side == OrderSide.SELL:
             return signal == -1
         return False
 
-    def is_exit(self, df) -> bool:
+    def is_exit(self, df: DataFrame) -> bool:
         signal = self.run(df)
-        if self.side == 'buy':
+        if self.side == OrderSide.BUY:
             return signal == -1
-        elif self.side == 'sell':
+        elif self.side == OrderSide.SELL:
             return signal == 1
         return False

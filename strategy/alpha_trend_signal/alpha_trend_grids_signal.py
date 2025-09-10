@@ -25,8 +25,8 @@ class AlphaTrendGridsSignal(Signal):
         super().__init__(ats.side)
         self.ats = ats
 
-    def run(self, kline: DataFrame) -> int:
-        self.ats.run(kline)
+    def run(self, klines: DataFrame) -> int:
+        self.ats.run(klines)
         return 0
 
     def is_entry(self, df) -> bool:
