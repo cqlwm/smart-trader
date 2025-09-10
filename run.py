@@ -90,7 +90,7 @@ if __name__ == '__main__':
                     fixed_take_profit_rate=config['fixed_take_profit_rate'],
                     enable_exit_signal=config['enable_exit_signal'],
                     signal_min_take_profit_rate=config['signal_min_take_profit_rate'],
-                    signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY.value)),
+                    signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
                     order_file_path=strategy_config['order_files']['long'],
                 ), binance_client),
                 short_strategy=SignalGridStrategy(SignalGridStrategyConfig(
@@ -104,7 +104,7 @@ if __name__ == '__main__':
                     fixed_take_profit_rate=config['fixed_take_profit_rate'],
                     enable_exit_signal=config['enable_exit_signal'],
                     signal_min_take_profit_rate=config['signal_min_take_profit_rate'],
-                    signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL.value)),
+                    signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL)),
                     order_file_path=strategy_config['order_files']['short'],
                 ), binance_client),
                 config=config['rotation_config'],

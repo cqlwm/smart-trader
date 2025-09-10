@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame
 
+from model import OrderSide
 from strategy import Signal
 
 _datetime = 'datetime'
@@ -63,7 +64,7 @@ def _alpha_trend_signal(df, atr_multiple=1.0, period=8):
 
 
 class AlphaTrendSignal(Signal):
-    def __init__(self, side, atr_multiple=1.0, period=8):
+    def __init__(self, side: OrderSide, atr_multiple: float = 1.0, period: int = 8):
         super().__init__(side)
         self.atr_multiple = atr_multiple
         self.period = period
