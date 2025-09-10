@@ -8,6 +8,8 @@ import json
 from model import OrderSide, Symbol
 from run import StrategyTask
 from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig
+from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
+from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
 
 logger = log.getLogger(__name__)
 
@@ -55,6 +57,9 @@ if __name__ == '__main__':
                     max_order=config['max_order'],
                     enable_fixed_profit_taking=config['enable_fixed_profit_taking'],
                     fixed_take_profit_rate=config['fixed_take_profit_rate'],
+                    enable_exit_signal=config['enable_exit_signal'],
+                    signal_min_take_profit_rate=config['signal_min_take_profit_rate'],
+                    signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY.value)),
                     order_file_path=strategy_config['order_files']['long'],
                 ), binance_client),
                 short_strategy=SignalGridStrategy(SignalGridStrategyConfig(
@@ -66,6 +71,9 @@ if __name__ == '__main__':
                     max_order=config['max_order'],
                     enable_fixed_profit_taking=config['enable_fixed_profit_taking'],
                     fixed_take_profit_rate=config['fixed_take_profit_rate'],
+                    enable_exit_signal=config['enable_exit_signal'],
+                    signal_min_take_profit_rate=config['signal_min_take_profit_rate'],
+                    signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL.value)),
                     order_file_path=strategy_config['order_files']['short'],
                 ), binance_client),
                 config=config['rotation_config'],
