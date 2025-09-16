@@ -33,6 +33,12 @@ class OrderStatus(Enum):
     REJECTED = 'rejected'
     EXPIRED = 'expired'
 
+class PlaceOrderBehavior(Enum):
+    CHASER = 'chaser'  # 追单且成交
+    CHASER_OPEN = 'chaser_open'  # 追单只下单
+    LIMIT = 'limit'  # 限价单
+    MARKET = 'market'  # 市价单
+
 class Symbol(BaseModel):
     base: str
     quote: str

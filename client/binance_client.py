@@ -4,7 +4,7 @@ from client.binance_chaser_order import LimitOrderChaser
 from client.ex_client import ExSwapClient
 
 import requests
-from model import Symbol
+from model import Symbol, PlaceOrderBehavior
 from model import OrderSide
 import log
 
@@ -61,13 +61,14 @@ class BinanceSwapClient(ExSwapClient):
             }
         })
         self.exchange.set_sandbox_mode(is_test)
-        self.create_chaser = lambda symbol, order_side, quantity, position_side: LimitOrderChaser(
+        self.create_chaser = lambda symbol, order_side, quantity, position_side, place_order_behavior: LimitOrderChaser(
             client=self,
             symbol=symbol,
             side=order_side,
             quantity=quantity,
             tick_size=get_tick_size(symbol) or 0.01,
             position_side=position_side,
+            place_order_behavior=place_order_behavior,
         )
 
     def balance(self, coin):
@@ -87,9 +88,16 @@ class BinanceSwapClient(ExSwapClient):
 
     def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price: float | None = None, **kwargs):
         position_side = kwargs['position_side']
+        place_order_behavior = kwargs.get("place_order_behavior")
 
-        if kwargs.get("chaser"):
-            order_chaser = self.create_chaser(symbol, order_side, quantity, position_side)
+        # 处理枚举和字符串两种输入
+        if isinstance(place_order_behavior, PlaceOrderBehavior):
+            behavior_value = place_order_behavior.value
+        else:
+            behavior_value = place_order_behavior or ''
+
+        if 'chaser' in behavior_value:
+            order_chaser = self.create_chaser(symbol, order_side, quantity, position_side, behavior_value)
             ok = order_chaser.run()
             if ok:
                 return order_chaser.order
@@ -105,11 +113,11 @@ class BinanceSwapClient(ExSwapClient):
             params['timeInForce'] = kwargs['time_in_force'] or kwargs['timeInForce']
 
         order = self.exchange.create_order(
-            symbol=symbol.binance(), 
-            type='limit' if price else 'market', 
-            side=order_side.value, 
-            amount=quantity, 
-            price=price, 
+            symbol=symbol.binance(),
+            type='limit' if behavior_value == 'limit' and price else 'market',
+            side=order_side.value,
+            amount=quantity,
+            price=price,
             params=params
         )
         return order        

@@ -6,7 +6,7 @@ import websockets
 import json
 import ssl
 from decimal import Decimal
-from model import OrderStatus, Symbol
+from model import OrderStatus, PlaceOrderBehavior, Symbol
 from model import OrderSide
 import log
 
@@ -14,7 +14,7 @@ logger = log.getLogger(__name__)
 
 class LimitOrderChaser:
     def __init__(self, client: ExSwapClient, symbol: Symbol, side: OrderSide, quantity: float, 
-                 tick_size: float, position_side: str = "LONG"):
+                 tick_size: float, position_side: str = "LONG", place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER):
         logger.info(f"Init Chaser : {symbol.ccxt()}, {side.name}, {quantity}, {position_side}")
         self.client = client
         self.symbol: Symbol = symbol
@@ -29,7 +29,7 @@ class LimitOrderChaser:
         # 超过最大迭代次数，后的行为 cancel or open
         # open: 下单，不保证完成
         # cancel: 撤单
-        self.max_iterations_behavior = "open"
+        self.place_order_behavior: PlaceOrderBehavior = place_order_behavior
 
     def place_order_gtx(self, price):
         custom_id=f'{self.side.value}{secrets.token_hex(nbytes=5)}'
@@ -67,7 +67,7 @@ class LimitOrderChaser:
         logger.debug("撤单返回：%s", result)
         return result
 
-    def chase(self, latest_price: float, only_open: bool = False):
+    def chase(self, latest_price: float):
         '''
         执行追逐限价单
         1. 使用买1价和卖1价最为限价单的价格
@@ -81,7 +81,6 @@ class LimitOrderChaser:
                     2.3.2.2 如果撤销失败，重新检查订单状态
                 2.3.3 如果价格未更优，不做任何操作
         @param latest_price: 最新价格
-        @param only_open: only_open=True 时，不再要求后续状态，只需要挂单成功即可
         '''
         best_bid = latest_price - self.tick_size
         best_ask = latest_price + self.tick_size
@@ -104,9 +103,8 @@ class LimitOrderChaser:
                 return False
 
             if query_order_result['status'] == OrderStatus.OPEN.value:
-                if only_open or float(query_order_result['info']['executedQty']) > 0:
-                    # 订单只要部分成交就认为是已成交
-                    # query_order_result['status'] = OrderStatus.CLOSED.value
+                if self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN or float(query_order_result['info']['executedQty']) > 0:
+                    # CHASER_OPEN模式或订单部分成交就认为是已成交
                     self.order = query_order_result
                     return True
                 
@@ -122,7 +120,8 @@ class LimitOrderChaser:
                 place_order_result = self.place_order_gtx(limit_price)
                 if place_order_result and place_order_result.get('status'):
                     self.order = place_order_result
-                    return place_order_result['status'] == OrderStatus.CLOSED.value
+                    if self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN:
+                        return place_order_result['status'] in [OrderStatus.OPEN.value, OrderStatus.CLOSED.value]
             except Exception as e:
                 if '"code":-5022' in str(e.args):
                     # {"code":-5022,"msg":"由于订单无法以挂单方式成交，此挂单将被拒绝，不会记录在订单历史记录中。"}
@@ -137,10 +136,9 @@ class LimitOrderChaser:
         if self.order:
             if self.order['status'] == OrderStatus.CLOSED.value:
                 return True
-            only_open = self.max_iterations_behavior == "open"
-            if only_open and self.order['status'] == OrderStatus.OPEN.value:
+            if self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN and self.order['status'] == OrderStatus.OPEN.value:
                 return True
-            if self.chase(self.order['price'], only_open):
+            if self.chase(self.order['price']):
                 return True
             else:
                 return is_end or self.end_check(is_end=True)
@@ -155,17 +153,15 @@ class LimitOrderChaser:
             async with websockets.connect(ws_url, ssl=self.ssl_context) as ws:
                 try:
                     await ws.ping()
-                    n = 2 if self.max_iterations_behavior == "open" else 1
-                    while counter < self.max_iterations * n:
-                        only_open = counter > self.max_iterations
+                    while counter < self.max_iterations:
                         msg = await asyncio.wait_for(ws.recv(), timeout=10)
                         msg_str = str(msg)
                         if '"c"' in msg_str and '24hrMiniTicker' in msg_str:
                             data = json.loads(msg)
                             current_price = float(data['c'])
-                            chase_result = self.chase(current_price, only_open)
+                            chase_result = self.chase(current_price)
                             if chase_result and self.order:
-                                logger.info(f"结束追单, 订单 {self.order['clientOrderId']} {'已挂单' if only_open else '已成交'}")
+                                logger.info(f"结束追单, 订单 {self.order['clientOrderId']} {'已挂单' if self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN else '已成交'}")
                                 break
                             await asyncio.sleep(1)
                         counter += 1

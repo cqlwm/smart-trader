@@ -3,7 +3,7 @@ import secrets
 from typing import List
 from client.ex_client import ExSwapClient
 from strategy import StrategyV2
-from model import OrderSide
+from model import OrderSide, PlaceOrderBehavior
 import logging
 from pydantic import BaseModel, ConfigDict
 from model import Symbol
@@ -130,7 +130,8 @@ class SignalGridStrategyConfig(BaseModel):
 
     close_position_ratio: float = 1.0
 
-    # place_order_type: str = 'chaser'
+    place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER  # 下单行为
+
     order_file_path: str = 'data/grids_strategy_v2.json'
 
 
@@ -143,9 +144,11 @@ class SignalGridStrategy(StrategyV2):
         self.order_recorder: OrderRecorder = OrderRecorder(order_file_path=self.config.order_file_path)
         self.orders: List[Order] = self.order_recorder.check_reload(force=True) or []
 
-    def place_order(self, order_id: str, side: OrderSide, qty: float, price: float | None = None):
-        return self.ex_client.place_order_v2(custom_id=order_id, symbol=self.config.symbol, order_side=side, quantity=qty, price=price, position_side=self.config.position_side, chaser=True)
-    
+    def place_order(self, order_id: str, side: OrderSide, qty: float, price: float):
+        return self.ex_client.place_order_v2(custom_id=order_id, symbol=self.config.symbol, order_side=side, quantity=qty, price=price, position_side=self.config.position_side,
+                                             place_order_behavior=self.config.place_order_behavior)
+
+
     def check_open_order(self) -> bool:
 
         # 检查订单是否到达上限
@@ -179,7 +182,7 @@ class SignalGridStrategy(StrategyV2):
                 signal_min_take_profit_rate=self.config.signal_min_take_profit_rate
             )
             self.orders.append(order)
-            place_order_result = self.place_order(order_id, self.config.master_side, self.config.per_order_qty)
+            place_order_result = self.place_order(order_id, self.config.master_side, self.config.per_order_qty, close_price)
             if place_order_result:
                 if place_order_result.get('clientOrderId'):
                     order.custom_id = place_order_result['clientOrderId']
@@ -213,7 +216,7 @@ class SignalGridStrategy(StrategyV2):
             flat_order_side = self.config.master_side.reversal()
             flat_order_id = build_order_id(flat_order_side)
             actual_flat_qty = flat_qty * self.config.close_position_ratio
-            place_order_result = self.place_order(flat_order_id, flat_order_side, actual_flat_qty)
+            place_order_result = self.place_order(flat_order_id, flat_order_side, actual_flat_qty, self.last_kline.close)
             if place_order_result:
                 for order in flat_orders:
                     order.close_price = place_order_result['price']
