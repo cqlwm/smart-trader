@@ -77,36 +77,34 @@ if __name__ == '__main__':
 
         if strategy_config['strategy_type'] == 'bidirectional_grid_rotation':
             config = strategy_config['config']
-            
+
+            # 构建long策略配置
+            long_config_data = {
+                'symbol': symbol,
+                'position_side': 'long',
+                'master_side': OrderSide.BUY,
+                'signal': AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
+                'order_file_path': strategy_config['order_files']['long'],
+                **config
+            }
+
+            # 构建short策略配置
+            short_config_data = {
+                'symbol': symbol,
+                'position_side': 'short',
+                'master_side': OrderSide.SELL,
+                'signal': AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL)),
+                'order_file_path': strategy_config['order_files']['short'],
+                **config
+            }
+
             strategy = BidirectionalGridRotationStrategy(
-                long_strategy=SignalGridStrategy(SignalGridStrategyConfig(
-                    symbol=symbol,
-                    position_side='long',
-                    master_side=OrderSide.BUY,
-                    per_order_qty=config['per_order_qty'],
-                    grid_spacing_rate=config['grid_spacing_rate'],
-                    max_order=config['max_order'],
-                    enable_fixed_profit_taking=config['enable_fixed_profit_taking'],
-                    fixed_take_profit_rate=config['fixed_take_profit_rate'],
-                    enable_exit_signal=config['enable_exit_signal'],
-                    signal_min_take_profit_rate=config['signal_min_take_profit_rate'],
-                    signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
-                    order_file_path=strategy_config['order_files']['long'],
-                ), binance_client),
-                short_strategy=SignalGridStrategy(SignalGridStrategyConfig(
-                    symbol=symbol,
-                    position_side='short',
-                    master_side=OrderSide.SELL,
-                    per_order_qty=config['per_order_qty'],
-                    grid_spacing_rate=config['grid_spacing_rate'],
-                    max_order=config['max_order'],
-                    enable_fixed_profit_taking=config['enable_fixed_profit_taking'],
-                    fixed_take_profit_rate=config['fixed_take_profit_rate'],
-                    enable_exit_signal=config['enable_exit_signal'],
-                    signal_min_take_profit_rate=config['signal_min_take_profit_rate'],
-                    signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL)),
-                    order_file_path=strategy_config['order_files']['short'],
-                ), binance_client),
+                long_strategy=SignalGridStrategy(
+                    SignalGridStrategyConfig(**long_config_data), binance_client
+                ),
+                short_strategy=SignalGridStrategy(
+                    SignalGridStrategyConfig(**short_config_data), binance_client
+                ),
                 config=config['rotation_config'],
             )
             

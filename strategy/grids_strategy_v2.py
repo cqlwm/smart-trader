@@ -128,6 +128,8 @@ class SignalGridStrategyConfig(BaseModel):
     enable_fixed_profit_taking: bool = False
     fixed_take_profit_rate: float = 0.006
 
+    close_position_ratio: float = 1.0
+
     # place_order_type: str = 'chaser'
     order_file_path: str = 'data/grids_strategy_v2.json'
 
@@ -210,7 +212,8 @@ class SignalGridStrategy(StrategyV2):
         if flat_qty > 0:
             flat_order_side = self.config.master_side.reversal()
             flat_order_id = build_order_id(flat_order_side)
-            place_order_result = self.place_order(flat_order_id, flat_order_side, flat_qty)
+            actual_flat_qty = flat_qty * self.config.close_position_ratio
+            place_order_result = self.place_order(flat_order_id, flat_order_side, actual_flat_qty)
             if place_order_result:
                 for order in flat_orders:
                     order.close_price = place_order_result['price']
