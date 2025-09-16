@@ -105,16 +105,19 @@ class BinanceSwapClient(ExSwapClient):
                 logger.error("追单失败, 市价执行")
 
         params = {
-            'newClientOrderId': custom_id, 
+            'newClientOrderId': custom_id,
             'positionSide': position_side
         }
 
-        if kwargs.get('time_in_force') or kwargs.get('timeInForce'):
+        order_type = 'limit' if price else 'market'
+
+        # 只在限价单时设置timeInForce
+        if order_type == 'limit' and (kwargs.get('time_in_force') or kwargs.get('timeInForce')):
             params['timeInForce'] = kwargs['time_in_force'] or kwargs['timeInForce']
 
         order = self.exchange.create_order(
             symbol=symbol.binance(),
-            type='limit' if behavior_value == 'limit' and price else 'market',
+            type=order_type,
             side=order_side.value,
             amount=quantity,
             price=price,
