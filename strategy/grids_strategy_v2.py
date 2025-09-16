@@ -130,7 +130,7 @@ class SignalGridStrategyConfig(BaseModel):
 
     close_position_ratio: float = 1.0
 
-    place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER  # 下单行为
+    place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER_OPEN  # 下单行为
 
     order_file_path: str = 'data/grids_strategy_v2.json'
 
