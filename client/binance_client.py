@@ -61,7 +61,9 @@ class BinanceSwapClient(ExSwapClient):
             }
         })
         self.exchange.set_sandbox_mode(is_test)
-        self.create_chaser = lambda symbol, order_side, quantity, position_side, place_order_behavior: LimitOrderChaser(
+
+    def create_chaser(self, symbol: Symbol, order_side: OrderSide, quantity: float, position_side: str, place_order_behavior: PlaceOrderBehavior) -> LimitOrderChaser:
+        return LimitOrderChaser(
             client=self,
             symbol=symbol,
             side=order_side,
@@ -70,7 +72,7 @@ class BinanceSwapClient(ExSwapClient):
             position_side=position_side,
             place_order_behavior=place_order_behavior,
         )
-
+    
     def balance(self, coin):
         balance = self.exchange.fetch_balance()
         return balance[coin.upper()]['free']
@@ -97,7 +99,7 @@ class BinanceSwapClient(ExSwapClient):
             behavior_value = place_order_behavior or ''
 
         if 'chaser' in behavior_value:
-            order_chaser = self.create_chaser(symbol, order_side, quantity, position_side, behavior_value)
+            order_chaser = self.create_chaser(symbol, order_side, quantity, position_side, PlaceOrderBehavior(behavior_value))
             ok = order_chaser.run()
             if ok:
                 return order_chaser.order
