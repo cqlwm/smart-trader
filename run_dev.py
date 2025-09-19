@@ -1,3 +1,4 @@
+from typing import Any, Dict, List
 from DataEventLoop import BinanceDataEventLoop
 from strategy.bidirectional_grid_rotation_strategy import BidirectionalGridRotationStrategy
 from client.binance_client import BinanceSwapClient
@@ -32,7 +33,7 @@ if __name__ == '__main__':
     with open('strategies_dev.json', 'r') as f:
         strategies_config = json.load(f)
 
-    kline_subscribes = []
+    kline_subscribes: List[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
 
     for strategy_config in strategies_config['strategies']:
@@ -40,15 +41,15 @@ if __name__ == '__main__':
             base=strategy_config['symbol']['base'],
             quote=strategy_config['symbol']['quote']
         )
-        
+
         # 添加K线订阅
         kline_subscribes.append(symbol.binance_ws_sub_kline(strategy_config['timeframe']))
 
         if strategy_config['strategy_type'] == 'bidirectional_grid_rotation':
-            config = strategy_config['config']
+            config: Dict[str, Any] = strategy_config['config']
 
             # 构建long策略配置
-            long_config_data = {
+            long_config_data: Dict[str, Any] = {
                 'symbol': symbol,
                 'position_side': 'long',
                 'master_side': OrderSide.BUY,
@@ -58,7 +59,7 @@ if __name__ == '__main__':
             }
 
             # 构建short策略配置
-            short_config_data = {
+            short_config_data: Dict[str, Any] = {
                 'symbol': symbol,
                 'position_side': 'short',
                 'master_side': OrderSide.SELL,
@@ -69,10 +70,10 @@ if __name__ == '__main__':
 
             strategy = BidirectionalGridRotationStrategy(
                 long_strategy=SignalGridStrategy(
-                    SignalGridStrategyConfig(**long_config_data), binance_client
+                    SignalGridStrategyConfig(**long_config_data), binance_client  # type: ignore
                 ),
                 short_strategy=SignalGridStrategy(
-                    SignalGridStrategyConfig(**short_config_data), binance_client
+                    SignalGridStrategyConfig(**short_config_data), binance_client  # type: ignore
                 ),
                 config=config['rotation_config'],
             )

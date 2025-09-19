@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Dict, Any, Optional
 
 from model import Symbol
 from ccxt.base.exchange import Exchange
@@ -13,21 +13,21 @@ class ExClient(ABC):
     exchange: Exchange
 
     @abstractmethod
-    def balance(self, coin: str):
+    def balance(self, coin: str) -> float:
         pass
 
     @abstractmethod
-    def cancel(self, custom_id: str, symbol: Symbol):
+    def cancel(self, custom_id: str, symbol: Symbol) -> Dict[str, Any]:
         pass
 
     @abstractmethod
-    def query_order(self, custom_id: str, symbol: Symbol):
+    def query_order(self, custom_id: str, symbol: Symbol) -> Dict[str, Any]:
         pass
 
     def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> List[list]:
         return self.exchange.fetch_ohlcv(symbol.ccxt(), timeframe, limit=limit)
     
-    def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price=None, **kwargs):
+    def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price: Optional[float] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
         '''
         kwargs: 
             position_side
@@ -38,11 +38,11 @@ class ExClient(ABC):
 class ExSwapClient(ExClient):
 
     @abstractmethod
-    def close_position(self, symbol, position_side, auto_cancel=True):
+    def close_position(self, symbol: str, position_side: str, auto_cancel: bool = True) -> None:
         pass
 
     @abstractmethod
-    def positions(self, symbol=None):
+    def positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         pass
 
 
