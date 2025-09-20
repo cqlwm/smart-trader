@@ -5,3 +5,4 @@ binance_*.json
 uv.lock
 data
 start.sh
+config.json

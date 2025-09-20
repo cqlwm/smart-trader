@@ -1,64 +1,63 @@
 import json
-import os
+from client.ex_client import ExSwapClient
 from model import Kline
 from strategy import StrategyV2
-from strategy.grids_strategy_v2 import SignalGridStrategy
+from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig
 import log
+from pydantic import BaseModel
+from typing import Literal
 
 logger = log.getLogger(__name__)
 
-class BidirectionalGridRotationStrategy(StrategyV2):
-    def __init__(self, long_strategy: SignalGridStrategy, short_strategy: SignalGridStrategy, config: dict):
-        super().__init__()
-        self.config_path = config['config_path']
-        self.short_strategy = short_strategy
-        self.long_strategy = long_strategy
-        self.rotation_increment = config['rotation_increment']
-        self.current_strategy = self.long_strategy
-        self._init_current_strategy()
-    
-    def _init_current_strategy(self):
-        start_strategy = 'long'
-        if os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, "r") as f:
-                    config = json.load(f)
-                    if config.get("current_strategy"):
-                        start_strategy = config["current_strategy"]
-            except Exception:
-                pass
-        
-        self.rotation()
-        if start_strategy == "long" and self.current_strategy != self.long_strategy:
-            self.rotation()
+class BidirectionalGridRotationStrategyConfig(BaseModel):
+    long_strategy_config: SignalGridStrategyConfig
+    short_strategy_config: SignalGridStrategyConfig
+    default_strategy: Literal['long', 'short'] = 'long'
+    rotation_increment: int = 10
+    config_backup_path: str = 'bidirectional_grid_rotation_config.json'
 
-        logger.info(f"BidirectionalGridRotation Start with {self.current_strategy.config.position_side}-{self.current_strategy.config.master_side.value}")
+
+class BidirectionalGridRotationStrategy(StrategyV2):
+    def __init__(self, exchange_client: ExSwapClient, config: BidirectionalGridRotationStrategyConfig):
+        super().__init__()
+        self.config = config
+        self.long_strategy = SignalGridStrategy(config.long_strategy_config, exchange_client)
+        self.short_strategy = SignalGridStrategy(config.short_strategy_config, exchange_client)
+
+        self.running_strategy = self.long_strategy if config.default_strategy == 'long' else self.short_strategy
+        if self.is_order_full(self.running_strategy):
+            self.reset_running_strategy()
+
+        logger.info(f"BidirectionalGridRotation Start with {config.default_strategy}")
     
     def is_order_full(self, strategy: SignalGridStrategy):
         return len(strategy.orders) >= strategy.config.max_order
     
-    def reset_max_order(self, strategy: SignalGridStrategy):
-        strategy.config.max_order = len(strategy.orders) + self.rotation_increment
+    def reset_running_strategy(self):
+        self.long_strategy.config.max_order = 0
+        self.short_strategy.config.max_order = 0
+        self.running_strategy.config.max_order = len(self.running_strategy.orders) + self.config.rotation_increment
 
     def rotation(self):
-        negation_strategy = self.short_strategy if self.current_strategy == self.long_strategy else self.long_strategy
-        self.reset_max_order(negation_strategy)
-        self.current_strategy.config.max_order = 0
-        self.current_strategy = negation_strategy
+        self.running_strategy = self.short_strategy if self.running_strategy == self.long_strategy else self.long_strategy
+        self.reset_running_strategy()
 
     def balance_max_order(self):
-        max_order_diff = self.current_strategy.config.max_order - len(self.current_strategy.orders) - self.rotation_increment
+        max_order_diff: int = self.running_strategy.config.max_order - len(self.running_strategy.orders) - self.config.rotation_increment
         if max_order_diff > 0:
-            self.current_strategy.config.max_order -= max_order_diff
+            self.running_strategy.config.max_order -= max_order_diff
 
-    def run(self, kline: Kline):
-        if self.is_order_full(self.current_strategy):
-            self.rotation()
-            logger.info(f"Rotation to {self.current_strategy.config.position_side}-{self.current_strategy.config.master_side.value}")
-            with open(self.config_path, "w") as f:
-                json.dump({"current_strategy": self.current_strategy.config.position_side}, f)
-        
+    def run_strategy(self, kline: Kline):
         self.long_strategy.run(kline)
         self.short_strategy.run(kline)
+
+    def run(self, kline: Kline):
+        if self.is_order_full(self.running_strategy):
+            self.rotation()
+            logger.info(f"Rotation to {self.running_strategy.config.position_side}-{self.running_strategy.config.master_side.value}")
+            with open(self.config.config_backup_path, "w") as f:
+                json.dump({"current_strategy": self.running_strategy.config.position_side}, f)
+        
+        self.run_strategy(kline)
 
         self.balance_max_order()

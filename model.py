@@ -43,20 +43,19 @@ class Symbol(BaseModel):
     base: str
     quote: str
 
-    def __init__(self, base: str, quote: str):
-        super().__init__(base=base.upper(), quote=quote.upper())
-
     def ccxt(self):
-        return f'{self.base}/{self.quote}'
+        return f'{self.base}/{self.quote}'.upper()
 
     def binance(self):
-        return f'{self.base}{self.quote}'
+        return f'{self.base}{self.quote}'.upper()
     
     def binance_ws_sub_kline(self, timeframe: str):
         return f'{self.binance()}@kline_{timeframe}'.lower()
     
-    def to_str(self, exchange_name: str):
-        if exchange_name == 'binance':
+    def to_str(self, exchange_name: str | None = None):
+        if exchange_name is None:
+            return f'{self.base}/{self.quote}'
+        elif exchange_name == 'binance':
             return self.binance()
         else:
             return self.ccxt()

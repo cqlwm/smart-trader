@@ -2,16 +2,12 @@ import json
 import log
 import os
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict
 from DataEventLoop import BinanceDataEventLoop, Task
-from strategy.bidirectional_grid_rotation_strategy import BidirectionalGridRotationStrategy
 from client.binance_client import BinanceSwapClient
 from model import Symbol, Kline
 from strategy import StrategyV2
-from model import OrderSide
-from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
-from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
-from strategy.grids_strategy_v2 import SignalGridStrategyConfig, SignalGridStrategy
+from template import long_short_rotation
 
 logger = log.getLogger(__name__)
 
@@ -54,63 +50,16 @@ if __name__ == '__main__':
     else:
         logger.info(f'api_key: {api_key[:5]}*****, api_secret: {api_secret[:5]}*****, is_test: {is_test}')
 
-    binance_client = BinanceSwapClient(
-        api_key=api_key,
-        api_secret=api_secret,
-        is_test=is_test,
-    )
+    binance_client = BinanceSwapClient(api_key=api_key, api_secret=api_secret, is_test=is_test)
 
-    # 加载策略配置
-    with open('strategies.json', 'r') as f:
-        strategies_config = json.load(f)
+    timeframe = '1m'
+    symbol = Symbol(base='bnb', quote='usdc')
+    task = long_short_rotation.template(binance_client, symbol, timeframe)
 
-    kline_subscribes: List[str] = []
-    data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
-
-    for strategy_config in strategies_config['strategies']:
-        symbol = Symbol(
-            base=strategy_config['symbol']['base'],
-            quote=strategy_config['symbol']['quote']
-        )
-
-        # 添加K线订阅
-        kline_subscribes.append(symbol.binance_ws_sub_kline(strategy_config['timeframe']))
-
-        if strategy_config['strategy_type'] == 'bidirectional_grid_rotation':
-            config: Dict[str, Any] = strategy_config['config']
-
-            # 构建long策略配置
-            long_config_data: Dict[str, Any] = {
-                'symbol': symbol,
-                'position_side': 'long',
-                'master_side': OrderSide.BUY,
-                'signal': AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
-                'order_file_path': strategy_config['order_files']['long'],
-                **config
-            }
-
-            # 构建short策略配置
-            short_config_data: Dict[str, Any] = {
-                'symbol': symbol,
-                'position_side': 'short',
-                'master_side': OrderSide.SELL,
-                'signal': AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL)),
-                'order_file_path': strategy_config['order_files']['short'],
-                **config
-            }
-
-            strategy = BidirectionalGridRotationStrategy(
-                long_strategy=SignalGridStrategy(
-                    SignalGridStrategyConfig(**long_config_data), binance_client  # type: ignore
-                ),
-                short_strategy=SignalGridStrategy(
-                    SignalGridStrategyConfig(**short_config_data), binance_client  # type: ignore
-                ),
-                config=config['rotation_config'],
-            )
-            
-            data_event_loop.add_task(StrategyTask(strategy))
-            logger.info(f"Added strategy for {symbol.base.upper()}{symbol.quote.upper()}")
+    data_event_loop = BinanceDataEventLoop(kline_subscribes=[symbol.binance_ws_sub_kline(timeframe)])
+    data_event_loop.add_task(task)
 
     data_event_loop.start()
+
+
 
