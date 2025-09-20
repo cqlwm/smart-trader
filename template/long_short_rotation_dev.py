@@ -2,7 +2,7 @@ from client.ex_client import ExSwapClient
 from strategy.bidirectional_grid_rotation_strategy import BidirectionalGridRotationStrategy, BidirectionalGridRotationStrategyConfig
 import log
 from model import OrderSide, Symbol
-from run import StrategyTask
+from task.strategy_task import StrategyTask
 from strategy.grids_strategy_v2 import SignalGridStrategyConfig
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
@@ -10,7 +10,7 @@ from config import DATA_PATH
 
 logger = log.getLogger(__name__)
 
-def template(exchange_client: ExSwapClient, symbol: Symbol, timeframe: str):
+def template(exchange_client: ExSwapClient, symbol: Symbol, timeframe: str) -> StrategyTask:
 
     # 网格模式对信号的多空没有要求
     signal = AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY))

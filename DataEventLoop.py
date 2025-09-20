@@ -1,5 +1,4 @@
 import concurrent.futures
-from datetime import datetime
 import json
 from typing import List
 import websocket
