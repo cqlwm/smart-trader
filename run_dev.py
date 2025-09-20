@@ -4,7 +4,8 @@ import log
 import os
 
 from model import Symbol
-from template import long_short_rotation_dev
+from task.strategy_task import StrategyTask
+from template import long_short_rotation
 
 logger = log.getLogger(__name__)
 
@@ -21,7 +22,7 @@ if __name__ == '__main__':
 
     timeframe = '1m'
     symbol = Symbol(base='btc', quote='usdt')
-    task = long_short_rotation_dev.template(binance_client, symbol, timeframe)
+    task: StrategyTask = long_short_rotation.template(binance_client, symbol, timeframe)
 
     data_event_loop = BinanceDataEventLoop(kline_subscribes=[symbol.binance_ws_sub_kline(timeframe)])
     data_event_loop.add_task(task)
