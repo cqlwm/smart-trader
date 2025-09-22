@@ -107,10 +107,14 @@ class OrderPair(BaseModel):
 
     def cancel_orders(self, client: ExClient):
         """取消未成交的订单"""
+        entry_cancelled = False
+        exit_cancelled = False
+
         if self.entry_order_id and not self.entry_filled:
             try:
                 client.cancel(self.entry_order_id, self.symbol)
                 logger.info(f"取消开仓单: {self.entry_order_id}")
+                entry_cancelled = True
             except Exception as e:
                 logger.error(f"取消开仓单失败: {e}")
 
@@ -118,8 +122,18 @@ class OrderPair(BaseModel):
             try:
                 client.cancel(self.exit_order_id, self.symbol)
                 logger.info(f"取消平仓单: {self.exit_order_id}")
+                exit_cancelled = True
             except Exception as e:
                 logger.error(f"取消平仓单失败: {e}")
+
+        # 重置被取消订单的状态
+        if entry_cancelled:
+            self.entry_order_id = ""
+            self.entry_filled = False
+
+        if exit_cancelled:
+            self.exit_order_id = ""
+            self.exit_filled = False
 
     def reset(self):
         """重置订单对状态，用于重新开始交易，保留累积盈利"""
