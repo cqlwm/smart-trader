@@ -1,3 +1,4 @@
+import secrets
 import numpy as np
 from typing import List
 from datetime import datetime
@@ -5,7 +6,7 @@ from datetime import datetime
 from pydantic import BaseModel
 from strategy import StrategyV2
 from client.ex_client import ExSwapClient, ExClient
-from model import PositionSide, Symbol, OrderSide
+from model import PositionSide, Symbol, OrderSide, OrderStatus
 import log
 
 logger = log.getLogger(__name__)
@@ -44,7 +45,7 @@ class OrderPair(BaseModel):
         if self.entry_order_id and not self.entry_filled:
             try:
                 entry_order = client.query_order(self.entry_order_id, self.symbol)
-                if entry_order.get('status') == 'closed':
+                if entry_order.get('status') == OrderStatus.CLOSED.value:
                     self.entry_filled = True
                     logger.info(f"开仓单完成: {self.entry_order_id} @ {self.entry_price}")
             except Exception as e:
@@ -53,7 +54,7 @@ class OrderPair(BaseModel):
         if self.exit_order_id and not self.exit_filled:
             try:
                 exit_order = client.query_order(self.exit_order_id, self.symbol)
-                if exit_order.get('status') == 'closed':
+                if exit_order.get('status') == OrderStatus.CLOSED.value:
                     self.exit_filled = True
                     logger.info(f"平仓单完成: {self.exit_order_id} @ {self.exit_price}")
             except Exception as e:
@@ -67,27 +68,25 @@ class OrderPair(BaseModel):
         if self.position_side == PositionSide.LONG:
             entry_side = OrderSide.BUY
             exit_side = OrderSide.SELL
-            strategy_name = "做多"
         else:
             entry_side = OrderSide.SELL
             exit_side = OrderSide.BUY
-            strategy_name = "做空"
 
         # 检查是否需要下开仓单
         if not self.entry_order_id:
-            self._place_order(client, "entry", entry_side, self.entry_price, strategy_name)
+            self._place_order(client, "entry", entry_side, self.entry_price)
 
         # 检查是否需要下平仓单
         if not self.exit_order_id:
-            self._place_order(client, "exit", exit_side, self.exit_price, strategy_name)
+            self._place_order(client, "exit", exit_side, self.exit_price)
 
         # 更新订单状态
         self.update_order_status(client)
 
-    def _place_order(self, client: ExClient, order_type: str, side: OrderSide, price: float, strategy_name: str):
+    def _place_order(self, client: ExClient, order_type: str, side: OrderSide, price: float):
         """通用下单方法"""
         try:
-            custom_id = f"{strategy_name.lower()}_{order_type}_{self.symbol.binance()}_{int(datetime.now().timestamp())}"
+            custom_id = f"{order_type}_{int(datetime.now().timestamp())}_{secrets.token_hex(nbytes=1)}"
             order = client.place_order_v2(
                 custom_id=custom_id,
                 symbol=self.symbol,
@@ -96,14 +95,14 @@ class OrderPair(BaseModel):
                 price=price
             )
             if order:
-                order_id = order.get('id', '')
+                order_id = order.get('clientOrderId', '')
                 if order_type == "entry":
                     self.entry_order_id = order_id
                 else:
                     self.exit_order_id = order_id
-                logger.info(f"{strategy_name}{order_type}: {order_id} @ {price}")
+                logger.info(f"{order_type}: {order_id} @ {price}")
         except Exception as e:
-            logger.error(f"{strategy_name}{order_type}失败: {e}")
+            logger.error(f"{order_type}失败: {e}")
 
     def cancel_orders(self, client: ExClient):
         """取消未成交的订单"""
