@@ -256,7 +256,7 @@ class SimpleGridStrategy(StrategyV2):
             grid.run(self.ex_client)
 
         # 取消远离当前价格的订单
-        self.cancel_inactive_grids(current_price)
+        self.cancel_inactive_grids(current_price, active_indices)
 
     def get_total_profit(self) -> float:
         """获取总盈利"""
