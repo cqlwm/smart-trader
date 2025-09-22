@@ -4,6 +4,9 @@ from enum import Enum
 from dataclasses import dataclass
 import builtins
 
+class PositionSide(Enum):
+    LONG = 'long'
+    SHORT = 'short'
 
 class OrderSide(Enum):
     BUY = 'buy'
