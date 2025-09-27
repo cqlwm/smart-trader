@@ -4,6 +4,4 @@ binance_*.json
 .python-version
 uv.lock
 data
-start.sh
-config.json
 .env
