@@ -55,9 +55,12 @@ class Symbol(BaseModel):
     def binance_ws_sub_kline(self, timeframe: str):
         return f'{self.binance()}@kline_{timeframe}'.lower()
     
+    def simple(self):
+        return f'{self.base}{self.quote}'
+    
     def to_str(self, exchange_name: str | None = None):
         if exchange_name is None:
-            return f'{self.base}/{self.quote}'
+            return f'{self.base}{self.quote}'
         elif exchange_name == 'binance':
             return self.binance()
         else:

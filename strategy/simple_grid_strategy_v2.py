@@ -1,6 +1,7 @@
 import secrets
 import threading
 import numpy as np
+import os
 from typing import List
 from datetime import datetime
 
@@ -9,9 +10,9 @@ from strategy import StrategyV2
 from client.ex_client import ExSwapClient, ExClient
 from model import PositionSide, Symbol, OrderSide, OrderStatus
 import log
+from config import DATA_PATH
 
 logger = log.getLogger(__name__)
-
 
 class OrderPair(BaseModel):
     position_side: PositionSide
@@ -149,6 +150,9 @@ class OrderPair(BaseModel):
         """检查订单对是否可以运行（未完成状态）"""
         return not self.is_complete()
 
+class OrderPairListModel(BaseModel):
+    items: List[OrderPair] = []
+
 class SimpleGridStrategy(StrategyV2):
     def __init__(self, ex_client: ExSwapClient, symbol: Symbol,
                  upper_price: float, lower_price: float, grid_num: int,
@@ -165,6 +169,34 @@ class SimpleGridStrategy(StrategyV2):
         self.active_grid_count = active_grid_count  # 激活的网格数量
         self.grids: List[OrderPair] = []
         self.lock = threading.Lock()
+        self.backup_file = f"{DATA_PATH}/backup_{self.symbol.simple()}_{self.position_side.value}.json"
+        self.load_state()
+
+    def load_state(self):
+        """从备份文件加载状态"""
+        try:
+            if not os.path.exists(self.backup_file):
+                return
+            with open(self.backup_file, 'r') as f:
+                json_str = f.read()
+                data = OrderPairListModel.model_validate_json(json_str)
+                self.grids = data.items
+                logger.info(f"从备份文件加载 {len(self.grids)} 个网格")
+        except FileNotFoundError:
+            logger.info(f"备份文件 {self.backup_file} 不存在，初始化空状态")
+        except Exception as e:
+            logger.error(f"加载备份文件 {self.backup_file} 失败: {e}")
+
+    def save_state(self):
+        """将当前状态保存到备份文件"""
+        try:
+            with open(self.backup_file, 'w') as f:
+                data = OrderPairListModel(items=self.grids)
+                json_str = data.model_dump_json(indent=2)
+                f.write(json_str)
+                # logger.info(f"保存 {len(self.grids)} 个网格到备份文件 {self.backup_file}")
+        except Exception as e:
+            logger.error(f"保存备份文件 {self.backup_file} 失败: {e}")
 
     def _calculate_grid_prices(self) -> List[float]:
         """计算网格价格"""
@@ -292,6 +324,7 @@ class SimpleGridStrategy(StrategyV2):
         """运行策略"""
         self.initialize_grids()
         self.update_grid_orders()
+        self.save_state()
 
     def on_kline(self):
         """每次K线更新时调用"""

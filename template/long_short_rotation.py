@@ -21,16 +21,16 @@ def template(exchange_client: ExSwapClient, symbol: Symbol, timeframe: str) -> S
             position_side='long',
             master_side=OrderSide.BUY,
             signal=signal,
-            order_file_path=f'{DATA_PATH}/grid_rotation_long_buy_{symbol.to_str()}_{timeframe}.json',
+            order_file_path=f'{DATA_PATH}/grid_rotation_long_buy_{symbol.simple()}_{timeframe}.json',
         ),
         short_strategy_config=SignalGridStrategyConfig(
             symbol=symbol,
             position_side='short',
             master_side=OrderSide.SELL,
             signal=signal,
-            order_file_path=f'{DATA_PATH}/grid_rotation_short_sell_{symbol.to_str()}_{timeframe}.json',
+            order_file_path=f'{DATA_PATH}/grid_rotation_short_sell_{symbol.simple()}_{timeframe}.json',
         ),
-        config_backup_path=f'{DATA_PATH}/bidirectional_grid_rotation_{symbol.to_str()}_{timeframe}.json',
+        config_backup_path=f'{DATA_PATH}/bidirectional_grid_rotation_{symbol.simple()}_{timeframe}.json',
     )
     strategy = BidirectionalGridRotationStrategy(exchange_client=exchange_client,config=rotation_config)
     
