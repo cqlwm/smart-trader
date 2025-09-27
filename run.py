@@ -5,8 +5,17 @@ from client.binance_client import BinanceSwapClient
 from model import Symbol
 from template import long_short_rotation
 from DataEventLoop import Task
+import dotenv
+
+dotenv.load_dotenv()
 
 logger = log.getLogger(__name__)
+
+def dev_debug():
+    node_env = os.environ.get('NODE_ENV', 'NONE')
+    logger.info(f'NODE_ENV: {node_env}')
+    if node_env != 'DEV':
+        return
 
 if __name__ == '__main__':
     api_key = os.environ.get('BINANCE_API_KEY')

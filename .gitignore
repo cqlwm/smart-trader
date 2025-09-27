@@ -6,3 +6,4 @@ uv.lock
 data
 start.sh
 config.json
+.env

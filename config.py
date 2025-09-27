@@ -1,13 +1,16 @@
-import json
+import os
+import dotenv
+import log
 
-with open('config.json', 'r') as f:
-    config = json.load(f)
+dotenv.load_dotenv()
 
-# 项目根目录
-PROJECT_PATH = config['project_path']
+logger = log.getLogger(__name__)
 
-# 数据目录
+PROJECT_PATH = os.environ.get('PROJECT_PATH')
+if not PROJECT_PATH:
+    raise ValueError('PROJECT_PATH must be set')
+
 DATA_PATH = f'{PROJECT_PATH}/data'
 
-print(PROJECT_PATH)
-print(DATA_PATH)
+logger.info(f'PROJECT_PATH: {PROJECT_PATH}')
+logger.info(f'DATA_PATH: {DATA_PATH}')
