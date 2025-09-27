@@ -221,9 +221,8 @@ class SimpleGridStrategy(StrategyV2):
                     closest_index = index
             return closest_index
 
-    def cancel_inactive_grids(self, current_price: float, active_indices: List[int]):
+    def cancel_inactive_grids(self, active_indices: List[int]):
         """取消远离当前价格的网格订单"""
-        # active_indices = set(self.get_active_grid_indices(current_price))
 
         for index, grid in enumerate(self.grids):
             if index not in active_indices and not grid.is_complete():
@@ -283,7 +282,7 @@ class SimpleGridStrategy(StrategyV2):
 
         # 取消远离当前价格的订单
         if has_complete_grid:
-            self.cancel_inactive_grids(current_price, active_indices)
+            self.cancel_inactive_grids(active_indices)
 
     def get_total_profit(self) -> float:
         """获取总盈利"""
