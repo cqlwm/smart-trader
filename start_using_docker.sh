@@ -3,7 +3,7 @@
 # 定义镜像名称和标签
 IMAGE_NAME="smart-trader-v2"
 IMAGE_TAG="0.0.1"
-CONTAINER_NAME="smart-trader-v2"
+CONTAINER_NAME="smart-trader"
 
 # 指定Dockerfile的路径
 DOCKERFILE_PATH="."
