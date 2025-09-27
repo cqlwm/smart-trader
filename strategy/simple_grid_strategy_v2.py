@@ -228,8 +228,8 @@ class SimpleGridStrategy(StrategyV2):
         for index, grid in enumerate(self.grids):
             if index not in active_indices and not grid.is_complete():
                 # 取消不在激活范围内的订单
-                if grid.cancel_orders(self.ex_client):
-                    logger.info(f"取消远离价格的网格 {index}: 当前价格 {current_price}, 网格范围 [{grid.entry_price}, {grid.exit_price}]")
+                grid.cancel_orders(self.ex_client)
+                # logger.info(f"取消远离价格的网格 {index}: 当前价格 {current_price}, 网格范围 [{grid.entry_price}, {grid.exit_price}]")
 
     def get_current_price(self) -> float:
         """获取当前市场价格"""
