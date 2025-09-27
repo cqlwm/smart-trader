@@ -3,7 +3,6 @@ import os
 from DataEventLoop import BinanceDataEventLoop
 from client.binance_client import BinanceSwapClient
 from model import Symbol
-from template import long_short_rotation
 from DataEventLoop import Task
 import dotenv
 
@@ -29,8 +28,11 @@ if __name__ == '__main__':
     binance_client = BinanceSwapClient(api_key=api_key, api_secret=api_secret, is_test=is_test)
 
     timeframe = '1m'
-    symbol = Symbol(base='bnb', quote='usdc')
-    task: Task = long_short_rotation.template(binance_client, symbol, timeframe)
+    symbol = Symbol(base='doge', quote='usdt')
+    # from template import long_short_rotation
+    # task: Task = long_short_rotation.template(binance_client, symbol, timeframe)
+    from template import simple_grid_bnb
+    task: Task = simple_grid_bnb.template(binance_client, symbol, timeframe)
 
     data_event_loop = BinanceDataEventLoop(kline_subscribes=[symbol.binance_ws_sub_kline(timeframe)])
     data_event_loop.add_task(task)

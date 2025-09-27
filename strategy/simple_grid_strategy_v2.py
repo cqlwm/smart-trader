@@ -1,4 +1,5 @@
 import secrets
+import threading
 import numpy as np
 from typing import List
 from datetime import datetime
@@ -75,9 +76,8 @@ class OrderPair(BaseModel):
         # 检查是否需要下开仓单
         if not self.entry_order_id:
             self._place_order(client, "entry", entry_side, self.entry_price)
-
         # 检查是否需要下平仓单
-        if not self.exit_order_id:
+        elif self.entry_filled and not self.exit_order_id:
             self._place_order(client, "exit", exit_side, self.exit_price)
 
         # 更新订单状态
@@ -92,7 +92,8 @@ class OrderPair(BaseModel):
                 symbol=self.symbol,
                 order_side=side,
                 quantity=self.quantity,
-                price=price
+                price=price,
+                position_side=self.position_side,
             )
             if order:
                 order_id = order.get('clientOrderId', '')
@@ -101,10 +102,10 @@ class OrderPair(BaseModel):
                 else:
                     self.exit_order_id = order_id
                 logger.info(f"{order_type}: {order_id} @ {price}")
-        except Exception as e:
-            logger.error(f"{order_type}失败: {e}")
+        except Exception as _:
+            logger.error(f"{order_type}失败", exc_info=True)
 
-    def cancel_orders(self, client: ExClient):
+    def cancel_orders(self, client: ExClient) -> bool:
         """取消未成交的订单"""
         entry_cancelled = False
         exit_cancelled = False
@@ -133,6 +134,8 @@ class OrderPair(BaseModel):
         if exit_cancelled:
             self.exit_order_id = ""
             self.exit_filled = False
+        
+        return entry_cancelled or exit_cancelled
 
     def reset(self):
         """重置订单对状态，用于重新开始交易，保留累积盈利"""
@@ -145,7 +148,6 @@ class OrderPair(BaseModel):
     def can_run(self) -> bool:
         """检查订单对是否可以运行（未完成状态）"""
         return not self.is_complete()
-
 
 class SimpleGridStrategy(StrategyV2):
     def __init__(self, ex_client: ExSwapClient, symbol: Symbol,
@@ -162,6 +164,7 @@ class SimpleGridStrategy(StrategyV2):
         self.position_side = position_side
         self.active_grid_count = active_grid_count  # 激活的网格数量
         self.grids: List[OrderPair] = []
+        self.lock = threading.Lock()
 
     def _calculate_grid_prices(self) -> List[float]:
         """计算网格价格"""
@@ -177,10 +180,17 @@ class SimpleGridStrategy(StrategyV2):
 
         # 计算激活范围: 当前网格上下各激活 active_grid_count//2 个网格
         half_count = self.active_grid_count // 2
-        start_index = max(0, current_grid_index - half_count)
-        end_index = min(len(self.grids), current_grid_index + half_count + 1)
+        # start_index = max(0, current_grid_index - half_count)
+        # end_index = min(len(self.grids), current_grid_index + half_count + 1)
 
-        return list(range(start_index, end_index))
+        indices = [current_grid_index]
+        for i in range(1, half_count + 1):
+            if current_grid_index - i >= 0:
+                indices.append(current_grid_index - i)
+            if current_grid_index + i < len(self.grids):
+                indices.append(current_grid_index + i)
+            
+        return indices
 
     def _find_current_grid_index(self, current_price: float) -> int:
         """找到当前价格所在的网格区间索引"""
@@ -218,8 +228,8 @@ class SimpleGridStrategy(StrategyV2):
         for index, grid in enumerate(self.grids):
             if index not in active_indices and not grid.is_complete():
                 # 取消不在激活范围内的订单
-                grid.cancel_orders(self.ex_client)
-                logger.info(f"取消远离价格的网格 {index}: 当前价格 {current_price}, 网格范围 [{grid.entry_price}, {grid.exit_price}]")
+                if grid.cancel_orders(self.ex_client):
+                    logger.info(f"取消远离价格的网格 {index}: 当前价格 {current_price}, 网格范围 [{grid.entry_price}, {grid.exit_price}]")
 
     def get_current_price(self) -> float:
         """获取当前市场价格"""
@@ -253,6 +263,7 @@ class SimpleGridStrategy(StrategyV2):
                 quantity=self.quantity
             )
             self.grids.append(order_pair)
+        
 
     def update_grid_orders(self):
         """更新网格订单状态"""
@@ -262,14 +273,17 @@ class SimpleGridStrategy(StrategyV2):
         active_indices = self.get_active_grid_indices(current_price)
 
         # 只更新激活范围内的网格
+        has_complete_grid = False
         for index in active_indices:
             grid = self.grids[index]
             if grid.is_complete():
                 grid.reset()
+                has_complete_grid = True
             grid.run(self.ex_client)
 
         # 取消远离当前价格的订单
-        self.cancel_inactive_grids(current_price, active_indices)
+        if has_complete_grid:
+            self.cancel_inactive_grids(current_price, active_indices)
 
     def get_total_profit(self) -> float:
         """获取总盈利"""
@@ -282,7 +296,11 @@ class SimpleGridStrategy(StrategyV2):
 
     def on_kline(self):
         """每次K线更新时调用"""
-        self.run_strategy()
+        if self.lock.acquire(blocking=False):
+            try:
+                self.run_strategy()
+            finally:
+                self.lock.release()
 
     def on_kline_finished(self):
         """K线完成时调用"""

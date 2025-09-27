@@ -5,7 +5,7 @@ from client.binance_chaser_order import LimitOrderChaser
 from client.ex_client import ExSwapClient
 
 import requests
-from model import Symbol, PlaceOrderBehavior
+from model import PositionSide, Symbol, PlaceOrderBehavior
 from model import OrderSide
 import log
 
@@ -90,7 +90,14 @@ class BinanceSwapClient(ExSwapClient):
         return order
 
     def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price: Optional[float] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        position_side: str = kwargs['position_side']
+        position_side = kwargs.pop('position_side', None)
+        if isinstance(position_side, PositionSide):
+            position_side = position_side.value
+        elif position_side and position_side.lower() in ['long', 'short']:
+            position_side = position_side.lower()
+        else:
+            position_side = None
+            
         place_order_behavior: Optional[PlaceOrderBehavior] = kwargs.get("place_order_behavior")
 
         if isinstance(place_order_behavior, PlaceOrderBehavior):
@@ -106,10 +113,9 @@ class BinanceSwapClient(ExSwapClient):
             else:
                 logger.error("追单失败, 市价执行")
 
-        params: Dict[str, Any] = {
-            'newClientOrderId': custom_id,
-            'positionSide': position_side
-        }
+        params: Dict[str, Any] = {'newClientOrderId': custom_id}
+        if position_side:
+            params['positionSide'] = position_side
 
         order_type = 'limit' if price else 'market'
 
@@ -117,15 +123,19 @@ class BinanceSwapClient(ExSwapClient):
         if order_type == 'limit' and (kwargs.get('time_in_force') or kwargs.get('timeInForce')):
             params['timeInForce'] = kwargs['time_in_force'] or kwargs['timeInForce']
 
-        order: Dict[str, Any] = self.exchange.create_order(  # type: ignore
-            symbol=symbol.binance(),
-            type=order_type,
-            side=order_side.value,
-            amount=quantity,
-            price=price,
-            params=params
-        )
-        return order
+        try:
+            order: Dict[str, Any] = self.exchange.create_order(  # type: ignore
+                symbol=symbol.binance(),
+                type=order_type,
+                side=order_side.value,
+                amount=quantity,
+                price=price,
+                params=params
+            )
+            return order
+        except Exception as e:
+            logger.error(f"下单失败: symbol: {symbol.binance()}, type: {order_type}, side: {order_side.value}, quantity: {quantity}, price: {price}, params: {params}", stack_info=True)
+            raise e
 
     def close_position(self, symbol: str, position_side: str, auto_cancel: bool = True) -> None:
         positions: List[Dict[str, Any]] = self.positions(symbol)
