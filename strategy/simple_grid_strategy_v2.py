@@ -181,6 +181,7 @@ class SimpleGridStrategyConfig(BaseModel):
     position_side: PositionSide = PositionSide.LONG
     master_order_side: OrderSide = OrderSide.BUY
     delay_pending_order: bool = False
+    initial_quota: float = 0
 
 class SimpleGridStrategy(StrategyV2):
     def __init__(self, ex_client: ExSwapClient, config: SimpleGridStrategyConfig):
@@ -301,15 +302,28 @@ class SimpleGridStrategy(StrategyV2):
             current_price = self.last_kline.close
             compare = builtins.float.__le__ if self.config.master_order_side == OrderSide.BUY else builtins.float.__ge__
             run_grids = list(filter(lambda grid: compare(current_price, grid.entry_price), self.grids))
-            order_id = OrderPair.place_order(
-                client=self.ex_client,
-                symbol=self.config.symbol,
-                position_side=self.config.position_side,
-                order_side=self.config.master_order_side,
-                quantity=len(run_grids) * self.config.quantity_per_grid
-            )
+            
+            real_quota = 0
             for grid in run_grids:
-                grid.entry_order_id = order_id
+                if self.config.initial_quota >= real_quota + grid.quantity:
+                    real_quota += grid.quantity
+                else:
+                    break
+                grid.entry_order_id = '-'
+                grid.entry_filled = True
+
+            order_quantity = len(run_grids) * self.config.quantity_per_grid - real_quota
+            if order_quantity > 0:
+                order_id = OrderPair.place_order(
+                    client=self.ex_client,
+                    symbol=self.config.symbol,
+                    position_side=self.config.position_side,
+                    order_side=self.config.master_order_side,
+                    quantity=order_quantity
+                )
+                for grid in run_grids:
+                    if not grid.entry_filled:
+                        grid.entry_order_id = order_id
 
     def update_grid_orders(self):
         """更新网格订单状态"""
