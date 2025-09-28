@@ -16,22 +16,22 @@ class LimitOrderChaser:
     def __init__(self, client: ExSwapClient, symbol: Symbol, side: OrderSide, quantity: float, 
                  tick_size: float, position_side: str = "LONG", place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER):
         logger.info(f"Init Chaser : {symbol.ccxt()}, {side.name}, {quantity}, {position_side}")
-        self.client = client
+        self.client: ExSwapClient = client
         self.symbol: Symbol = symbol
-        self.side = side
-        self.quantity = quantity
-        self.position_side = position_side.upper()
-        self.ssl_context = ssl._create_unverified_context()
+        self.side: OrderSide = side
+        self.quantity: float = quantity
+        self.position_side: str = position_side.upper()
+        self.ssl_context = ssl._create_unverified_context() # type: ignore
         self.order = None
         self.tick_size: float = tick_size
-        self.price_precision = len(str(Decimal(str(self.tick_size))).split('.')[1])
-        self.max_iterations = 40
+        self.price_precision: int = len(str(Decimal(str(self.tick_size))).split('.')[1])
+        self.max_iterations: int = 40
         # 超过最大迭代次数，后的行为 cancel or open
         # open: 下单，不保证完成
         # cancel: 撤单
         self.place_order_behavior: PlaceOrderBehavior = place_order_behavior
 
-    def place_order_gtx(self, price):
+    def place_order_gtx(self, price: float):
         custom_id=f'{self.side.value}{secrets.token_hex(nbytes=5)}'
         logger.info("下单：%s, %s, %s, Qty: %s, Price: %s", custom_id, self.symbol.ccxt(), self.side.name, self.quantity, price)
         result = self.client.place_order_v2(
@@ -46,7 +46,7 @@ class LimitOrderChaser:
         logger.debug("下单返回：%s", result)
         return result
 
-    def query_order(self, order_id):
+    def query_order(self, order_id: str):
         try:
             result = self.client.query_order(order_id, self.symbol)
         except Exception as _:
@@ -55,7 +55,7 @@ class LimitOrderChaser:
         logger.debug("查询订单返回：%s", result)
         return result
 
-    def cancel_order(self, order_id):
+    def cancel_order(self, order_id: str):
         '''
         ccxt.base.errors.OrderNotFound: binance {"code":-2011,"msg":"Unknown order sent."}
         '''
@@ -132,7 +132,7 @@ class LimitOrderChaser:
 
         return False
 
-    def end_check(self, is_end: bool = False):
+    def end_check(self, is_end: bool = False) -> bool:
         if self.order:
             if self.order['status'] == OrderStatus.CLOSED.value:
                 return True

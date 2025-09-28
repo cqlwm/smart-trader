@@ -39,8 +39,10 @@ class OrderStatus(Enum):
 class PlaceOrderBehavior(Enum):
     CHASER = 'chaser'  # 追单且成交
     CHASER_OPEN = 'chaser_open'  # 追单只下单
-    LIMIT = 'limit'  # 限价单
-    MARKET = 'market'  # 市价单
+    # LIMIT = 'limit'  # 限价单
+    # MARKET = 'market'  # 市价单
+    # 常规
+    NORMAL = 'normal'  # 常规
 
 class Symbol(BaseModel):
     base: str

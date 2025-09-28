@@ -96,7 +96,7 @@ class BinanceSwapClient(ExSwapClient):
         elif position_side and position_side.lower() in ['long', 'short']:
             position_side = position_side.lower()
         else:
-            position_side = None
+            raise ValueError(f"position_side 必须是 PositionSide 枚举值或 'long'/'short' 字符串, 但 got {position_side}")
             
         place_order_behavior: Optional[PlaceOrderBehavior] = kwargs.get("place_order_behavior")
 

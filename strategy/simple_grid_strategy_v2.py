@@ -8,15 +8,16 @@ from datetime import datetime
 from pydantic import BaseModel
 from strategy import StrategyV2
 from client.ex_client import ExSwapClient, ExClient
-from model import PositionSide, Symbol, OrderSide, OrderStatus
+from model import PlaceOrderBehavior, PositionSide, Symbol, OrderSide, OrderStatus
 import log
 from config import DATA_PATH
+import builtins
 
 logger = log.getLogger(__name__)
 
 class OrderPair(BaseModel):
     position_side: PositionSide
-    side: OrderSide
+    entry_side: OrderSide
     symbol: Symbol
     entry_price: float
     exit_price: float
@@ -30,12 +31,7 @@ class OrderPair(BaseModel):
     def calculate_profit(self) -> float:
         """计算套利盈利"""
         if self.entry_filled and self.exit_filled:
-            if self.position_side == PositionSide.LONG:
-                # 做多: 低买高卖
-                return (self.exit_price - self.entry_price) * self.quantity
-            else:
-                # 做空: 高卖低买
-                return (self.entry_price - self.exit_price) * self.quantity
+            return abs(self.exit_price - self.entry_price) * self.quantity
         return 0.0
 
     def is_complete(self) -> bool:
@@ -44,6 +40,11 @@ class OrderPair(BaseModel):
 
     def update_order_status(self, client: ExClient):
         """更新订单状态"""
+        # 状态快照
+        status_snapshot = self.is_complete()
+        if status_snapshot:
+            return
+
         if self.entry_order_id and not self.entry_filled:
             try:
                 entry_order = client.query_order(self.entry_order_id, self.symbol)
@@ -62,24 +63,17 @@ class OrderPair(BaseModel):
             except Exception as e:
                 logger.error(f"查询平仓单状态失败: {e}")
 
-        if self.is_complete():
+        if not status_snapshot and self.is_complete():
             self.total_profit += self.calculate_profit()
 
     def run(self, client: ExClient):
         """执行订单对套利"""
-        if self.position_side == PositionSide.LONG:
-            entry_side = OrderSide.BUY
-            exit_side = OrderSide.SELL
-        else:
-            entry_side = OrderSide.SELL
-            exit_side = OrderSide.BUY
-
         # 检查是否需要下开仓单
         if not self.entry_order_id:
-            self._place_order(client, "entry", entry_side, self.entry_price)
+            self._place_order(client, "entry", self.entry_side, self.entry_price)
         # 检查是否需要下平仓单
         elif self.entry_filled and not self.exit_order_id:
-            self._place_order(client, "exit", exit_side, self.exit_price)
+            self._place_order(client, "exit", self.entry_side.reversal(), self.exit_price)
 
         # 更新订单状态
         self.update_order_status(client)
@@ -94,7 +88,7 @@ class OrderPair(BaseModel):
                 order_side=side,
                 quantity=self.quantity,
                 price=price,
-                position_side=self.position_side,
+                position_side=self.position_side
             )
             if order:
                 order_id = order.get('clientOrderId', '')
@@ -105,6 +99,28 @@ class OrderPair(BaseModel):
                 logger.info(f"{order_type}: {order_id} @ {price}")
         except Exception as _:
             logger.error(f"{order_type}失败", exc_info=True)
+
+    @staticmethod
+    def place_order(client: ExClient, symbol: Symbol, position_side: PositionSide, order_side: OrderSide, quantity: float) -> str:
+        """通用下单方法"""
+        try:
+            order = client.place_order_v2(
+                custom_id=f"{int(datetime.now().timestamp())}_{secrets.token_hex(nbytes=1)}",
+                symbol=symbol,
+                order_side=order_side,
+                quantity=quantity,
+                position_side=position_side,
+                place_order_behavior=PlaceOrderBehavior.CHASER
+            )
+            if order:
+                order_id: str = order.get('clientOrderId', '')
+                return order_id
+            else:
+                raise Exception("下单失败 order is None")
+        except Exception as e:
+            logger.error("下单失败", exc_info=True)
+            raise e
+
 
     def cancel_orders(self, client: ExClient) -> bool:
         """取消未成交的订单"""
@@ -118,6 +134,7 @@ class OrderPair(BaseModel):
                 entry_cancelled = True
             except Exception as e:
                 logger.error(f"取消开仓单失败: {e}")
+                self.update_order_status(client)
 
         if self.exit_order_id and not self.exit_filled:
             try:
@@ -126,6 +143,7 @@ class OrderPair(BaseModel):
                 exit_cancelled = True
             except Exception as e:
                 logger.error(f"取消平仓单失败: {e}")
+                self.update_order_status(client)
 
         # 重置被取消订单的状态
         if entry_cancelled:
@@ -144,7 +162,7 @@ class OrderPair(BaseModel):
         self.exit_order_id = ""
         self.entry_filled = False
         self.exit_filled = False
-        logger.info(f"重置订单对: {self.position_side.value} 开仓价 {self.entry_price}, 平仓价 {self.exit_price}, 累积盈利 {self.total_profit}")
+        logger.info(f"重置订单对: {self.position_side.name}, 入场 {self.entry_side.name}_{self.entry_price}, 退出 {self.entry_side.reversal().name}_{self.exit_price}, 累积盈利 {self.total_profit}")
 
     def can_run(self) -> bool:
         """检查订单对是否可以运行（未完成状态）"""
@@ -153,23 +171,25 @@ class OrderPair(BaseModel):
 class OrderPairListModel(BaseModel):
     items: List[OrderPair] = []
 
+class SimpleGridStrategyConfig(BaseModel):
+    symbol: Symbol
+    upper_price: float
+    lower_price: float
+    grid_num: int
+    quantity_per_grid: float
+    active_grid_count: int = 5
+    position_side: PositionSide = PositionSide.LONG
+    master_order_side: OrderSide = OrderSide.BUY
+    delay_pending_order: bool = False
+
 class SimpleGridStrategy(StrategyV2):
-    def __init__(self, ex_client: ExSwapClient, symbol: Symbol,
-                 upper_price: float, lower_price: float, grid_num: int,
-                 quantity_per_grid: float, position_side: PositionSide,
-                 active_grid_count: int = 5):
+    def __init__(self, ex_client: ExSwapClient, config: SimpleGridStrategyConfig):
         super().__init__()
+        self.config = config
         self.ex_client = ex_client
-        self.symbol = symbol
-        self.upper_price = upper_price
-        self.lower_price = lower_price
-        self.grid_num = grid_num
-        self.quantity = quantity_per_grid
-        self.position_side = position_side
-        self.active_grid_count = active_grid_count  # 激活的网格数量
         self.grids: List[OrderPair] = []
         self.lock = threading.Lock()
-        self.backup_file = f"{DATA_PATH}/backup_{self.symbol.simple()}_{self.position_side.value}.json"
+        self.backup_file = f"{DATA_PATH}/backup_{self.config.symbol.simple()}_{self.config.position_side.value}_{self.config.master_order_side.value}.json"
         self.load_state()
 
     def load_state(self):
@@ -200,7 +220,7 @@ class SimpleGridStrategy(StrategyV2):
 
     def _calculate_grid_prices(self) -> List[float]:
         """计算网格价格"""
-        return list(np.linspace(self.lower_price, self.upper_price, self.grid_num))
+        return list(np.linspace(self.config.lower_price, self.config.upper_price, self.config.grid_num))
 
     def get_active_grid_indices(self, current_price: float) -> List[int]:
         """根据当前价格获取应该激活的网格索引"""
@@ -211,7 +231,7 @@ class SimpleGridStrategy(StrategyV2):
         current_grid_index = self._find_current_grid_index(current_price)
 
         # 计算激活范围: 当前网格上下各激活 active_grid_count//2 个网格
-        half_count = self.active_grid_count // 2
+        half_count = self.config.active_grid_count // 2
         # start_index = max(0, current_grid_index - half_count)
         # end_index = min(len(self.grids), current_grid_index + half_count + 1)
 
@@ -226,32 +246,16 @@ class SimpleGridStrategy(StrategyV2):
 
     def _find_current_grid_index(self, current_price: float) -> int:
         """找到当前价格所在的网格区间索引"""
-        for index, grid in enumerate(self.grids):
-            if self.position_side == PositionSide.LONG:
-                # 做多: entry_price < exit_price
-                if grid.entry_price <= current_price <= grid.exit_price:
-                    return index
-            else:
-                # 做空: entry_price > exit_price
-                if grid.exit_price <= current_price <= grid.entry_price:
-                    return index
-
         # 如果当前价格不在任何网格内，返回最接近的网格
-        if current_price < self.lower_price:
+        if current_price <= self.config.lower_price:
             return 0
-        elif current_price > self.upper_price:
+        elif current_price >= self.config.upper_price:
             return len(self.grids) - 1
         else:
-            # 找到最接近的网格
-            min_distance = float('inf')
-            closest_index = 0
             for index, grid in enumerate(self.grids):
-                mid_price = (grid.entry_price + grid.exit_price) / 2
-                distance = abs(current_price - mid_price)
-                if distance < min_distance:
-                    min_distance = distance
-                    closest_index = index
-            return closest_index
+                if (grid.entry_price <= current_price <= grid.exit_price) or (grid.exit_price <= current_price <= grid.entry_price):
+                    return index
+            raise ValueError(f"预料之外的错误, 当前价格 {current_price} 不在任何网格内")
 
     def cancel_inactive_grids(self, active_indices: List[int]):
         """取消远离当前价格的网格订单"""
@@ -274,27 +278,38 @@ class SimpleGridStrategy(StrategyV2):
         grid_prices = self._calculate_grid_prices()
 
         for index in range(len(grid_prices) - 1):
-            if self.position_side == PositionSide.LONG:
+            if self.config.master_order_side == OrderSide.BUY:
                 # 做多: 低价开仓买入，高价平仓卖出
                 entry_price = grid_prices[index]
                 exit_price = grid_prices[index + 1]
-                side = OrderSide.BUY
             else:
                 # 做空: 高价开仓卖出，低价平仓买入
                 entry_price = grid_prices[index + 1]
                 exit_price = grid_prices[index]
-                side = OrderSide.SELL
 
             order_pair = OrderPair(
-                position_side=self.position_side,
-                side=side,
-                symbol=self.symbol,
+                position_side=self.config.position_side,
+                entry_side=self.config.master_order_side,
+                symbol=self.config.symbol,
                 entry_price=entry_price,
                 exit_price=exit_price,
-                quantity=self.quantity
+                quantity=self.config.quantity_per_grid
             )
             self.grids.append(order_pair)
         
+        if not self.config.delay_pending_order:
+            current_price = self.last_kline.close
+            compare = builtins.float.__le__ if self.config.master_order_side == OrderSide.BUY else builtins.float.__ge__
+            run_grids = list(filter(lambda grid: compare(current_price, grid.entry_price), self.grids))
+            order_id = OrderPair.place_order(
+                client=self.ex_client,
+                symbol=self.config.symbol,
+                position_side=self.config.position_side,
+                order_side=self.config.master_order_side,
+                quantity=len(run_grids) * self.config.quantity_per_grid
+            )
+            for grid in run_grids:
+                grid.entry_order_id = order_id
 
     def update_grid_orders(self):
         """更新网格订单状态"""
