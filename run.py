@@ -27,8 +27,10 @@ if __name__ == '__main__':
 
     # from template import long_short_rotation
     # task: Task = long_short_rotation.template(binance_client, symbol, timeframe)
-    from template import simple_grid_doge
-    template_model = simple_grid_doge.template(binance_client)
+    # from template import simple_grid_doge
+    # template_model = simple_grid_doge.template(binance_client)
+    from template import simple_grid_bnbusdc
+    template_model = simple_grid_bnbusdc.template(binance_client)
 
     data_event_loop = BinanceDataEventLoop(
         kline_subscribes=[
