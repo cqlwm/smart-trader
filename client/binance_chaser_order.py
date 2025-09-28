@@ -13,23 +13,22 @@ import log
 logger = log.getLogger(__name__)
 
 class LimitOrderChaser:
-    def __init__(self, client: ExSwapClient, symbol: Symbol, side: OrderSide, quantity: float, 
-                 tick_size: float, position_side: str = "LONG", place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER):
+    '''
+    目前只针对Binance进行了适配
+    '''
+    def __init__(self, client: ExSwapClient, symbol: Symbol, side: OrderSide, quantity: float, tick_size: float, position_side: str = "LONG", place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER):
         logger.info(f"Init Chaser : {symbol.ccxt()}, {side.name}, {quantity}, {position_side}")
         self.client: ExSwapClient = client
         self.symbol: Symbol = symbol
+        self.position_side: str = position_side.upper()
         self.side: OrderSide = side
         self.quantity: float = quantity
-        self.position_side: str = position_side.upper()
-        self.ssl_context = ssl._create_unverified_context() # type: ignore
-        self.order = None
         self.tick_size: float = tick_size
         self.price_precision: int = len(str(Decimal(str(self.tick_size))).split('.')[1])
-        self.max_iterations: int = 40
-        # 超过最大迭代次数，后的行为 cancel or open
-        # open: 下单，不保证完成
-        # cancel: 撤单
         self.place_order_behavior: PlaceOrderBehavior = place_order_behavior
+        self.max_iterations: int = 40
+        self.order = None
+        self.chase_result = False
 
     def place_order_gtx(self, price: float):
         custom_id=f'{self.side.value}{secrets.token_hex(nbytes=5)}'
@@ -67,7 +66,26 @@ class LimitOrderChaser:
         logger.debug("撤单返回：%s", result)
         return result
 
-    def chase(self, latest_price: float):
+    def chase_open_only(self, latest_price: float) -> bool:
+        '''
+        仅执行追单只下单模式
+        @param latest_price: 最新价格
+        '''
+        limit_price = (latest_price - self.tick_size) if self.side == OrderSide.BUY else (latest_price + self.tick_size)
+        try:
+            place_order_result = self.place_order_gtx(limit_price)
+            if place_order_result and place_order_result.get('status'):
+                self.order = place_order_result
+                return place_order_result['status'] in [OrderStatus.OPEN.value, OrderStatus.CLOSED.value]
+        except Exception as e:
+            if '"code":-5022' in str(e.args):
+                # {"code":-5022,"msg":"由于订单无法以挂单方式成交，此挂单将被拒绝，不会记录在订单历史记录中。"}
+                logger.info("价格将触发市价, GTX限价订单自动取消")
+            else:
+                logger.error(f"下单时出错, error: {str(e)}", exc_info=True)
+        return False
+
+    def chase_closed(self, latest_price: float):
         '''
         执行追逐限价单
         1. 使用买1价和卖1价最为限价单的价格
@@ -82,10 +100,8 @@ class LimitOrderChaser:
                 2.3.3 如果价格未更优，不做任何操作
         @param latest_price: 最新价格
         '''
-        best_bid = latest_price - self.tick_size
-        best_ask = latest_price + self.tick_size
-        limit_price = best_bid if self.side == OrderSide.BUY else best_ask
-        
+        limit_price = (latest_price - self.tick_size) if self.side == OrderSide.BUY else (latest_price + self.tick_size)
+
         if self.order:
             query_order_result = self.query_order(self.order['clientOrderId'])
             if not query_order_result:
@@ -103,8 +119,8 @@ class LimitOrderChaser:
                 return False
 
             if query_order_result['status'] == OrderStatus.OPEN.value:
-                if self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN or float(query_order_result['info']['executedQty']) > 0:
-                    # CHASER_OPEN模式或订单部分成交就认为是已成交
+                if float(query_order_result['info']['executedQty']) > 0:
+                    # TODO 订单部分成交就认为是已成交
                     self.order = query_order_result
                     return True
                 
@@ -112,45 +128,37 @@ class LimitOrderChaser:
                     logger.info(f"撤销订单 {self.order['clientOrderId']}，订单价格: {query_order_result['price']}, 重置订单价格: {limit_price}")
                     cancel_result = self.cancel_order(self.order['clientOrderId'])
                     if cancel_result and cancel_result['status'] == OrderStatus.CANCELED.value:
-                        # 订单取消成功重置order；如果失败，下一轮插叙确认状态
+                        # 订单取消成功重置order；如果失败，下一轮查询确认状态
                         self.order = None
                 return False
         else:
-            try:
-                place_order_result = self.place_order_gtx(limit_price)
-                if place_order_result and place_order_result.get('status'):
-                    self.order = place_order_result
-                    if self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN:
-                        return place_order_result['status'] in [OrderStatus.OPEN.value, OrderStatus.CLOSED.value]
-            except Exception as e:
-                if '"code":-5022' in str(e.args):
-                    # {"code":-5022,"msg":"由于订单无法以挂单方式成交，此挂单将被拒绝，不会记录在订单历史记录中。"}
-                    logger.info("价格将触发市价, GTX限价订单自动取消")
-                else:
-                    logger.error("下单时出错", exc_info=True)
-                return False
+            self.chase_open_only(latest_price)
 
         return False
 
-    def end_check(self, is_end: bool = False) -> bool:
-        if self.order:
-            if self.order['status'] == OrderStatus.CLOSED.value:
-                return True
-            if self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN and self.order['status'] == OrderStatus.OPEN.value:
-                return True
-            if self.chase(self.order['price']):
-                return True
-            else:
-                return is_end or self.end_check(is_end=True)
+    def end_check(self) -> bool:
+        if self.chase_result:
+            return True
         else:
-            return False
+            if self.order:
+                self.cancel_order(self.order['clientOrderId'])
+                return self.chase_closed(self.order['price'])
+            else:
+                return False
+
+    def chase(self, latest_price: float) -> bool:
+        if self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN:
+            return self.chase_open_only(latest_price)
+        elif self.place_order_behavior == PlaceOrderBehavior.CHASER:
+            return self.chase_closed(latest_price)
+        else:
+            raise ValueError(f"未知的追逐下单行为 {self.place_order_behavior}")
 
     async def start(self):
         ws_url = f"wss://fstream.binance.com/ws/{self.symbol.binance().lower()}@miniTicker"
         counter = 0
-        chase_result = False
         while True:
-            async with websockets.connect(ws_url, ssl=self.ssl_context) as ws:
+            async with websockets.connect(ws_url, ssl=ssl._create_unverified_context()) as ws: # type: ignore
                 try:
                     await ws.ping()
                     while counter < self.max_iterations:
@@ -159,20 +167,21 @@ class LimitOrderChaser:
                         if '"c"' in msg_str and '24hrMiniTicker' in msg_str:
                             data = json.loads(msg)
                             current_price = float(data['c'])
-                            chase_result = self.chase(current_price)
-                            if chase_result and self.order:
+                            self.chase_result = self.chase(current_price)
+                            if self.chase_result and self.order:
                                 logger.info(f"结束追单, 订单 {self.order['clientOrderId']} {'已挂单' if self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN else '已成交'}")
                                 break
+                            
                             await asyncio.sleep(1)
                         counter += 1
-                    logger.info(f"追单迭代次数 {counter}")
+                    logger.info(f"追单计数 {counter}")
                 except asyncio.TimeoutError:
                     logger.warning("WebSocket接收超时, 重新尝试")
-                    counter += 15
+                    counter += 10
                 except Exception as e:
                     logger.error(e)
             
-            if counter >= self.max_iterations or chase_result:
+            if counter >= self.max_iterations or self.chase_result:
                 break
             else:
                 logger.warning("WebSocket重连")

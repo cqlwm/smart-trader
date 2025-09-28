@@ -134,7 +134,7 @@ class BinanceSwapClient(ExSwapClient):
             )
             return order
         except Exception as e:
-            logger.error(f"下单失败: symbol: {symbol.binance()}, type: {order_type}, side: {order_side.value}, quantity: {quantity}, price: {price}, params: {params}", stack_info=True)
+            logger.debug(f"下单失败: symbol: {symbol.binance()}, type: {order_type}, side: {order_side.value}, quantity: {quantity}, price: {price}, params: {params}, error: {str(e)}")
             raise e
 
     def close_position(self, symbol: str, position_side: str, auto_cancel: bool = True) -> None:
