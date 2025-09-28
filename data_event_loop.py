@@ -1,6 +1,6 @@
 import concurrent.futures
 import json
-from typing import List
+from typing import Any, List
 import websocket
 import logging
 import random
@@ -10,14 +10,6 @@ logger = logging.getLogger(__name__)
 class Task:
     def __init__(self):
         self.name: str
-        # self.is_running: bool = False
-
-    # def run0(self, data: str):
-    #     if self.is_running:
-    #         return
-    #     self.is_running = True
-    #     self.run(data)
-    #     self.is_running = False
     
     def run(self, data: str):
         pass
@@ -58,10 +50,10 @@ class BinanceDataEventLoop(DataEventLoop):
                                             on_close=self.on_close,
                                             on_pong=self.on_pong
                                             )
-        ws_session.run_forever(ping_interval=20, ping_timeout=15)
+        ws_session.run_forever(ping_interval=20, ping_timeout=15) # type: ignore[call-arg]
 
-    def _subscribe(self, ws):
-        params = {
+    def _subscribe(self, ws: websocket.WebSocket):
+        params: dict[str, Any] = {
             "method": "SUBSCRIBE",
             "params": self.kline_subscribes,
             "id": self.SUBSCRIBE_KLINE_ID
@@ -69,19 +61,19 @@ class BinanceDataEventLoop(DataEventLoop):
         ws.send(json.dumps(params))
         logger.info(f"### BinanceDataEventLoop Subscribed ### {self.kline_subscribes}")
 
-    def on_message(self, _, message):
+    def on_message(self, ws: websocket.WebSocket, message: str):
         self.loop(message)
 
-    def on_error(self, _, error):
+    def on_error(self, ws: websocket.WebSocket, error: Exception):
         logger.error('BinanceDataEventLoop Error: %s', error)
 
-    def on_close(self, _, close_status_code, close_msg):
+    def on_close(self, ws: websocket.WebSocket, close_status_code: int | str, close_msg: str):
         logger.warning(f"### BinanceDataEventLoop Closed ### {close_status_code}: {close_msg}")
         self.stop()
 
-    def on_open(self, ws):
+    def on_open(self, ws: websocket.WebSocket):
         logger.info("### BinanceDataEventLoop Opened ###")
-        params = {
+        params: dict[str, Any] = {
             "method": "SET_PROPERTY",
             "params": [
                 "combined",
@@ -92,7 +84,7 @@ class BinanceDataEventLoop(DataEventLoop):
         ws.send(json.dumps(params))
         self._subscribe(ws)
 
-    def on_pong(self, ws, message):
+    def on_pong(self, ws: websocket.WebSocket, message: str):
         logger.debug("Pong")
         if random.randint(1, 100) == 1:
             self._subscribe(ws)

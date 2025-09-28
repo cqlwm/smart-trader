@@ -1,9 +1,9 @@
 import log
 import os
-from DataEventLoop import BinanceDataEventLoop
+from data_event_loop import BinanceDataEventLoop
 from client.binance_client import BinanceSwapClient
 from model import Symbol
-from DataEventLoop import Task
+from data_event_loop import Task
 import dotenv
 
 dotenv.load_dotenv()
