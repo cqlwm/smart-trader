@@ -127,6 +127,8 @@ class OrderPair(BaseModel):
         entry_cancelled = False
         exit_cancelled = False
 
+        self.update_order_status(client)
+
         if self.entry_order_id and not self.entry_filled:
             try:
                 client.cancel(self.entry_order_id, self.symbol)
@@ -134,7 +136,6 @@ class OrderPair(BaseModel):
                 entry_cancelled = True
             except Exception as e:
                 logger.error(f"取消开仓单失败: {e}")
-                self.update_order_status(client)
 
         if self.exit_order_id and not self.exit_filled:
             try:
@@ -143,7 +144,6 @@ class OrderPair(BaseModel):
                 exit_cancelled = True
             except Exception as e:
                 logger.error(f"取消平仓单失败: {e}")
-                self.update_order_status(client)
 
         # 重置被取消订单的状态
         if entry_cancelled:
