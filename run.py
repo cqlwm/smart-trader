@@ -1,3 +1,4 @@
+from typing import List
 import log
 import os
 from data_event_loop import BinanceDataEventLoop
@@ -25,19 +26,19 @@ if __name__ == '__main__':
 
     binance_client = BinanceSwapClient(api_key=api_key, api_secret=api_secret, is_test=is_test)
 
-    # from template import long_short_rotation
-    # task: Task = long_short_rotation.template(binance_client, symbol, timeframe)
-    # from template import simple_grid_doge
-    # template_model = simple_grid_doge.template(binance_client)
+    from template import simple_grid_dogeusdc
     from template import simple_grid_bnbusdc
-    template_model = simple_grid_bnbusdc.template(binance_client)
+    template_models = [
+        simple_grid_dogeusdc.template(binance_client),
+        simple_grid_bnbusdc.template(binance_client),
+    ]
 
-    data_event_loop = BinanceDataEventLoop(
-        kline_subscribes=[
-            template_model.symbol.binance_ws_sub_kline(template_model.timeframe)
-        ]
-    )
-    data_event_loop.add_task(template_model.strategy_task)
+    kline_subscribes: List[str] = []
+    data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
+
+    for template_model in template_models:
+        kline_subscribes.append(template_model.symbol.binance_ws_sub_kline(template_model.timeframe))
+        data_event_loop.add_task(template_model.strategy_task)
 
     data_event_loop.start()
 

@@ -11,17 +11,18 @@ def template(exchange_client: ExSwapClient) -> TemplateModel:
     """
     简单网格策略模板
     """
-    symbol=Symbol(base="DOGE", quote="USDT")
+    symbol=Symbol(base="doge", quote="usdc")
     config = SimpleGridStrategyConfig(
         symbol=symbol,
-        upper_price=0.28908,
-        lower_price=0.19136,
-        grid_num=300,
-        quantity_per_grid=100,
-        position_side=PositionSide.LONG,
-        master_order_side=OrderSide.BUY,
-        active_grid_count=5,
+        upper_price=0.25099,
+        lower_price=0.21500,
+        grid_num=58,
+        quantity_per_grid=35,
+        position_side=PositionSide.SHORT,
+        master_order_side=OrderSide.SELL,
+        active_grid_count=6,
         delay_pending_order=True,
+        initial_quota=11700,
     )
     simple_grid_strategy = SimpleGridStrategy(ex_client=exchange_client, config=config)
     return TemplateModel(
