@@ -29,7 +29,7 @@ if __name__ == '__main__':
     from template import simple_grid_dogeusdc
     from template import simple_grid_bnbusdc
     template_models = [
-        # simple_grid_dogeusdc.template(binance_client),
+        simple_grid_dogeusdc.template(binance_client),
         simple_grid_bnbusdc.template(binance_client),
     ]
 
