@@ -21,7 +21,7 @@ def template(exchange_client: ExSwapClient) -> TemplateModel:
         position_side=PositionSide.SHORT,
         master_order_side=OrderSide.SELL,
         active_grid_count=6,
-        delay_pending_order=True,
+        delay_pending_order=False,
         initial_quota=11700,
     )
     simple_grid_strategy = SimpleGridStrategy(ex_client=exchange_client, config=config)
