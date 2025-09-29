@@ -50,18 +50,18 @@ class OrderPair(BaseModel):
                 entry_order = client.query_order(self.entry_order_id, self.symbol)
                 if entry_order.get('status') == OrderStatus.CLOSED.value:
                     self.entry_filled = True
-                    logger.info(f"开仓单完成: {self.entry_order_id} @ {self.entry_price}")
+                    logger.info(f"开仓单完成:{self.symbol.binance()} {self.entry_order_id} @ {self.entry_price}")
             except Exception as e:
-                logger.error(f"查询开仓单状态失败: {e}")
+                logger.error(f"查询开仓单状态失败: {self.symbol.binance()} {self.entry_order_id} {e}")
 
         if self.exit_order_id and not self.exit_filled:
             try:
                 exit_order = client.query_order(self.exit_order_id, self.symbol)
                 if exit_order.get('status') == OrderStatus.CLOSED.value:
                     self.exit_filled = True
-                    logger.info(f"平仓单完成: {self.exit_order_id} @ {self.exit_price}")
+                    logger.info(f"平仓单完成:{self.symbol.binance()} {self.exit_order_id} @ {self.exit_price}")
             except Exception as e:
-                logger.error(f"查询平仓单状态失败: {e}")
+                logger.error(f"查询平仓单状态失败: {self.symbol.binance()} {self.exit_order_id} {e}")
 
         if not status_snapshot and self.is_complete():
             self.total_profit += self.calculate_profit()
@@ -96,9 +96,9 @@ class OrderPair(BaseModel):
                     self.entry_order_id = order_id
                 else:
                     self.exit_order_id = order_id
-                logger.info(f"{order_type}: {order_id} @ {price}")
+                logger.info(f"{self.symbol.binance()} {order_type} {order_id} @ {price}")
         except Exception as e:
-            logger.error(f"{order_type}失败, {e}", exc_info=True)
+            logger.error(f"订单失败: {self.symbol.binance()} {order_type} {e}", exc_info=True)
 
     @staticmethod
     def place_order(client: ExClient, symbol: Symbol, position_side: PositionSide, order_side: OrderSide, quantity: float) -> str:
@@ -132,18 +132,18 @@ class OrderPair(BaseModel):
         if self.entry_order_id and not self.entry_filled:
             try:
                 client.cancel(self.entry_order_id, self.symbol)
-                logger.info(f"取消开仓单: {self.entry_order_id}")
+                logger.info(f"取消开仓单:{self.symbol.binance()} {self.entry_order_id}")
                 entry_cancelled = True
             except Exception as e:
-                logger.error(f"取消开仓单失败: {e}")
+                logger.error(f"取消开仓单失败:{self.symbol.binance()} {e}")
 
         if self.exit_order_id and not self.exit_filled:
             try:
                 client.cancel(self.exit_order_id, self.symbol)
-                logger.info(f"取消平仓单: {self.exit_order_id}")
+                logger.info(f"取消平仓单:{self.symbol.binance()} {self.exit_order_id}")
                 exit_cancelled = True
             except Exception as e:
-                logger.error(f"取消平仓单失败: {e}")
+                logger.error(f"取消平仓单失败:{self.symbol.binance()} {e}")
 
         # 重置被取消订单的状态
         if entry_cancelled:
@@ -162,7 +162,7 @@ class OrderPair(BaseModel):
         self.exit_order_id = ""
         self.entry_filled = False
         self.exit_filled = False
-        logger.info(f"重置订单对: {self.position_side.name}, 入场 {self.entry_side.name}_{self.entry_price}, 退出 {self.entry_side.reversal().name}_{self.exit_price}, 累积盈利 {self.total_profit}")
+        logger.info(f"重置订单对:{self.symbol.binance()} {self.position_side.name}, 入场 {self.entry_side.name}_{self.entry_price}, 退出 {self.entry_side.reversal().name}_{self.exit_price}, 累积盈利 {self.total_profit}")
 
     def can_run(self) -> bool:
         """检查订单对是否可以运行（未完成状态）"""
@@ -202,7 +202,7 @@ class SimpleGridStrategy(StrategyV2):
                 json_str = f.read()
                 data = OrderPairListModel.model_validate_json(json_str)
                 self.grids = data.items
-                logger.info(f"从备份文件加载 {len(self.grids)} 个网格")
+                logger.info(f"从备份文件加载 {len(self.grids)} 个{self.config.symbol.binance()}网格")
         except FileNotFoundError:
             logger.info(f"备份文件 {self.backup_file} 不存在，初始化空状态")
         except Exception as e:

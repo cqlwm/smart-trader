@@ -34,5 +34,5 @@ def template(exchange_client: ExSwapClient, symbol: Symbol, timeframe: str) -> S
     )
     strategy = BidirectionalGridRotationStrategy(exchange_client=exchange_client,config=rotation_config)
     
-    return StrategyTask(strategy)
+    return StrategyTask(symbol=symbol, strategy=strategy)
 

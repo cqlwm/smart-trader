@@ -29,5 +29,5 @@ def template(exchange_client: ExSwapClient) -> TemplateModel:
         symbol=symbol,
         timeframe='1m',
         strategy_v2=simple_grid_strategy,
-        strategy_task=StrategyTask(strategy=simple_grid_strategy),
+        strategy_task=StrategyTask(symbol=symbol, strategy=simple_grid_strategy),
     )
