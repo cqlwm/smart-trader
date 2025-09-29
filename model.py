@@ -1,9 +1,10 @@
 from datetime import datetime
+from typing import Any
 from pydantic import BaseModel
 from enum import Enum
 from dataclasses import dataclass
 import builtins
-
+from decimal import Decimal
 class PositionSide(Enum):
     LONG = 'long'
     SHORT = 'short'
@@ -68,6 +69,36 @@ class Symbol(BaseModel):
         else:
             return self.ccxt()
 
+class SymbolInfo(BaseModel):
+    symbol: Symbol
+    tick_size: float
+    min_price: float
+    max_price: float
+    step_size: float
+    min_qty: float
+    max_qty: float
+    min_notional: float = 6.0
+
+    def _precision(self, number: float | str):
+        return Decimal(str(number)).normalize().as_tuple().exponent * -1
+    
+    def price_precision(self):
+        return self._precision(self.tick_size)
+    
+    def qty_precision(self):
+        return self._precision(self.step_size)
+
+    def format_precision(self, value: float | str, precision: float | str):
+        decimal_value = Decimal(str(value))
+        format_str = f"{{:.{precision}f}}"
+        return float(format_str.format(decimal_value))
+    
+    def format_price(self, price: float | str):
+        return self.format_precision(price, self.price_precision())
+    
+    def format_qty(self, qty: float | str):
+        return self.format_precision(qty, self.qty_precision())
+
 class Kline:
     def __init__(self, symbol: Symbol, timeframe: str, open: float, high: float, low: float, close: float, volume: float, timestamp: int, finished: bool):
         self.symbol = symbol
@@ -81,7 +112,7 @@ class Kline:
         self.datetime = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
         self.finished = finished
         
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return {
             'datetime': self.datetime,
             # 'timestamp': self.timestamp,

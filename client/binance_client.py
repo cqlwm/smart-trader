@@ -5,51 +5,11 @@ from client.binance_chaser_order import LimitOrderChaser
 from client.ex_client import ExSwapClient
 
 import requests
-from model import PositionSide, Symbol, PlaceOrderBehavior
+from model import PositionSide, Symbol, PlaceOrderBehavior, SymbolInfo
 from model import OrderSide
 import log
 
 logger = log.getLogger('BinanceSwapClient')
-
-def get_tick_size(symbol: Symbol | str):
-    """
-    获取指定交易对的最小价格间隔(tickSize)
-    
-    Args:
-        symbol (str): 交易对名称，例如 'BTCUSDT'
-    
-    Returns:
-        float: 最小价格间隔，如果未找到则返回 None
-    """
-
-    if isinstance(symbol, Symbol):
-        symbol = symbol.binance()
-    else:
-        symbol = symbol.upper()
-
-    if symbol in ['BTCUSDT', 'BTCUSDC']:
-        return 0.1
-    if symbol in ['BNBUSDT', 'BNBUSDC', 'SOLUSDT', 'SOLUSDC']:
-        return 0.01
-    if symbol in ['DOGEUSDT', 'DOGEUSDC']:
-        return 0.00001
-    
-    try:
-        # 发送请求获取exchangeInfo数据
-        response = requests.get("https://fapi.binance.com/fapi/v1/exchangeInfo")
-        data = response.json()
-        
-        # 遍历所有交易对信息
-        for symbol_info in data['symbols']:
-            if symbol_info['symbol'] == symbol:
-                # 在filters中查找PRICE_FILTER
-                for filter_info in symbol_info['filters']:
-                    if filter_info['filterType'] == 'PRICE_FILTER':
-                        return float(filter_info['tickSize'])
-        return None
-    except Exception as e:
-        print(f"获取tickSize时发生错误: {str(e)}")
-        return None
 
 class BinanceSwapClient(ExSwapClient):
     def __init__(self, api_key: str, api_secret: str, is_test: bool = False):
@@ -62,6 +22,45 @@ class BinanceSwapClient(ExSwapClient):
             }
         })
         self.exchange.set_sandbox_mode(is_test)
+        self.exchange_info: Dict[str, Any] = {}
+
+    def symbol_info(self, symbol: Symbol) -> SymbolInfo:
+        if not self.exchange_info:
+            response = requests.get("https://fapi.binance.com/fapi/v1/exchangeInfo")
+            self.exchange_info: Dict[str, Any] = response.json()
+        
+        tick_size=0.0
+        min_price=0.0
+        max_price=0.0
+        step_size=0.0
+        min_qty=0.0
+        max_qty=0.0
+
+        for symbol_info in self.exchange_info['symbols']:
+            if symbol_info['symbol'] == symbol.binance():
+                for filter_info in symbol_info['filters']:
+                    if filter_info['filterType'] == 'PRICE_FILTER':
+                        tick_size=float(filter_info['tickSize'])
+                        min_price=float(filter_info['minPrice'])
+                        max_price=float(filter_info['maxPrice'])
+
+                    if filter_info['filterType'] == 'LOT_SIZE':
+                        step_size=float(filter_info['stepSize'])
+                        min_qty=float(filter_info['minQty'])
+                        max_qty=float(filter_info['maxQty'])
+        
+        if not tick_size or not min_price or not max_price or not step_size or not min_qty or not max_qty:
+            raise ValueError(f"获取{symbol}的symbol info失败")
+
+        return SymbolInfo(
+            symbol=symbol,
+            tick_size=tick_size,
+            min_price=min_price,
+            max_price=max_price,
+            step_size=step_size,
+            min_qty=min_qty,
+            max_qty=max_qty,
+        )
 
     def create_chaser(self, symbol: Symbol, order_side: OrderSide, quantity: float, position_side: str, place_order_behavior: PlaceOrderBehavior) -> LimitOrderChaser:
         return LimitOrderChaser(
@@ -69,7 +68,7 @@ class BinanceSwapClient(ExSwapClient):
             symbol=symbol,
             side=order_side,
             quantity=quantity,
-            tick_size=get_tick_size(symbol) or 0.01,
+            tick_size=self.symbol_info(symbol).tick_size,
             position_side=position_side,
             place_order_behavior=place_order_behavior,
         )
@@ -124,8 +123,13 @@ class BinanceSwapClient(ExSwapClient):
             params['timeInForce'] = kwargs['time_in_force'] or kwargs['timeInForce']
 
         try:
+            symbol_info = self.symbol_info(symbol)
+
+            price = symbol_info.format_price(price) if price else price
+            quantity = symbol_info.format_qty(quantity)
+
             order: Dict[str, Any] = self.exchange.create_order(  # type: ignore
-                symbol=symbol.binance(),
+                symbol=symbol.ccxt(),
                 type=order_type,
                 side=order_side.value,
                 amount=quantity,

@@ -23,8 +23,6 @@ class LimitOrderChaser:
         self.position_side: str = position_side.upper()
         self.side: OrderSide = side
         self.quantity: float = quantity
-        self.tick_size: float = tick_size
-        self.price_precision: int = len(str(Decimal(str(self.tick_size))).split('.')[1])
         self.place_order_behavior: PlaceOrderBehavior = place_order_behavior
         self.max_iterations: int = 40
         self.order = None
@@ -38,7 +36,7 @@ class LimitOrderChaser:
             symbol=self.symbol,
             order_side=self.side,
             quantity=self.quantity,
-            price=float(f"{Decimal(price):.{self.price_precision}f}"),
+            price=price,
             position_side=self.position_side,
             time_in_force="GTX",
         )
@@ -71,7 +69,10 @@ class LimitOrderChaser:
         仅执行追单只下单模式
         @param latest_price: 最新价格
         '''
-        limit_price = (latest_price - self.tick_size) if self.side == OrderSide.BUY else (latest_price + self.tick_size)
+        symbol_info = self.client.symbol_info(self.symbol)
+        tick_size = symbol_info.tick_size
+
+        limit_price = (latest_price - tick_size) if self.side == OrderSide.BUY else (latest_price + tick_size)
         try:
             place_order_result = self.place_order_gtx(limit_price)
             if place_order_result and place_order_result.get('status'):

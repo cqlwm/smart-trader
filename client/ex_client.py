@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 
-from model import Symbol
+from model import Symbol, SymbolInfo
 from ccxt.base.exchange import Exchange
 
 from model import OrderSide
@@ -11,6 +11,9 @@ from model import OrderSide
 class ExClient(ABC):
     exchange_name: str
     exchange: Exchange
+
+    def symbol_info(self, symbol: Symbol) -> SymbolInfo:
+        raise NotImplementedError()
 
     @abstractmethod
     def balance(self, coin: str) -> float:
