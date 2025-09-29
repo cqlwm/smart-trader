@@ -5,7 +5,6 @@ import asyncio
 import websockets
 import json
 import ssl
-from decimal import Decimal
 from model import OrderStatus, PlaceOrderBehavior, Symbol
 from model import OrderSide
 import log
@@ -16,7 +15,7 @@ class LimitOrderChaser:
     '''
     目前只针对Binance进行了适配
     '''
-    def __init__(self, client: ExSwapClient, symbol: Symbol, side: OrderSide, quantity: float, tick_size: float, position_side: str = "LONG", place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER):
+    def __init__(self, client: ExSwapClient, symbol: Symbol, side: OrderSide, quantity: float, position_side: str = "LONG", place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER):
         logger.info(f"Init Chaser : {symbol.ccxt()}, {side.name}, {quantity}, {position_side}")
         self.client: ExSwapClient = client
         self.symbol: Symbol = symbol
@@ -101,8 +100,6 @@ class LimitOrderChaser:
                 2.3.3 如果价格未更优，不做任何操作
         @param latest_price: 最新价格
         '''
-        limit_price = (latest_price - self.tick_size) if self.side == OrderSide.BUY else (latest_price + self.tick_size)
-
         if self.order:
             query_order_result = self.query_order(self.order['clientOrderId'])
             if not query_order_result:
@@ -124,8 +121,13 @@ class LimitOrderChaser:
                     # TODO 订单部分成交就认为是已成交
                     self.order = query_order_result
                     return True
-                
-                if abs(query_order_result['price'] - limit_price) > self.tick_size * 3:
+
+
+                symbol_info = self.client.symbol_info(self.symbol)
+                tick_size = symbol_info.tick_size
+                limit_price = (latest_price - tick_size) if self.side == OrderSide.BUY else (latest_price + tick_size)
+                # limit_price = (latest_price - self.tick_size) if self.side == OrderSide.BUY else (latest_price + self.tick_size)
+                if abs(query_order_result['price'] - limit_price) > tick_size * 3:
                     logger.info(f"撤销订单 {self.order['clientOrderId']}，订单价格: {query_order_result['price']}, 重置订单价格: {limit_price}")
                     cancel_result = self.cancel_order(self.order['clientOrderId'])
                     if cancel_result and cancel_result['status'] == OrderStatus.CANCELED.value:

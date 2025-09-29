@@ -68,7 +68,6 @@ class BinanceSwapClient(ExSwapClient):
             symbol=symbol,
             side=order_side,
             quantity=quantity,
-            tick_size=self.symbol_info(symbol).tick_size,
             position_side=position_side,
             place_order_behavior=place_order_behavior,
         )
