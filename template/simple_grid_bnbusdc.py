@@ -22,7 +22,7 @@ def template(exchange_client: ExSwapClient) -> TemplateModel:
         master_order_side=OrderSide.BUY,
         active_grid_count=8,
         delay_pending_order=False,
-        initial_quota=0.97
+        initial_quota=1
     )
     simple_grid_strategy = SimpleGridStrategy(ex_client=exchange_client, config=config)
     return TemplateModel(
