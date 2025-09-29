@@ -97,8 +97,8 @@ class OrderPair(BaseModel):
                 else:
                     self.exit_order_id = order_id
                 logger.info(f"{order_type}: {order_id} @ {price}")
-        except Exception as _:
-            logger.error(f"{order_type}失败", exc_info=True)
+        except Exception as e:
+            logger.error(f"{order_type}失败, {e}", exc_info=True)
 
     @staticmethod
     def place_order(client: ExClient, symbol: Symbol, position_side: PositionSide, order_side: OrderSide, quantity: float) -> str:
