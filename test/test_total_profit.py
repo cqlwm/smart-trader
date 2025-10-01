@@ -1,7 +1,7 @@
 import json
 
 # 读取JSON文件内容
-with open('/Users/li/Downloads/backup_dogeusdc_short_sell.json', 'r') as file:
+with open('data/backup_dogeusdc_short_sell.json', 'r') as file:
     data = json.load(file)
 
 # 初始化总收益
