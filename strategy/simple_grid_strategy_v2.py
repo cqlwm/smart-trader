@@ -51,6 +51,9 @@ class OrderPair(BaseModel):
                 if entry_order.get('status') == OrderStatus.CLOSED.value:
                     self.entry_filled = True
                     logger.info(f"开仓单完成:{self.symbol.binance()} {self.entry_order_id} @ {self.entry_price}")
+                elif entry_order.get('status') == OrderStatus.CANCELED.value:
+                    self.entry_order_id = ""
+                    self.entry_filled = False
             except Exception as e:
                 logger.error(f"查询开仓单状态失败: {self.symbol.binance()} {self.entry_order_id} {e}")
 
@@ -60,6 +63,9 @@ class OrderPair(BaseModel):
                 if exit_order.get('status') == OrderStatus.CLOSED.value:
                     self.exit_filled = True
                     logger.info(f"平仓单完成:{self.symbol.binance()} {self.exit_order_id} @ {self.exit_price}")
+                elif exit_order.get('status') == OrderStatus.CANCELED.value:
+                    self.exit_order_id = ""
+                    self.exit_filled = False
             except Exception as e:
                 logger.error(f"查询平仓单状态失败: {self.symbol.binance()} {self.exit_order_id} {e}")
 
@@ -182,6 +188,8 @@ class SimpleGridStrategyConfig(BaseModel):
     master_order_side: OrderSide = OrderSide.BUY
     delay_pending_order: bool = False
     initial_quota: float = 0
+    backup_file: str = ""
+
 
 class SimpleGridStrategy(StrategyV2):
     def __init__(self, ex_client: ExSwapClient, config: SimpleGridStrategyConfig):
@@ -190,7 +198,10 @@ class SimpleGridStrategy(StrategyV2):
         self.ex_client = ex_client
         self.grids: List[OrderPair] = []
         self.lock = threading.Lock()
-        self.backup_file = f"{DATA_PATH}/backup_{self.config.symbol.simple()}_{self.config.position_side.value}_{self.config.master_order_side.value}.json"
+        if self.config.backup_file:
+            self.backup_file = self.config.backup_file
+        else:
+            self.backup_file = f"{DATA_PATH}/backup_{self.config.symbol.simple()}_{self.config.position_side.value}_{self.config.master_order_side.value}.json"
         self.load_state()
 
     def load_state(self):
