@@ -340,6 +340,9 @@ class SimpleGridStrategy(StrategyV2):
         """更新网格订单状态"""
         current_price = self.get_current_price()
 
+        if current_price < self.config.lower_price * 0.99 or current_price > self.config.upper_price * 1.01:
+            return
+
         # 获取应该激活的网格索引
         active_indices = self.get_active_grid_indices(current_price)
 
