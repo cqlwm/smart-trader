@@ -26,20 +26,19 @@ if __name__ == '__main__':
 
     binance_client = BinanceSwapClient(api_key=api_key, api_secret=api_secret, is_test=is_test)
 
-    from template import simple_grid_dogeusdc
-    from template import simple_grid_bnbusdc
-    template_models = [
-        simple_grid_dogeusdc.template_1(binance_client),
-        simple_grid_dogeusdc.template_2(binance_client),
-        simple_grid_bnbusdc.template(binance_client),
+    from template import long_buy_doge
+    long_buy_doge_strategy_task = long_buy_doge.template(binance_client)
+
+    tasks = [
+        long_buy_doge_strategy_task
     ]
 
     kline_subscribes: List[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
 
-    for template_model in template_models:
-        kline_subscribes.append(template_model.symbol.binance_ws_sub_kline(template_model.timeframe))
-        data_event_loop.add_task(template_model.strategy_task)
+    for task in tasks:
+        kline_subscribes.append(task.symbol.binance_ws_sub_kline(task.timeframe))
+        data_event_loop.add_task(task)
 
     data_event_loop.start()
 

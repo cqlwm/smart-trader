@@ -9,10 +9,11 @@ from strategy import StrategyV2
 logger = log.getLogger(__name__)
 
 class StrategyTask(Task):
-    def __init__(self, symbol: Symbol, strategy: StrategyV2):
+    def __init__(self, symbol: Symbol, timeframe: str, strategy: StrategyV2):
         super().__init__()
         self.name = 'StrategyTask'
         self.symbol = symbol
+        self.timeframe = timeframe
         self.strategy = strategy
 
     def run(self, data: str) -> None:
@@ -37,5 +38,5 @@ class StrategyTask(Task):
                 timestamp=int(kline['t']),
                 finished=kline.get('x', False)
             )
-            if self.symbol.binance() == kline_obj.symbol.binance():
+            if self.symbol.binance() == kline_obj.symbol.binance() and self.timeframe == kline_obj.timeframe:
                 self.strategy.run(kline_obj)

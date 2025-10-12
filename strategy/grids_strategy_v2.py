@@ -1,9 +1,9 @@
 import os
 import secrets
-from typing import List
+from typing import Any, List
 from client.ex_client import ExSwapClient
 from strategy import StrategyV2
-from model import OrderSide, PlaceOrderBehavior
+from model import OrderSide, PlaceOrderBehavior, PositionSide
 import logging
 from pydantic import BaseModel, ConfigDict
 from model import Symbol
@@ -28,13 +28,13 @@ class Order(BaseModel):
     def __hash__(self):
         return hash(self.custom_id)
 
-    def __eq__(self, other):
+    def __eq__(self, other: Any):
         if isinstance(other, Order):
             return self.custom_id == other.custom_id
         return False
 
     # profit_level：表示盈利级别，值为 -1不可盈利，0损失手续费，1可盈利，2达到止盈标准
-    def profit_level(self, current_price) -> int:
+    def profit_level(self, current_price: float) -> int:
         compare_fun = builtins.float.__gt__
         if self.side == OrderSide.SELL:
             compare_fun = builtins.float.__lt__
@@ -49,14 +49,14 @@ class Order(BaseModel):
         return -1
 
     # 盈亏率
-    def profit_and_loss_ratio(self, current_price):
+    def profit_and_loss_ratio(self, current_price: float) -> float:
         loss_rate = float("{:.6f}".format(abs(current_price - self.price) / self.price))
         if self.profit_level(current_price) < 0:
             return -loss_rate
         else:
             return loss_rate
 
-    def _profit(self, rate):
+    def _profit(self, rate: float) -> float:
         rate_base = 1
         if self.side == OrderSide.SELL:
             rate_base = -1
@@ -113,7 +113,7 @@ class SignalGridStrategyConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
     symbol: Symbol
-    position_side: str = 'long'
+    position_side: PositionSide = PositionSide.LONG
     master_side: OrderSide = OrderSide.BUY
     per_order_qty: float = 0.02
     grid_spacing_rate: float = 0.01
