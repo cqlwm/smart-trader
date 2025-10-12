@@ -26,9 +26,10 @@ if __name__ == '__main__':
 
     binance_client = BinanceSwapClient(api_key=api_key, api_secret=api_secret, is_test=is_test)
 
-    from template import long_buy_bnb
+    from template import long_short_bnb
     tasks = [
-        long_buy_bnb.template(binance_client)
+        long_short_bnb.template_long_buy(binance_client),
+        long_short_bnb.template_short_sell(binance_client)
     ]
 
     kline_subscribes: List[str] = []
