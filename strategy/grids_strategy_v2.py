@@ -133,7 +133,10 @@ class SignalGridStrategyConfig(BaseModel):
     place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER_OPEN  # 下单行为
 
     order_file_path: str = 'data/grids_strategy_v2.json'
+    
+    # position_stop_loss_rate: float = 0.1
 
+    position_reverse: bool = False  # 是否反向持仓
 
 class SignalGridStrategy(StrategyV2):
 
@@ -145,7 +148,13 @@ class SignalGridStrategy(StrategyV2):
         self.orders: List[Order] = self.order_recorder.check_reload(force=True) or []
 
     def place_order(self, order_id: str, side: OrderSide, qty: float, price: float):
-        return self.ex_client.place_order_v2(custom_id=order_id, symbol=self.config.symbol, order_side=side, quantity=qty, price=price, position_side=self.config.position_side,
+        if self.config.position_reverse:
+            position_side = PositionSide.SHORT if self.config.position_side == PositionSide.LONG else PositionSide.LONG
+            side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
+        else:
+            position_side = self.config.position_side
+
+        return self.ex_client.place_order_v2(custom_id=order_id, symbol=self.config.symbol, order_side=side, quantity=qty, price=price, position_side=position_side,
                                              place_order_behavior=self.config.place_order_behavior)
 
 

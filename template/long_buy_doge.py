@@ -15,19 +15,20 @@ def template(exchange_client: ExSwapClient) -> StrategyTask:
 
     config=SignalGridStrategyConfig(
         symbol=symbol,
-        position_side=PositionSide.LONG,
-        master_side=OrderSide.BUY,
-        per_order_qty=0.01,
-        grid_spacing_rate=0.01,
-        max_order=10,
-        highest_price=1122.841,
-        lowest_price=100,
+        position_side=PositionSide.SHORT,
+        master_side=OrderSide.SELL,
+        per_order_qty=42,
+        grid_spacing_rate=0.002,
+        # max_order=20,
+        # highest_price=1,
+        # lowest_price=0,
         enable_exit_signal=True,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
-        signal_min_take_profit_rate=0.01,
+        signal_min_take_profit_rate=0.002,
         enable_fixed_profit_taking=True,
-        fixed_take_profit_rate=0.05,
-        order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
+        fixed_take_profit_rate=0.01,
+        order_file_path=f'{DATA_PATH}/signal_grid_short_sell_reverse_{symbol.simple()}_{timeframe}.json',
+        position_reverse=True,
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
