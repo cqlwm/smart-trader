@@ -9,7 +9,7 @@ from task.strategy_task import StrategyTask
 
 logger = log.getLogger(__name__)
 
-long_position_open_price = 1245.510
+long_position_open_price = 2245.510
 
 def template_long_buy(exchange_client: ExSwapClient) -> StrategyTask:
     symbol=Symbol(base="bnb", quote="usdt")
