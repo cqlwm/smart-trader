@@ -31,7 +31,7 @@ if __name__ == '__main__':
 
     tasks = [
         long_short_bnb.template_long_buy(binance_client),
-        long_short_bnb.template_short_sell(binance_client),
+        # long_short_bnb.template_short_sell(binance_client),
         long_buy_doge.template(binance_client),
     ]
 
