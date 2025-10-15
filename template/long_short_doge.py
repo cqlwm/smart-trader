@@ -44,7 +44,7 @@ def template_short(exchange_client: ExSwapClient) -> StrategyTask:
         position_side=PositionSide.LONG,
         master_side=OrderSide.BUY,
         per_order_qty=42,
-        grid_spacing_rate=0.002,
+        grid_spacing_rate=0.0001,
         # max_order=20,
         # highest_price=1,
         # lowest_price=0,
