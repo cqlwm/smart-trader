@@ -19,9 +19,10 @@ _mfi = 'mfi'
 _alpha_trend = 'alpha_trend'
 _buy_signal = 'buy_signal'
 _sell_signal = 'sell_signal'
+_signal = 'signal'
 
 
-def _alpha_trend_signal(df, atr_multiple=1.0, period=8):
+def _alpha_trend_signal(df: DataFrame, atr_multiple: float = 1.0, period: int = 8):
     # 计算技术指标
     df[_atr] = ta.ATR(df[_high], df[_low], df[_close], timeperiod=period)
     df[_atr_base_low] = df[_low] - df[_atr] * atr_multiple
@@ -59,6 +60,11 @@ def _alpha_trend_signal(df, atr_multiple=1.0, period=8):
     df[_buy_signal] = (df[_alpha_trend] > alpha_trend_shift2).astype('boolean')
     df[_sell_signal] = (df[_alpha_trend] < alpha_trend_shift2).astype('boolean')
 
+    # 新增一列 _signal 用于存储最终信号
+    df[_signal] = np.nan
+    df[_signal].where(~df[_buy_signal], 1, inplace=True)
+    df[_signal].where(~df[_sell_signal], -1, inplace=True)
+
     # 返回更新后的 DataFrame
     return df
 
@@ -69,12 +75,16 @@ class AlphaTrendSignal(Signal):
         self.atr_multiple = atr_multiple
         self.period = period
 
-        self.datetime = None
-        self.current_signal = 0
-        self.current_kline_status = 0
+        self.datetime: str | None = None
+        self.current_signal: int = 0
+        self.current_kline_status: int = 0
 
-    def _compute_signal(self, df):
+    def _compute_signal(self, df: DataFrame, first_run: bool = False) -> int:
         df = _alpha_trend_signal(df, self.atr_multiple, self.period)
+
+        if first_run:
+            last_valid_index = df[_signal].last_valid_index()
+            self.current_signal = int(df[_signal].loc[last_valid_index])
 
         signal = 0
         last_row = df.iloc[-1]
@@ -95,10 +105,11 @@ class AlphaTrendSignal(Signal):
 
     def run(self, klines: DataFrame) -> int:
         last_time = klines[_datetime].iloc[-1]
+        first_run = self.datetime is None
         if self.datetime == last_time:
             return self.current_kline_status
         else:
             self.datetime = last_time
 
-        self.current_kline_status = self._compute_signal(klines)
+        self.current_kline_status = self._compute_signal(klines, first_run)
         return self.current_kline_status
