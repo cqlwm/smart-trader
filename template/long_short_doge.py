@@ -22,7 +22,7 @@ def template_long(exchange_client: ExSwapClient) -> StrategyTask:
         # max_order=20,
         # highest_price=1,
         # lowest_price=0,
-        enable_exit_signal=True,
+        enable_exit_signal=False,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
         signal_min_take_profit_rate=0.004,
         enable_fixed_profit_taking=True,
