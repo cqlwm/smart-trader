@@ -62,8 +62,11 @@ def _alpha_trend_signal(df: DataFrame, atr_multiple: float = 1.0, period: int = 
 
     # 新增一列 _signal 用于存储最终信号
     df[_signal] = np.nan
-    df[_signal].where(~df[_buy_signal], 1, inplace=True)
-    df[_signal].where(~df[_sell_signal], -1, inplace=True)
+    df[_signal] = np.select(
+        [df[_sell_signal], df[_buy_signal]],  # 条件列表，按优先级排序
+        [-1, 1],                              # 对应条件的取值
+        default=np.nan                        # 默认值
+    )
 
     # 返回更新后的 DataFrame
     return df
