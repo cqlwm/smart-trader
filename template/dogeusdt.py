@@ -9,7 +9,7 @@ from task.strategy_task import StrategyTask
 
 logger = log.getLogger(__name__)
 
-def template_short_sell(exchange_client: ExSwapClient) -> StrategyTask:
+def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
     symbol=Symbol(base="doge", quote="usdt")
     timeframe='1m'
 
@@ -18,7 +18,7 @@ def template_short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
         per_order_qty=42,
-        grid_spacing_rate=0.0002,
+        grid_spacing_rate=0.002,
         max_order=10,
         # highest_price=1,
         # lowest_price=0,
