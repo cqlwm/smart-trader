@@ -3,7 +3,7 @@ import secrets
 from typing import Any, List
 from client.ex_client import ExSwapClient
 from strategy import StrategyV2
-from model import OrderSide, PlaceOrderBehavior, PositionSide
+from model import OrderSide, OrderStatus, PlaceOrderBehavior, PositionSide
 import logging
 from pydantic import BaseModel, ConfigDict
 from model import Symbol
@@ -212,6 +212,8 @@ class SignalGridStrategy(StrategyV2):
                 if order.status == 'open':
                     query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
                     if query_order and query_order['status'] != 'closed':
+                        if query_order['status'] == OrderStatus.OPEN.value:
+                            self.ex_client.cancel(order.custom_id, self.config.symbol)
                         continue
                     else:
                         order.status = 'closed'
