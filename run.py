@@ -31,8 +31,9 @@ if __name__ == '__main__':
     from template import btcdom
 
     tasks = [
+        # dogeusdt.short_sell(binance_client),
+        dogeusdt.long_buy(binance_client),
         long_short_bnb.template_long_buy(binance_client),
-        dogeusdt.short_sell(binance_client),
         btcdom.long_buy(binance_client),
     ]
 
