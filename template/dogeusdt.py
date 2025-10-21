@@ -43,7 +43,7 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         master_side=OrderSide.BUY,
         per_order_qty=42,
         grid_spacing_rate=0.01,
-        max_order=10,
+        max_order=20,
         # highest_price=1,
         # lowest_price=0,
         enable_exit_signal=True,
