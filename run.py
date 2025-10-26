@@ -29,12 +29,14 @@ if __name__ == '__main__':
     from template import long_short_bnb
     from template import dogeusdt
     from template import btcdom
+    from template import zecusdt
 
     tasks = [
         # dogeusdt.short_sell(binance_client),
         dogeusdt.long_buy(binance_client),
         long_short_bnb.template_long_buy(binance_client),
         btcdom.long_buy(binance_client),
+        zecusdt.long_buy(binance_client),
     ]
 
     kline_subscribes: List[str] = []
