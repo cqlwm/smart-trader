@@ -73,7 +73,7 @@ def long_buy_reverse(exchange_client: ExSwapClient) -> StrategyTask:
         # lowest_price=0,
         enable_exit_signal=True,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
-        signal_min_take_profit_rate=0.002,
+        signal_min_take_profit_rate=0.005,
         enable_fixed_profit_taking=True,
         fixed_take_profit_rate=0.01,
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_reverse_{symbol.simple()}_{timeframe}.json',
