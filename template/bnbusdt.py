@@ -11,7 +11,7 @@ logger = log.getLogger(__name__)
 
 long_position_open_price = 2245.510
 
-def template_long_buy(exchange_client: ExSwapClient) -> StrategyTask:
+def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
     symbol=Symbol(base="bnb", quote="usdt")
     timeframe='1m'
 
@@ -26,16 +26,16 @@ def template_long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         lowest_price=100,
         enable_exit_signal=True,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
-        signal_min_take_profit_rate=0.01,
+        signal_min_take_profit_rate=0.15,
         enable_fixed_profit_taking=True,
-        fixed_take_profit_rate=0.05,
+        fixed_take_profit_rate=0.15,
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
     return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
 
-def template_short_sell(exchange_client: ExSwapClient) -> StrategyTask:
+def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
     symbol=Symbol(base="bnb", quote="usdt")
     timeframe='1m'
 

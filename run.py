@@ -26,14 +26,14 @@ if __name__ == '__main__':
 
     binance_client = BinanceSwapClient(api_key=api_key, api_secret=api_secret, is_test=is_test)
 
-    from template import long_short_bnb
+    from template import bnbusdt
     from template import dogeusdt
     from template import btcdom
     from template import ethusdt
 
     tasks = [
         dogeusdt.long_buy_reverse(binance_client),
-        long_short_bnb.template_long_buy(binance_client),
+        bnbusdt.long_buy(binance_client),
         btcdom.long_buy(binance_client),
         ethusdt.long_buy(binance_client),
     ]
