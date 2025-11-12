@@ -32,7 +32,7 @@ if __name__ == '__main__':
     from template import ethusdt
 
     tasks = [
-        dogeusdt.long_buy_reverse(binance_client),
+        dogeusdt.long_buy(binance_client),
         bnbusdt.long_buy(binance_client),
         btcdom.long_buy(binance_client),
         ethusdt.long_buy(binance_client),
