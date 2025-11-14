@@ -36,7 +36,7 @@ if __name__ == '__main__':
         # ethusdt.long_buy(binance_client),
         # bnbusdt.long_buy(binance_client),
         # grid
-        # dogeusdt.long_buy(binance_client),
+        dogeusdt.long_buy(binance_client),
         btcdom.long_buy(binance_client),
     ]
 
