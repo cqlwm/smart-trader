@@ -32,10 +32,12 @@ if __name__ == '__main__':
     from template import ethusdt
 
     tasks = [
-        dogeusdt.long_buy(binance_client),
-        bnbusdt.long_buy(binance_client),
-        btcdom.long_buy(binance_client),
+        # 15% profit
         ethusdt.long_buy(binance_client),
+        bnbusdt.long_buy(binance_client),
+        # grid
+        dogeusdt.long_buy(binance_client),
+        btcdom.long_buy(binance_client),
     ]
 
     kline_subscribes: List[str] = []
