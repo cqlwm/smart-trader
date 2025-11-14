@@ -33,10 +33,10 @@ if __name__ == '__main__':
 
     tasks = [
         # 15% profit
-        ethusdt.long_buy(binance_client),
-        bnbusdt.long_buy(binance_client),
+        # ethusdt.long_buy(binance_client),
+        # bnbusdt.long_buy(binance_client),
         # grid
-        dogeusdt.long_buy(binance_client),
+        # dogeusdt.long_buy(binance_client),
         btcdom.long_buy(binance_client),
     ]
 
