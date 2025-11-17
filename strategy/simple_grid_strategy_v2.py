@@ -178,6 +178,14 @@ class OrderPairListModel(BaseModel):
     items: List[OrderPair] = []
 
 class SimpleGridStrategyConfig(BaseModel):
+    '''
+    简单网格策略配置
+    通过设置上下价格和网格数量，自动划分网格
+    delay_pending_order 延迟订单处理, 默认False
+    - 为True时订单延迟加载
+    - 为False时订单立即加载, 可以搭配initial_quota使用
+    - initial_quota 表示已有持仓数量, 默认为0, 立即加载时会减去该数量, 避免重复开仓、仓位膨胀
+    '''
     symbol: Symbol
     upper_price: float
     lower_price: float

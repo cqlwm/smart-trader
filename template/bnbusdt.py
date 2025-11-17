@@ -82,7 +82,7 @@ def simple_grid_long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         master_order_side=OrderSide.BUY,
         active_grid_count=8,
         delay_pending_order=True,
-        initial_quota=1,
+        initial_quota=0,
         backup_file=f'{DATA_PATH}/simple_grid_long_buy_{symbol.simple()}_{int(lower_price)}_{int(upper_price)}_{grid_num}.json',
     )
 
