@@ -15,29 +15,36 @@ def dev_debug():
     if node_env != 'DEV':
         return
 
-if __name__ == '__main__':
-    api_key = os.environ.get('BINANCE_API_KEY')
-    api_secret = os.environ.get('BINANCE_API_SECRET')
-    is_test = os.environ.get('BINANCE_IS_TEST') == 'True'
+def create_binance_client(client_type: str) -> BinanceSwapClient:
+    api_key = os.environ.get(f'BINANCE_API_KEY_{client_type.upper()}')
+    api_secret = os.environ.get(f'BINANCE_API_SECRET_{client_type.upper()}')
+    is_test = os.environ.get(f'BINANCE_IS_TEST_{client_type.upper()}') == 'True'
     if not api_key or not api_secret:
         raise ValueError('BINANCE_API_KEY and BINANCE_API_SECRET must be set')
     else:
         logger.info(f'api_key: {api_key[:5]}*****, api_secret: {api_secret[:5]}*****, is_test: {is_test}')
 
     binance_client = BinanceSwapClient(api_key=api_key, api_secret=api_secret, is_test=is_test)
+    return binance_client
+
+# copy-trading binance client
+copy_trading_binance_client: BinanceSwapClient = create_binance_client('copy')
+
+# main binance client
+main_binance_client: BinanceSwapClient = create_binance_client('main')
+
+if __name__ == '__main__':
 
     from template import bnbusdt
-    from template import dogeusdt
-    from template import btcdom
-    from template import ethusdt
+    # from template import dogeusdt
+    # from template import btcdom
+    # from template import ethusdt
+    from template import solusdc
 
     tasks = [
-        # 15% profit
-        # ethusdt.long_buy(binance_client),
-        bnbusdt.simple_grid_long_buy(binance_client),
-        # grid
-        # dogeusdt.long_buy(binance_client),
-        # btcdom.long_buy(binance_client),
+        bnbusdt.simple_grid_long_buy(copy_trading_binance_client),
+        solusdc.long_buy_reverse(main_binance_client),
+        solusdc.short_sell_reverse(main_binance_client),
     ]
 
     kline_subscribes: List[str] = []
