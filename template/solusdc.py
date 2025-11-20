@@ -18,6 +18,7 @@ def reverse_strategy(exchange_client: ExSwapClient) -> List[StrategyTask]:
     timeframe='1m'
     per_order_qty = 0.05
     grid_spacing_rate = 0.0001
+    max_order = 10
 
     long_strategy = SignalGridStrategy(SignalGridStrategyConfig(
         symbol=symbol,
@@ -25,7 +26,7 @@ def reverse_strategy(exchange_client: ExSwapClient) -> List[StrategyTask]:
         master_side=OrderSide.BUY,
         per_order_qty=per_order_qty,
         grid_spacing_rate=grid_spacing_rate,
-        max_order=50,
+        max_order=max_order,
         enable_exit_signal=True,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
         signal_min_take_profit_rate=0.5,
@@ -41,7 +42,7 @@ def reverse_strategy(exchange_client: ExSwapClient) -> List[StrategyTask]:
         master_side=OrderSide.SELL,
         per_order_qty=per_order_qty,
         grid_spacing_rate=grid_spacing_rate,
-        max_order=50,
+        max_order=max_order,
         enable_exit_signal=True,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL)),
         signal_min_take_profit_rate=0.5,
