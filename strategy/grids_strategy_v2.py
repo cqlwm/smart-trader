@@ -1,6 +1,6 @@
 import os
 import secrets
-from typing import Any, List
+from typing import Any, List, Callable
 from client.ex_client import ExSwapClient
 from strategy import StrategyV2
 from model import OrderSide, OrderStatus, PlaceOrderBehavior, PositionSide
@@ -137,6 +137,8 @@ class SignalGridStrategyConfig(BaseModel):
     # position_stop_loss_rate: float = 0.1
 
     position_reverse: bool = False  # 是否反向持仓
+    # 达到最大订单数全部止损
+    enable_max_order_stop_loss: bool = False
 
 class SignalGridStrategy(StrategyV2):
 
@@ -146,6 +148,8 @@ class SignalGridStrategy(StrategyV2):
         self.ex_client = ex_client
         self.order_recorder: OrderRecorder = OrderRecorder(order_file_path=self.config.order_file_path)
         self.orders: List[Order] = self.order_recorder.check_reload(force=True) or []
+        self.on_stop_loss_order_all: Callable[[], None] = lambda: None
+        self.close_position: bool = False
 
     def place_order(self, order_id: str, side: OrderSide, qty: float, price: float):
         if self.config.position_reverse:
@@ -157,6 +161,10 @@ class SignalGridStrategy(StrategyV2):
         return self.ex_client.place_order_v2(custom_id=order_id, symbol=self.config.symbol, order_side=side, quantity=qty, price=price, position_side=position_side,
                                              place_order_behavior=self.config.place_order_behavior)
 
+    def _check_max_order_stop_loss(self) -> bool:
+        if self.config.enable_max_order_stop_loss and self.config.max_order - len(self.orders) <= 1:
+            return True
+        return False
 
     def check_open_order(self) -> bool:
 
@@ -180,7 +188,9 @@ class SignalGridStrategy(StrategyV2):
         else:
             recent_price_order = None
 
-        if (not recent_price_order) or (recent_price_order and recent_price_order.profit_and_loss_ratio(close_price) <= -self.config.grid_spacing_rate): 
+        if (not recent_price_order) or (recent_price_order and recent_price_order.profit_and_loss_ratio(close_price) <= -self.config.grid_spacing_rate):
+            if self._check_max_order_stop_loss():
+                return False
             order_id = build_order_id(self.config.master_side)
             order = Order(
                 custom_id=order_id, 
@@ -206,9 +216,10 @@ class SignalGridStrategy(StrategyV2):
         new_orders: List[Order] = []
         flat_orders: List[Order] = []
         flat_qty = 0
+        stop_loss_order_all = self._check_max_order_stop_loss() or self.close_position
         for order in self.orders:
             profit_level = order.profit_level(self.last_kline.close)
-            if (profit_level == 2 and self.config.enable_fixed_profit_taking) or (profit_level == 1 and exit_signal):
+            if stop_loss_order_all or (profit_level == 2 and self.config.enable_fixed_profit_taking) or (profit_level == 1 and exit_signal):
                 if order.status == 'open':
                     query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
                     if query_order and query_order['status'] != 'closed':
@@ -235,6 +246,9 @@ class SignalGridStrategy(StrategyV2):
         # 即使flat_qty==0，也需要更新订单，因为可以移除手动修改的0数量订单
         if len(self.orders) != len(new_orders):
             self.orders = new_orders
+        
+        if self.close_position:
+            self.close_position = False
         
         return flat_orders
 

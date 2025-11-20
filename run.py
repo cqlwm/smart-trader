@@ -43,9 +43,7 @@ if __name__ == '__main__':
 
     tasks = [
         bnbusdt.simple_grid_long_buy(copy_trading_binance_client),
-        solusdc.long_buy_reverse(main_binance_client),
-        solusdc.short_sell_reverse(main_binance_client),
-    ]
+    ] + solusdc.reverse_strategy(main_binance_client)
 
     kline_subscribes: List[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
