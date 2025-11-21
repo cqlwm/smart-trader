@@ -16,7 +16,7 @@ def reverse_strategy(exchange_client: ExSwapClient) -> List[StrategyTask]:
 
     symbol=Symbol(base="sol", quote="usdc")
     timeframe='1m'
-    per_order_qty = 0.05
+    per_order_qty = 0.1
     grid_spacing_rate = 0.0001
     max_order = 10
 
