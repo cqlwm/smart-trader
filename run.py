@@ -41,9 +41,10 @@ if __name__ == '__main__':
     # from template import ethusdt
     from template import solusdc
 
-    tasks = [
-        bnbusdt.simple_grid_long_buy(copy_trading_binance_client),
-    ] + solusdc.reverse_strategy(main_binance_client)
+    # tasks = [
+    #     bnbusdt.simple_grid_long_buy(copy_trading_binance_client),
+    # ] + 
+    tasks =solusdc.reverse_strategy(main_binance_client)
 
     kline_subscribes: List[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
