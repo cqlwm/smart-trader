@@ -249,6 +249,8 @@ class SignalGridStrategy(StrategyV2):
         
         if self.close_position:
             self.close_position = False
+        if stop_loss_order_all:
+            self.on_stop_loss_order_all()
         
         return flat_orders
 
