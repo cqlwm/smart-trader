@@ -36,15 +36,16 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 if __name__ == '__main__':
 
     from template import bnbusdt
-    # from template import dogeusdt
+    from template import dogeusdt
     # from template import btcdom
     # from template import ethusdt
     from template import solusdc
 
-    # tasks = [
-    #     bnbusdt.simple_grid_long_buy(copy_trading_binance_client),
-    # ] + 
-    tasks =solusdc.short_rollover_strategy(main_binance_client)
+    
+    tasks = [
+        # 0 amount strategy
+        dogeusdt.short_sell(main_binance_client)
+    ] + solusdc.short_rollover_strategy(main_binance_client)
 
     kline_subscribes: List[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
