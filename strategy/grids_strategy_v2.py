@@ -198,9 +198,12 @@ class SignalGridStrategy(StrategyV2):
                 price=close_price, 
                 quantity=self.config.per_order_qty,
                 fixed_take_profit_rate=self.config.fixed_take_profit_rate, 
-                signal_min_take_profit_rate=self.config.signal_min_take_profit_rate
+                signal_min_take_profit_rate=self.config.signal_min_take_profit_rate,
+                status=OrderStatus.CLOSED.value
             )
             self.orders.append(order)
+            if self.config.per_order_qty == 0:
+                return True
             place_order_result = self.place_order(order_id, self.config.master_side, self.config.per_order_qty, close_price)
             if place_order_result:
                 if place_order_result.get('clientOrderId'):
