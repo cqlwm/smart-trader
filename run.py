@@ -48,7 +48,8 @@ if __name__ == '__main__':
 
         dogeusdc.long_buy(main_binance_client),
         dogeusdc.short_sell(main_binance_client)
-    ] + solusdc.short_rollover_strategy(main_binance_client)
+    ] 
+    # + solusdc.short_rollover_strategy(main_binance_client)
 
     kline_subscribes: List[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
