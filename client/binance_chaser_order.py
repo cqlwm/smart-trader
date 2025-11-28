@@ -26,6 +26,7 @@ class LimitOrderChaser:
         self.max_iterations: int = 40
         self.order = None
         self.chase_result = False
+        self.first_price: float | None = None
 
     def place_order_gtx(self, price: float):
         custom_id=f'{self.side.value}{secrets.token_hex(nbytes=5)}'
@@ -150,6 +151,9 @@ class LimitOrderChaser:
                 return False
 
     def chase(self, latest_price: float) -> bool:
+        if self.first_price:
+            return self.chase_open_only(self.first_price) and self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN
+            
         if self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN:
             return self.chase_open_only(latest_price)
         elif self.place_order_behavior == PlaceOrderBehavior.CHASER:

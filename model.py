@@ -15,6 +15,10 @@ class OrderSide(Enum):
 
     def reversal(self):
         return OrderSide.SELL if self == OrderSide.BUY else OrderSide.BUY
+    
+    # 数字表示，1 为买，-1 为卖
+    def to_int(self):
+        return 1 if self == OrderSide.BUY else -1
 
 # order status
         # statuses: dict = {

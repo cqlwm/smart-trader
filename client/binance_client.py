@@ -105,6 +105,8 @@ class BinanceSwapClient(ExSwapClient):
 
         if 'chaser' in behavior_value:
             order_chaser = self.create_chaser(symbol, order_side, quantity, position_side, PlaceOrderBehavior(behavior_value))
+            order_chaser.first_price = kwargs.pop('first_price', None)
+            
             ok: bool = order_chaser.run()  # type: ignore
             if ok:
                 return order_chaser.order
