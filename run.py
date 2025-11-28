@@ -36,7 +36,7 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 if __name__ == '__main__':
 
     from template import bnbusdt
-    from template import dogeusdt
+    from template import dogeusdt, dogeusdc
     # from template import btcdom
     # from template import ethusdt
     from template import solusdc
@@ -44,7 +44,10 @@ if __name__ == '__main__':
     
     tasks = [
         # 0 amount strategy
-        dogeusdt.short_sell(main_binance_client)
+        dogeusdt.short_sell(main_binance_client),
+
+        dogeusdc.long_buy(main_binance_client),
+        dogeusdc.short_sell(main_binance_client)
     ] + solusdc.short_rollover_strategy(main_binance_client)
 
     kline_subscribes: List[str] = []
