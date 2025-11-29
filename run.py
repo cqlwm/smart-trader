@@ -38,7 +38,7 @@ if __name__ == '__main__':
     from template import dogeusdc, bobusdt
     
     tasks = [
-        # bobusdt.long_buy(main_binance_client),
+        bobusdt.long_buy(main_binance_client),
         
         dogeusdc.long_buy(main_binance_client),
         dogeusdc.short_sell(main_binance_client)
