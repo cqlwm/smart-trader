@@ -212,10 +212,11 @@ class SignalGridStrategy(StrategyV2):
                 quantity=self.config.per_order_qty,
                 fixed_take_profit_rate=self.config.fixed_take_profit_rate, 
                 signal_min_take_profit_rate=self.config.signal_min_take_profit_rate,
-                status=OrderStatus.CLOSED.value
+                status=OrderStatus.OPEN.value
             )
             self.orders.append(order)
             if self.config.per_order_qty == 0:
+                order.status = OrderStatus.CLOSED.value
                 return True
             place_order_result = self.place_order(order_id, self.config.master_side, self.config.per_order_qty, close_price)
             if place_order_result:
@@ -290,7 +291,7 @@ class SignalGridStrategy(StrategyV2):
         if self.config.enable_limit_take_profit and self.lock.acquire(blocking=False):
             try:
                 for order in self.orders:
-                    if order.exit_price:
+                    if order.exit_price or order.quantity == 0:
                         continue
                     
                     exit_order_side = self.config.master_side.reversal()
