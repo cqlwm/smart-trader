@@ -1,5 +1,6 @@
 import os
 import secrets
+import threading
 from typing import Any, List, Callable
 from client.ex_client import ExSwapClient
 from strategy import StrategyV2
@@ -22,7 +23,7 @@ class Order(BaseModel):
     quantity: float
     fixed_take_profit_rate: float
     signal_min_take_profit_rate: float
-    close_price: float | None = None
+    exit_price: float | None = None
     status: str | None = None
 
     def __hash__(self):
@@ -153,6 +154,7 @@ class SignalGridStrategy(StrategyV2):
         self.on_stop_loss_order_all: Callable[[], None] = lambda: None
         self.close_position: bool = False
         self.is_running: bool = True
+        self.lock = threading.Lock()
 
     def place_order(self, order_id: str, side: OrderSide, qty: float, price: float, first_price: float | None = None):
         if self.config.position_reverse:
@@ -243,8 +245,8 @@ class SignalGridStrategy(StrategyV2):
                     else:
                         order.status = OrderStatus.CLOSED.value
                 flat_qty += order.quantity
-                if order.close_price is None:
-                    order.close_price = self.last_kline.close
+                if order.exit_price is None:
+                    order.exit_price = self.last_kline.close
                 flat_orders.append(order)
             else:
                 new_orders.append(order)
@@ -256,7 +258,7 @@ class SignalGridStrategy(StrategyV2):
             place_order_result = self.place_order(flat_order_id, flat_order_side, actual_flat_qty, self.last_kline.close)
             if place_order_result:
                 for order in flat_orders:
-                    order.close_price = place_order_result['price']
+                    order.exit_price = place_order_result['price']
         
         # 即使flat_qty==0，也需要更新订单，因为可以移除手动修改的0数量订单
         if len(self.orders) != len(new_orders):
@@ -285,27 +287,28 @@ class SignalGridStrategy(StrategyV2):
         self.order_recorder.record(self.orders, close_orders)
 
     def on_kline(self):
-        if not self.config.enable_limit_take_profit:
-            return
-        
-        for order in self.orders:
-            if order.close_price:
-                continue
-            
-            flat_order_side = self.config.master_side.reversal()
-            flat_order_id = build_order_id(flat_order_side)
-            flat_price = order.price * (1 + flat_order_side.to_int() * self.config.fixed_take_profit_rate)
+        if self.config.enable_limit_take_profit and self.lock.acquire(blocking=False):
+            try:
+                for order in self.orders:
+                    if order.exit_price:
+                        continue
+                    
+                    exit_order_side = self.config.master_side.reversal()
+                    exit_order_id = build_order_id(exit_order_side)
+                    exit_price = order.price * (1 + exit_order_side.to_int() * self.config.fixed_take_profit_rate)
 
-            if OrderStatus.is_open(order.status):
-                query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
-                if query_order and OrderStatus.is_closed(query_order['status']):
-                    order.status = OrderStatus.CLOSED.value
-                else:
-                    continue
-            elif OrderStatus.is_closed(order.status):
-                pass
-            else:
-                continue
+                    if OrderStatus.is_open(order.status):
+                        query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
+                        if query_order and OrderStatus.is_closed(query_order['status']):
+                            order.status = OrderStatus.CLOSED.value
+                        else:
+                            continue
+                    elif OrderStatus.is_closed(order.status):
+                        pass
+                    else:
+                        continue
 
-            order.close_price = flat_price
-            self.place_order(flat_order_id, flat_order_side, order.quantity, flat_price, first_price=flat_price)
+                    order.exit_price = exit_price
+                    self.place_order(exit_order_id, exit_order_side, order.quantity, exit_price, first_price=exit_price)
+            finally:
+                self.lock.release()
