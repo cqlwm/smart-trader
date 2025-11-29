@@ -101,17 +101,17 @@ class BinanceSwapClient(ExSwapClient):
         if isinstance(place_order_behavior, PlaceOrderBehavior):
             behavior_value: str = place_order_behavior.value
         else:
-            behavior_value = place_order_behavior or ''
+            behavior_value = PlaceOrderBehavior.NORMAL.value
 
         if 'chaser' in behavior_value:
             order_chaser = self.create_chaser(symbol, order_side, quantity, position_side, PlaceOrderBehavior(behavior_value))
             order_chaser.first_price = kwargs.pop('first_price', None)
             
-            ok: bool = order_chaser.run()  # type: ignore
+            ok: bool = order_chaser.run()
             if ok:
                 return order_chaser.order
             else:
-                logger.error("追单失败, 市价执行")
+                logger.error("追单失败, 执行常规订单")
 
         params: Dict[str, Any] = {'newClientOrderId': custom_id}
         if position_side:

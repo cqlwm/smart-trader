@@ -163,8 +163,16 @@ class SignalGridStrategy(StrategyV2):
         else:
             position_side = self.config.position_side
 
-        return self.ex_client.place_order_v2(custom_id=order_id, symbol=self.config.symbol, order_side=side, quantity=qty, price=price, position_side=position_side,
-                                             place_order_behavior=self.config.place_order_behavior, first_price=first_price)
+        return self.ex_client.place_order_v2(
+            custom_id=order_id, 
+            symbol=self.config.symbol, 
+            order_side=side, 
+            quantity=qty, 
+            price=price, # place_order_behavior == NORMAL 价格才会生效
+            position_side=position_side,
+            place_order_behavior=self.config.place_order_behavior, 
+            first_price=first_price
+        )
 
     def _check_max_order_stop_loss(self) -> bool:
         if self.config.enable_max_order_stop_loss and self.config.max_order - len(self.orders) <= 1:
@@ -258,7 +266,7 @@ class SignalGridStrategy(StrategyV2):
         
         if self.close_position:
             self.close_position = False
-            
+
         if stop_loss_order_all:
             self.on_stop_loss_order_all()
             self.is_running = False
