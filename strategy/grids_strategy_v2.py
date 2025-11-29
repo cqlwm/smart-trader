@@ -1,3 +1,5 @@
+-- Active: 1741682730379@@119.28.108.27@3306
+-- Active: 1741682730379@@119.28.108.27@3306
 import os
 import secrets
 from typing import Any, List, Callable
@@ -233,9 +235,10 @@ class SignalGridStrategy(StrategyV2):
                             self.ex_client.cancel(order.custom_id, self.config.symbol)
                         continue
                     else:
-                        order.status = 'closed'
+                        order.status = OrderStatus.CLOSED.value
                 flat_qty += order.quantity
-                order.close_price = self.last_kline.close
+                if order.close_price is None:
+                    order.close_price = self.last_kline.close
                 flat_orders.append(order)
             else:
                 new_orders.append(order)
@@ -255,6 +258,7 @@ class SignalGridStrategy(StrategyV2):
         
         if self.close_position:
             self.close_position = False
+            
         if stop_loss_order_all:
             self.on_stop_loss_order_all()
             self.is_running = False
@@ -279,11 +283,23 @@ class SignalGridStrategy(StrategyV2):
             return
         
         for order in self.orders:
-            if order.status == 'open':
+            if order.close_price:
+                continue
+            
+            flat_order_side = self.config.master_side.reversal()
+            flat_order_id = build_order_id(flat_order_side)
+            flat_price = order.price * (1 + flat_order_side.to_int() * self.config.fixed_take_profit_rate)
+
+            if OrderStatus.is_open(order.status):
                 query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
-                if query_order and query_order['status'] == OrderStatus.CLOSED.value:
-                    order.status = 'closed'
-                    flat_order_side = self.config.master_side.reversal()
-                    flat_order_id = build_order_id(flat_order_side)
-                    flat_price = order.price * (1 + flat_order_side.to_int() * self.config.fixed_take_profit_rate)
-                    self.place_order(flat_order_id, flat_order_side, order.quantity, flat_price, first_price=flat_price)
+                if query_order and OrderStatus.is_closed(query_order['status']):
+                    order.status = OrderStatus.CLOSED.value
+                else:
+                    continue
+            elif OrderStatus.is_closed(order.status):
+                pass
+            else:
+                continue
+
+            order.close_price = flat_price
+            self.place_order(flat_order_id, flat_order_side, order.quantity, flat_price, first_price=flat_price)

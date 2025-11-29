@@ -41,6 +41,35 @@ class OrderStatus(Enum):
     REJECTED = 'rejected'
     EXPIRED = 'expired'
 
+    @staticmethod
+    def _normalize_status(status: Any) -> str | None:
+        """规范化订单状态值"""
+        if isinstance(status, str):
+            return status.lower()
+        if isinstance(status, OrderStatus):
+            return status.value
+        raise TypeError(f"Unsupported status type: {type(status)}")
+
+    @staticmethod
+    def compare(status1: 'str | OrderStatus | None', status2: 'str | OrderStatus | None') -> bool:
+        """比较两个订单状态是否相等"""
+        try:
+            if status1 is None or status2 is None:
+                return False
+            
+            return OrderStatus._normalize_status(status1) == OrderStatus._normalize_status(status2)
+        except TypeError:
+            return False
+
+    @staticmethod
+    def is_open(status: 'str | OrderStatus | None') -> bool:
+        return OrderStatus.compare(status, OrderStatus.OPEN)
+        
+    @staticmethod
+    def is_closed(status: 'str | OrderStatus | None') -> bool:
+        return OrderStatus.compare(status, OrderStatus.CLOSED)
+
+
 class PlaceOrderBehavior(Enum):
     CHASER = 'chaser'  # 追单且成交
     CHASER_OPEN = 'chaser_open'  # 追单只下单
