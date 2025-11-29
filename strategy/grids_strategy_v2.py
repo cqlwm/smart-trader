@@ -140,6 +140,8 @@ class SignalGridStrategyConfig(BaseModel):
     position_reverse: bool = False  # 是否反向持仓
     # 达到最大订单数全部止损
     enable_max_order_stop_loss: bool = False
+    # 止损后暂停策略
+    paused_after_stop_loss: bool = True
     # 限价止盈
     enable_limit_take_profit: bool = False
 
@@ -270,7 +272,8 @@ class SignalGridStrategy(StrategyV2):
 
         if stop_loss_order_all:
             self.on_stop_loss_order_all()
-            self.is_running = False
+            if self.config.paused_after_stop_loss:
+                self.is_running = False
         
         return flat_orders
 
