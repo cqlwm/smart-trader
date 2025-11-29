@@ -1,6 +1,6 @@
 from client.ex_client import ExSwapClient
 import log
-from model import OrderSide, PositionSide, Symbol
+from model import OrderSide, PlaceOrderBehavior, PositionSide, Symbol
 from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
@@ -28,6 +28,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         order_file_path=f'{DATA_PATH}/signal_grid_short_sell_{symbol.simple()}_{timeframe}.json',
         enable_max_order_stop_loss=True,
         paused_after_stop_loss=False,
+        place_order_behavior=PlaceOrderBehavior.CHASER,
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
@@ -49,6 +50,7 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
         enable_max_order_stop_loss=True,
         paused_after_stop_loss=False,
+        place_order_behavior=PlaceOrderBehavior.CHASER,
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
