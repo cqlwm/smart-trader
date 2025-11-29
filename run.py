@@ -49,7 +49,9 @@ if __name__ == '__main__':
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
 
     for task in tasks:
-        kline_subscribes.append(task.symbol.binance_ws_sub_kline(task.timeframe))
+        sub_key = task.symbol.binance_ws_sub_kline(task.timeframe)
+        if sub_key not in kline_subscribes:
+            kline_subscribes.append(sub_key)
         data_event_loop.add_task(task)
 
     data_event_loop.start()
