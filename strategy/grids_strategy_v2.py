@@ -299,7 +299,7 @@ class SignalGridStrategy(StrategyV2):
                     
                     exit_order_side = self.config.master_side.reversal()
                     exit_order_id = build_order_id(exit_order_side)
-                    exit_price = order.price * (1 + exit_order_side.to_int() * self.config.fixed_take_profit_rate)
+                    exit_price = order.price * (1 + self.config.master_side.to_int() * self.config.fixed_take_profit_rate)
 
                     if OrderStatus.is_open(order.status):
                         query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
