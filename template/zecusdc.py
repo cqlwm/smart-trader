@@ -8,11 +8,10 @@ from config import DATA_PATH
 from task.strategy_task import StrategyTask
 
 logger = log.getLogger(__name__)
+symbol=Symbol(base="zec", quote="usdc")
+timeframe='1m'
 
 def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
-    symbol=Symbol(base="zec", quote="usdt")
-    timeframe='1m'
-
     config=SignalGridStrategyConfig(
         symbol=symbol,
         position_side=PositionSide.LONG,
@@ -32,4 +31,22 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
+    return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
+
+def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
+    config=SignalGridStrategyConfig(
+        symbol=symbol,
+        position_side=PositionSide.SHORT,
+        master_side=OrderSide.SELL,
+        per_order_qty=0.02,
+        grid_spacing_rate=0.002,
+        max_order=10,
+        enable_exit_signal=True,
+        signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL)),
+        signal_min_take_profit_rate=0.002,
+        enable_fixed_profit_taking=True,
+        fixed_take_profit_rate=0.05,
+        order_file_path=f'{DATA_PATH}/signal_grid_short_sell_{symbol.simple()}_{timeframe}.json',
+    )
+    strategy = SignalGridStrategy(config, exchange_client)
     return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)

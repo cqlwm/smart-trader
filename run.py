@@ -5,6 +5,8 @@ from data_event_loop import BinanceDataEventLoop
 from client.binance_client import BinanceSwapClient
 import dotenv
 
+from template import zecusdc
+
 dotenv.load_dotenv()
 
 logger = log.getLogger(__name__)
@@ -35,15 +37,16 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 
 if __name__ == '__main__':
 
-    from template import dogeusdc, bobusdt
+    from template import dogeusdc, bobusdt, zecusdc
     
     tasks = [
         bobusdt.long_buy(main_binance_client),
-        # bobusdt.short_sell(main_binance_client),
+
+        zecusdc.short_sell(main_binance_client),
 
         dogeusdc.long_buy(main_binance_client),
         dogeusdc.short_sell(main_binance_client)
-    ] 
+    ]
     # + solusdc.short_rollover_strategy(main_binance_client)
 
     kline_subscribes: List[str] = []
