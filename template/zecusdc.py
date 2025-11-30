@@ -47,6 +47,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         enable_fixed_profit_taking=True,
         fixed_take_profit_rate=0.05,
         order_file_path=f'{DATA_PATH}/signal_grid_short_sell_{symbol.simple()}_{timeframe}.json',
+        enable_max_order_stop_loss=True,
     )
     strategy = SignalGridStrategy(config, exchange_client)
     return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
