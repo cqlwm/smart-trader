@@ -26,6 +26,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         enable_fixed_profit_taking=True,
         fixed_take_profit_rate=0.0001,
         order_file_path=f'{DATA_PATH}/signal_grid_short_sell_{symbol.simple()}_{timeframe}.json',
+        enable_limit_take_profit=True,
         enable_max_order_stop_loss=True,
         paused_after_stop_loss=False,
         # place_order_behavior=PlaceOrderBehavior.CHASER,
