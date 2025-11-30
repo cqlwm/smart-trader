@@ -39,7 +39,7 @@ if __name__ == '__main__':
     
     tasks = [
         # bobusdt.long_buy(main_binance_client),
-        bobusdt.short_sell(main_binance_client),
+        # bobusdt.short_sell(main_binance_client),
 
         dogeusdc.long_buy(main_binance_client),
         dogeusdc.short_sell(main_binance_client)
