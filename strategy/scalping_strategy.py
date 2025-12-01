@@ -60,7 +60,7 @@ class ScalpingStrategyConfig(BaseModel):
     period: int = 8  # AlphaTrend period
     enable_short_trades: bool = True  # Allow short positions
     enable_long_trades: bool = True  # Allow long positions
-
+    backup_file_path: str = "data/scalping_strategy_state.json"  # Path to store strategy state
 
 class ScalpingStrategy(StrategyV2):
     def __init__(self, ex_client: ExSwapClient, config: ScalpingStrategyConfig):
@@ -308,7 +308,7 @@ class ScalpingStrategy(StrategyV2):
 
     def _get_backup_file_path(self) -> str:
         """Get the backup file path for this strategy instance"""
-        return f"data/scalping_strategy_{self.config.symbol.binance()}.json"
+        return self.config.backup_file_path
 
     def _save_state(self):
         """Save current strategy state to file"""
