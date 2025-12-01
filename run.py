@@ -44,10 +44,10 @@ if __name__ == '__main__':
 
         btcdom.long_buy_simple_grid(copy_trading_binance_client),
 
-        zecusdc.short_sell(main_binance_client),
+        # zecusdc.short_sell(main_binance_client),
 
-        dogeusdc.long_buy(main_binance_client),
-        dogeusdc.short_sell(main_binance_client),
+        # dogeusdc.long_buy(main_binance_client),
+        # dogeusdc.short_sell(main_binance_client),
 
         btcusdc.short_sell(main_binance_client),
     ]
