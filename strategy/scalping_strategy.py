@@ -142,7 +142,7 @@ class ScalpingStrategy(StrategyV2):
                 quantity=position_size,
                 price=entry_price,
                 position_side=position_side,
-                place_order_behavior=PlaceOrderBehavior.NORMAL
+                place_order_behavior=PlaceOrderBehavior.CHASER_OPEN
             )
 
             if order_result and order_result.get('clientOrderId'):
@@ -196,7 +196,7 @@ class ScalpingStrategy(StrategyV2):
                 quantity=position.quantity,
                 price=exit_price,
                 position_side=position.position_side,
-                place_order_behavior=PlaceOrderBehavior.NORMAL
+                place_order_behavior=PlaceOrderBehavior.CHASER_OPEN
             )
 
             if order_result and order_result.get('clientOrderId'):
