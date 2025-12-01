@@ -37,17 +37,18 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 
 if __name__ == '__main__':
 
-    from template import dogeusdc, bobusdt, zecusdc
+    from template import dogeusdc, btcdom, zecusdc
     
     tasks = [
         # bobusdt.long_buy(main_binance_client),
+
+        btcdom.long_buy_simple_grid(copy_trading_binance_client),
 
         zecusdc.short_sell(main_binance_client),
 
         dogeusdc.long_buy(main_binance_client),
         dogeusdc.short_sell(main_binance_client)
     ]
-    # + solusdc.short_rollover_strategy(main_binance_client)
 
     kline_subscribes: List[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
