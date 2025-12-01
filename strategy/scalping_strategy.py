@@ -1,12 +1,14 @@
 import threading
 import secrets
-from typing import Dict, List, Optional, Tuple
+import os
+from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel
 
 from strategy import StrategyV2
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from client.ex_client import ExSwapClient
 from model import OrderSide, PositionSide, PlaceOrderBehavior, Symbol
+from utils.json_util import dump_file, loads
 import log
 
 logger = log.getLogger(__name__)
@@ -83,6 +85,9 @@ class ScalpingStrategy(StrategyV2):
         # Thread safety
         self.lock = threading.Lock()
 
+        # Load previous state if exists
+        self._load_state()
+
         logger.info(f"ScalpingStrategy initialized for {config.symbol.binance()}")
 
     def _generate_order_id(self, side: OrderSide) -> str:
@@ -158,6 +163,9 @@ class ScalpingStrategy(StrategyV2):
                 else:
                     self.active_short_positions += 1
 
+                # Save state after opening position
+                self._save_state()
+
                 logger.info(f"Opened {position_side.value} position: {position_size} @ {entry_price} (ID: {order_result['clientOrderId']})")
                 return order_result['clientOrderId']
 
@@ -211,6 +219,9 @@ class ScalpingStrategy(StrategyV2):
                 # Remove from tracking
                 if position.entry_order_id in self.positions:
                     del self.positions[position.entry_order_id]
+
+                # Save state after closing position
+                self._save_state()
 
                 logger.info(f"Closed {position.position_side.value} position: {realized_pnl:.4f} P&L ({reason})")
                 return True
@@ -294,6 +305,64 @@ class ScalpingStrategy(StrategyV2):
             logger.error(f"Error in scalping strategy execution: {e}")
         finally:
             self.lock.release()
+
+    def _get_backup_file_path(self) -> str:
+        """Get the backup file path for this strategy instance"""
+        return f"data/scalping_strategy_{self.config.symbol.binance()}.json"
+
+    def _save_state(self):
+        """Save current strategy state to file"""
+        try:
+            state: dict[str, Any] = {
+                'positions': self.positions,
+                'active_long_positions': self.active_long_positions,
+                'active_short_positions': self.active_short_positions,
+                'total_trades': self.total_trades,
+                'winning_trades': self.winning_trades,
+                'total_pnl': self.total_pnl
+            }
+
+            backup_path = self._get_backup_file_path()
+            if not os.path.exists(backup_path):
+                logger.info(f"Backup file {backup_path} does not exist, creating a new one.")
+                os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+
+            dump_file(state, backup_path)
+            logger.debug(f"Strategy state saved to {backup_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to save strategy state: {e}")
+
+    def _load_state(self):
+        """Load strategy state from file if exists"""
+        backup_path = self._get_backup_file_path()
+        if not os.path.exists(backup_path):
+            logger.info(f"No backup file found at {backup_path}, starting fresh")
+            return
+
+        try:
+            with open(backup_path, 'r') as f:
+                state_data = loads(f.read())
+
+            # Restore state
+            self.positions = {}
+            for order_id, pos_data in state_data.get('positions', {}).items():
+                # Reconstruct ScalpPosition from dict
+                position = ScalpPosition(**pos_data)
+                self.positions[order_id] = position
+
+            self.active_long_positions = state_data.get('active_long_positions', 0)
+            self.active_short_positions = state_data.get('active_short_positions', 0)
+            self.total_trades = state_data.get('total_trades', 0)
+            self.winning_trades = state_data.get('winning_trades', 0)
+            self.total_pnl = state_data.get('total_pnl', 0.0)
+
+            logger.info(f"Strategy state loaded from {backup_path}: {len(self.positions)} positions, "
+                       f"{self.total_trades} trades, PNL: {self.total_pnl:.4f}")
+
+        except Exception as e:
+            logger.error(f"Failed to load strategy state from {backup_path}: {e}")
+            # Continue with fresh state if loading fails
 
     def get_performance_stats(self) -> Dict[str, float]:
         """Get current performance statistics"""
