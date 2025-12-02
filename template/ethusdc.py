@@ -16,7 +16,7 @@ def scalping(exchange_client: ExSwapClient) -> StrategyTask:
 
     config = ScalpingStrategyConfig(
         symbol=symbol,
-        position_size=0.008,  # Small position size for scalping
+        position_size=0.1,  # Small position size for scalping
         max_positions=2,  # Allow up to 2 concurrent positions
         stop_loss_rate=0.0129,  # 1.29% stop loss
         take_profit_rate=0.02,  # 2% take profit
