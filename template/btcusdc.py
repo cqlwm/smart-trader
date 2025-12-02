@@ -4,6 +4,7 @@ from model import OrderSide, PositionSide, Symbol
 from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
+from strategy.scalping_strategy import ScalpingStrategy, ScalpingStrategyConfig
 from config import DATA_PATH
 from task.strategy_task import StrategyTask
 
@@ -52,5 +53,25 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         enable_max_order_stop_loss=True,
     )
     strategy = SignalGridStrategy(config, exchange_client)
+
+    return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
+
+def scalping(exchange_client: ExSwapClient) -> StrategyTask:
+    symbol=Symbol(base="btc", quote="usdc")
+    timeframe='1m'
+
+    config = ScalpingStrategyConfig(
+        symbol=symbol,
+        position_size=0.001,  # Small position size for scalping
+        max_positions=3,  # Allow up to 3 concurrent positions
+        stop_loss_rate=0.003,  # 0.3% stop loss
+        take_profit_rate=0.006,  # 0.6% take profit
+        atr_multiple=1.5,  # AlphaTrend ATR multiplier
+        period=14,  # AlphaTrend period
+        enable_short_trades=True,  # Allow both long and short trades
+        enable_long_trades=True,
+        backup_file_path=f'{DATA_PATH}/scalping_{symbol.simple()}_{timeframe}.json',
+    )
+    strategy = ScalpingStrategy(exchange_client, config)
 
     return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)

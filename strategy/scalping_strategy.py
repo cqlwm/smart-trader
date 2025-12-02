@@ -55,7 +55,6 @@ class ScalpingStrategyConfig(BaseModel):
     max_positions: int = 2  # Maximum concurrent positions (long + short)
     stop_loss_rate: float = 0.005  # 0.5% stop loss
     take_profit_rate: float = 0.01  # 1% take profit
-    max_loss_per_trade: float = 0.002  # 0.2% max loss per trade
     atr_multiple: float = 1.0  # AlphaTrend ATR multiplier
     period: int = 8  # AlphaTrend period
     enable_short_trades: bool = True  # Allow short positions
