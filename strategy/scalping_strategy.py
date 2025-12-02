@@ -61,7 +61,7 @@ class ScalpingStrategyConfig(BaseModel):
     enable_short_trades: bool = True  # Allow short positions
     enable_long_trades: bool = True  # Allow long positions
     backup_file_path: str = "data/scalping_strategy_state.json"  # Path to store strategy state
-    place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.NORMAL  # Place order behavior
+    place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER_OPEN  # Place order behavior
 
 class ScalpingStrategy(StrategyV2):
     def __init__(self, ex_client: ExSwapClient, config: ScalpingStrategyConfig):
