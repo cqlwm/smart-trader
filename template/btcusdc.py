@@ -62,12 +62,13 @@ def scalping(exchange_client: ExSwapClient) -> StrategyTask:
 
     config = ScalpingStrategyConfig(
         symbol=symbol,
-        position_size=0.001,  # Small position size for scalping
-        max_positions=3,  # Allow up to 3 concurrent positions
-        stop_loss_rate=0.003,  # 0.3% stop loss
-        take_profit_rate=0.006,  # 0.6% take profit
-        atr_multiple=1.5,  # AlphaTrend ATR multiplier
-        period=14,  # AlphaTrend period
+        position_size=0.002,  # Small position size for scalping
+        max_positions=2,  # Allow up to 3 concurrent positions
+        stop_loss_rate=0.0067,  # 0.67% stop loss
+        take_profit_rate=0.01,  # 1% take profit
+        atr_multiple=1,  # AlphaTrend ATR multiplier
+        period=8,  # AlphaTrend period
+        signal_reverse=True,  # Reverse the signal direction
         enable_short_trades=True,  # Allow both long and short trades
         enable_long_trades=True,
         backup_file_path=f'{DATA_PATH}/scalping_{symbol.simple()}_{timeframe}.json',
