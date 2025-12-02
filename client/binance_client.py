@@ -111,7 +111,7 @@ class BinanceSwapClient(ExSwapClient):
             if ok:
                 return order_chaser.order
             else:
-                logger.error("追单失败, 执行常规订单")
+                logger.error(f"追单失败, 执行常规订单, price: {price}")
 
         params: Dict[str, Any] = {'newClientOrderId': custom_id}
         if position_side:

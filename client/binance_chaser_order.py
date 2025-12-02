@@ -27,6 +27,7 @@ class LimitOrderChaser:
         self.order = None
         self.chase_result = False
         self.first_price: float | None = None
+        self.fee: float = 0.00075
 
     def place_order_gtx(self, price: float):
         custom_id=f'{self.side.value}{secrets.token_hex(nbytes=5)}'
@@ -73,6 +74,12 @@ class LimitOrderChaser:
         tick_size = symbol_info.tick_size
 
         limit_price = (latest_price - tick_size) if self.side == OrderSide.BUY else (latest_price + tick_size)
+        if self.first_price is not None:
+            if self.side == OrderSide.BUY:
+                limit_price = min(limit_price, self.first_price)
+            elif self.side == OrderSide.SELL:
+                limit_price = max(limit_price, self.first_price)
+
         try:
             place_order_result = self.place_order_gtx(limit_price)
             if place_order_result and place_order_result.get('status'):
@@ -145,6 +152,8 @@ class LimitOrderChaser:
             return True
         else:
             if self.order:
+                # 先取消订单，再检查是否成交
+                # 有可能在取消订单前订单就成交了
                 self.cancel_order(self.order['clientOrderId'])
                 return self.chase_closed(self.order['price'])
             else:
@@ -174,6 +183,16 @@ class LimitOrderChaser:
                         if '"c"' in msg_str and '24hrMiniTicker' in msg_str:
                             data = json.loads(msg)
                             current_price = float(data['c'])
+                            if self.first_price is not None:
+                                deviation = abs(current_price - self.first_price)
+                                fee_range = self.fee * self.first_price
+                                if deviation > fee_range:
+                                    profitable = (self.side == OrderSide.BUY and current_price < self.first_price) or (self.side == OrderSide.SELL and current_price > self.first_price)
+                                    if profitable:
+                                        logger.info(f"价格偏离超出fee范围且盈利，停止追单。当前价: {current_price}, 初始价: {self.first_price}")
+                                        self.chase_result = False
+                                        counter = self.max_iterations
+                                        break
                             self.chase_result = self.chase(current_price)
                             if self.chase_result and self.order:
                                 logger.info(f"结束追单, 订单 {self.order['clientOrderId']} {'已挂单' if self.place_order_behavior == PlaceOrderBehavior.CHASER_OPEN else '已成交'}")
