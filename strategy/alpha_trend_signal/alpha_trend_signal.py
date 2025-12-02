@@ -100,24 +100,29 @@ class AlphaTrendSignal(Signal):
         if signal == 0:
             return 0
 
-        # Apply reversal if enabled
-        if self.reverse:
-            signal = -signal
-
         if self.current_signal == 0 or self.current_signal != signal:
             self.current_signal = signal
             return signal
         else:
             return 0
 
-
-    def run(self, klines: DataFrame) -> int:
+    # 真实信号
+    def true_signal(self, klines: DataFrame) -> int:
         last_time = klines[_datetime].iloc[-1]
-        first_run = self.datetime is None
+
         if self.datetime == last_time:
             return self.current_kline_status
-        else:
-            self.datetime = last_time
+            
+        self.current_kline_status = self._compute_signal(klines, self.datetime is None)
+        self.datetime = last_time
 
-        self.current_kline_status = self._compute_signal(klines, first_run)
         return self.current_kline_status
+
+    def run(self, klines: DataFrame) -> int:
+        signal = self.true_signal(klines)
+
+        # Apply reversal if enabled
+        if self.reverse:
+            signal = -signal
+        
+        return signal
