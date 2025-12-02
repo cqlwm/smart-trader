@@ -73,10 +73,11 @@ def _alpha_trend_signal(df: DataFrame, atr_multiple: float = 1.0, period: int = 
 
 
 class AlphaTrendSignal(Signal):
-    def __init__(self, side: OrderSide, atr_multiple: float = 1.0, period: int = 8):
+    def __init__(self, side: OrderSide, atr_multiple: float = 1.0, period: int = 8, reverse: bool = False):
         super().__init__(side)
         self.atr_multiple = atr_multiple
         self.period = period
+        self.reverse = reverse
 
         self.datetime: str | None = None
         self.current_signal: int = 0
@@ -98,6 +99,10 @@ class AlphaTrendSignal(Signal):
 
         if signal == 0:
             return 0
+
+        # Apply reversal if enabled
+        if self.reverse:
+            signal = -signal
 
         if self.current_signal == 0 or self.current_signal != signal:
             self.current_signal = signal

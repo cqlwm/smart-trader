@@ -22,6 +22,7 @@ def scalping(exchange_client: ExSwapClient) -> StrategyTask:
         take_profit_rate=0.02,  # 2% take profit
         atr_multiple=1,  # AlphaTrend ATR multiplier
         period=8,  # AlphaTrend period
+        signal_reverse=True,  # Reverse the signal direction
         enable_short_trades=True,  # Allow both long and short trades
         enable_long_trades=True,
         backup_file_path=f'{DATA_PATH}/scalping_{symbol.simple()}_{timeframe}.json',

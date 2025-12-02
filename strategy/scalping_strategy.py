@@ -57,6 +57,7 @@ class ScalpingStrategyConfig(BaseModel):
     take_profit_rate: float = 0.01  # 1% take profit
     atr_multiple: float = 1.0  # AlphaTrend ATR multiplier
     period: int = 8  # AlphaTrend period
+    signal_reverse: bool = False  # Reverse the signal direction
     enable_short_trades: bool = True  # Allow short positions
     enable_long_trades: bool = True  # Allow long positions
     backup_file_path: str = "data/scalping_strategy_state.json"  # Path to store strategy state
@@ -68,8 +69,8 @@ class ScalpingStrategy(StrategyV2):
         self.ex_client = ex_client
 
         # Initialize signals
-        self.long_signal = AlphaTrendSignal(OrderSide.BUY, self.config.atr_multiple, self.config.period)
-        self.short_signal = AlphaTrendSignal(OrderSide.SELL, self.config.atr_multiple, self.config.period)
+        self.long_signal = AlphaTrendSignal(OrderSide.BUY, self.config.atr_multiple, self.config.period, reverse=self.config.signal_reverse)
+        self.short_signal = AlphaTrendSignal(OrderSide.SELL, self.config.atr_multiple, self.config.period, reverse=self.config.signal_reverse)
 
         # Position tracking
         self.positions: Dict[str, ScalpPosition] = {}  # order_id -> position
