@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from strategy import StrategyV2
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from client.ex_client import ExSwapClient
-from model import OrderSide, PositionSide, PlaceOrderBehavior, Symbol
+from model import OrderSide, PositionSide, PlaceOrderBehavior, Symbol, OrderStatus
 from utils.json_util import dump_file, loads
 import log
 
@@ -187,6 +187,35 @@ class ScalpingStrategy(StrategyV2):
             exit_order_side = OrderSide.BUY
 
         exit_order_id = self._generate_order_id(exit_order_side)
+
+        # Verify if entry order was filled
+        try:
+            query_result = self.ex_client.query_order(position.entry_order_id, self.config.symbol)
+            if not query_result or not OrderStatus.is_closed(query_result.get('status')):
+                # Entry order not filled, cancel it and remove position
+                cancel_result = self.ex_client.cancel(position.entry_order_id, self.config.symbol)
+                if cancel_result:
+                    # Remove from tracking
+                    if position.entry_order_id in self.positions:
+                        del self.positions[position.entry_order_id]
+
+                    # Update position counts
+                    if position.position_side == PositionSide.LONG:
+                        self.active_long_positions -= 1
+                    else:
+                        self.active_short_positions -= 1
+
+                    # Save state after canceling position
+                    self._save_state()
+
+                    logger.info(f"Canceled unfilled entry order and removed position: {position.entry_order_id} ({reason})")
+                    return True
+                else:
+                    logger.error(f"Failed to cancel unfilled entry order: {position.entry_order_id}")
+                    return False
+        except Exception as e:
+            logger.error(f"Failed to query entry order {position.entry_order_id}: {e}")
+            return False
 
         try:
             # Place exit order
