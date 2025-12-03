@@ -42,7 +42,7 @@ if __name__ == '__main__':
     tasks = [
         # bobusdt.long_buy(main_binance_client),
 
-        ethusdc.scalping(main_binance_client),
+        # ethusdc.scalping(main_binance_client),
 
         # btcdom.long_buy_simple_grid(copy_trading_binance_client),
 
@@ -51,7 +51,7 @@ if __name__ == '__main__':
         # dogeusdc.long_buy(main_binance_client),
         # dogeusdc.short_sell(main_binance_client),
 
-        # btcusdc.scalping(main_binance_client),
+        btcusdc.scalping(main_binance_client),
     ]
 
     kline_subscribes: List[str] = []
