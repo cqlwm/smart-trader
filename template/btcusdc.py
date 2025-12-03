@@ -56,22 +56,44 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
 
     return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
 
-def scalping(exchange_client: ExSwapClient) -> StrategyTask:
+def scalping_short(exchange_client: ExSwapClient) -> StrategyTask:
     symbol=Symbol(base="btc", quote="usdc")
     timeframe='1m'
 
     config = ScalpingStrategyConfig(
         symbol=symbol,
-        position_size=0.005,  # Small position size for scalping
-        max_positions=2,  # Allow up to 3 concurrent positions
+        position_size=0.002,  # Small position size for scalping
+        max_positions=1,  # Allow up to 3 concurrent positions
         stop_loss_rate=0.0067,  # 0.67% stop loss
         take_profit_rate=0.01,  # 1% take profit
         atr_multiple=1,  # AlphaTrend ATR multiplier
         period=8,  # AlphaTrend period
         signal_reverse=True,  # Reverse the signal direction
         enable_short_trades=True,  # Allow both long and short trades
+        enable_long_trades=False,
+        backup_file_path=f'{DATA_PATH}/scalping_short_{symbol.simple()}_{timeframe}.json',
+    )
+    strategy = ScalpingStrategy(exchange_client, config)
+
+    return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
+
+
+def scalping_long(exchange_client: ExSwapClient) -> StrategyTask:
+    symbol=Symbol(base="btc", quote="usdc")
+    timeframe='1m'
+
+    config = ScalpingStrategyConfig(
+        symbol=symbol,
+        position_size=0.002,  # Small position size for scalping
+        max_positions=1,  # Allow up to 3 concurrent positions
+        stop_loss_rate=0.0067,  # 0.67% stop loss
+        take_profit_rate=0.01,  # 1% take profit
+        atr_multiple=1,  # AlphaTrend ATR multiplier
+        period=8,  # AlphaTrend period
+        signal_reverse=True,  # Reverse the signal direction
+        enable_short_trades=False,  # Allow both long and short trades
         enable_long_trades=True,
-        backup_file_path=f'{DATA_PATH}/scalping_{symbol.simple()}_{timeframe}.json',
+        backup_file_path=f'{DATA_PATH}/scalping_long_{symbol.simple()}_{timeframe}.json',
     )
     strategy = ScalpingStrategy(exchange_client, config)
 

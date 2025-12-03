@@ -240,33 +240,35 @@ class ScalpingStrategy(StrategyV2):
 
         current_price = self.last_kline.close
 
-        # Check long signals
-        if self.long_signal.is_entry(df):
-            if self._can_open_position(PositionSide.LONG):
-                self._open_position(PositionSide.LONG, current_price)
+        if self.config.enable_long_trades:
+            # Check long signals
+            if self.long_signal.is_entry(df):
+                if self._can_open_position(PositionSide.LONG):
+                    self._open_position(PositionSide.LONG, current_price)
 
-        elif self.long_signal.is_exit(df):
-            # Close long positions on exit signal
-            positions_to_close = [
-                pos for pos in self.positions.values()
-                if pos.position_side == PositionSide.LONG
-            ]
-            for position in positions_to_close:
-                self._close_position(position, current_price, "signal_exit")
+            elif self.long_signal.is_exit(df):
+                # Close long positions on exit signal
+                positions_to_close = [
+                    pos for pos in self.positions.values()
+                    if pos.position_side == PositionSide.LONG
+                ]
+                for position in positions_to_close:
+                    self._close_position(position, current_price, "signal_exit")
 
         # Check short signals
-        if self.short_signal.is_entry(df):
-            if self._can_open_position(PositionSide.SHORT):
-                self._open_position(PositionSide.SHORT, current_price)
+        if self.config.enable_short_trades:
+            if self.short_signal.is_entry(df):
+                if self._can_open_position(PositionSide.SHORT):
+                    self._open_position(PositionSide.SHORT, current_price)
 
-        elif self.short_signal.is_exit(df):
-            # Close short positions on exit signal
-            positions_to_close = [
-                pos for pos in self.positions.values()
-                if pos.position_side == PositionSide.SHORT
-            ]
-            for position in positions_to_close:
-                self._close_position(position, current_price, "signal_exit")
+            elif self.short_signal.is_exit(df):
+                # Close short positions on exit signal
+                positions_to_close = [
+                    pos for pos in self.positions.values()
+                    if pos.position_side == PositionSide.SHORT
+                ]
+                for position in positions_to_close:
+                    self._close_position(position, current_price, "signal_exit")
 
     def _manage_positions(self):
         """Manage existing positions (stop loss, take profit)"""
