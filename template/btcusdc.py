@@ -62,7 +62,7 @@ def scalping_short(exchange_client: ExSwapClient) -> StrategyTask:
 
     config = ScalpingStrategyConfig(
         symbol=symbol,
-        position_size=0.002,  # Small position size for scalping
+        position_size=0.005,  # Small position size for scalping
         max_positions=1,  # Allow up to 3 concurrent positions
         stop_loss_rate=0.0067,  # 0.67% stop loss
         take_profit_rate=0.01,  # 1% take profit
@@ -84,7 +84,7 @@ def scalping_long(exchange_client: ExSwapClient) -> StrategyTask:
 
     config = ScalpingStrategyConfig(
         symbol=symbol,
-        position_size=0.002,  # Small position size for scalping
+        position_size=0.005,  # Small position size for scalping
         max_positions=1,  # Allow up to 3 concurrent positions
         stop_loss_rate=0.0067,  # 0.67% stop loss
         take_profit_rate=0.01,  # 1% take profit
