@@ -1,4 +1,3 @@
-import threading
 import secrets
 import os
 from typing import Any, Dict, List, Optional, Tuple
@@ -82,9 +81,6 @@ class ScalpingStrategy(StrategyV2):
         self.total_trades: int = 0
         self.winning_trades: int = 0
         self.total_pnl: float = 0.0
-
-        # Thread safety
-        self.lock = threading.Lock()
 
         # Load previous state if exists
         self._load_state()
@@ -323,20 +319,11 @@ class ScalpingStrategy(StrategyV2):
 
     def on_kline_finished(self):
         """Main strategy logic - called when K-line is finished"""
-        if not self.lock.acquire(blocking=False):
-            return
+        # Check signals and execute new trades
+        self._check_signals_and_trade()
 
-        try:
-            # Check signals and execute new trades
-            self._check_signals_and_trade()
-
-            # Manage existing positions
-            self._manage_positions()
-
-        except Exception as e:
-            logger.error(f"Error in scalping strategy execution: {e}")
-        finally:
-            self.lock.release()
+        # Manage existing positions
+        self._manage_positions()
 
     def _get_backup_file_path(self) -> str:
         """Get the backup file path for this strategy instance"""
