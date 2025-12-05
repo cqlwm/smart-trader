@@ -27,7 +27,7 @@ class ExClient(ABC):
     def query_order(self, custom_id: str, symbol: Symbol) -> Dict[str, Any]:
         pass
 
-    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> List[list]:
+    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> List[List[Any]]:
         return self.exchange.fetch_ohlcv(symbol.ccxt(), timeframe, limit=limit)
     
     def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price: Optional[float] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:

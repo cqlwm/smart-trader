@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import threading
 import pandas as pd
 from pandas import DataFrame
-from typing import List, Dict
+from typing import Any, List, Dict
 
 from client.ex_client import ExClient
 from model import Kline, OrderSide
@@ -13,7 +13,7 @@ logger = log.getLogger(__name__)
 class StrategyV2(ABC):
     def __init__(self):
         self.ex_client: ExClient
-        self.klines: List[Dict] = []
+        self.klines: List[Dict[str, Any]] = []
         self.last_kline: Kline
         self.init_kline_nums = 300
         self.on_kline_finished_lock = threading.Lock()
@@ -22,19 +22,18 @@ class StrategyV2(ABC):
     
     def klines_to_dataframe(self) -> DataFrame:
         """将klines转换为DataFrame进行分析"""
-        with self.data_lock:
-            if not self.klines:
-                return DataFrame({
-                    'datetime': pd.Series(dtype='str'),
-                    'open': pd.Series(dtype='float64'),
-                    'high': pd.Series(dtype='float64'),
-                    'low': pd.Series(dtype='float64'),
-                    'close': pd.Series(dtype='float64'),
-                    'volume': pd.Series(dtype='float64'),
-                    'finished': pd.Series(dtype='boolean')
-                })
+        if not self.klines:
+            return DataFrame({
+                'datetime': pd.Series(dtype='str'),
+                'open': pd.Series(dtype='float64'),
+                'high': pd.Series(dtype='float64'),
+                'low': pd.Series(dtype='float64'),
+                'close': pd.Series(dtype='float64'),
+                'volume': pd.Series(dtype='float64'),
+                'finished': pd.Series(dtype='boolean')
+            })
 
-            return DataFrame(self.klines)
+        return DataFrame(self.klines)
 
     def on_kline(self):
         pass
@@ -63,24 +62,24 @@ class StrategyV2(ABC):
 
             self.last_kline = kline
 
-            if self.on_kline_lock.acquire(blocking=False):
+            # 检查是否需要更新最后一个kline或添加新的kline
+            if len(self.klines) > 0 and self.klines[-1]['datetime'] == self.last_kline.datetime:
+                self.klines[-1] = self.last_kline.to_dict()
+            else:
+                self.klines.append(self.last_kline.to_dict())
+
+        if self.on_kline_lock.acquire(blocking=False):
+            try:
+                self.on_kline()
+            finally:
+                self.on_kline_lock.release()
+
+        if self.last_kline.finished:
+            if self.on_kline_finished_lock.acquire(blocking=False):
                 try:
-                    self.on_kline()
+                    self.on_kline_finished()
                 finally:
-                    self.on_kline_lock.release()
-
-            if self.last_kline.finished:
-                # 检查是否需要更新最后一个kline或添加新的kline
-                if len(self.klines) > 0 and self.klines[-1]['datetime'] == self.last_kline.datetime:
-                    self.klines[-1] = self.last_kline.to_dict()
-                else:
-                    self.klines.append(self.last_kline.to_dict())
-
-                if self.on_kline_finished_lock.acquire(blocking=False):
-                    try:
-                        self.on_kline_finished()
-                    finally:
-                        self.on_kline_finished_lock.release()
+                    self.on_kline_finished_lock.release()
 
 
 class Signal:

@@ -5,8 +5,6 @@ from data_event_loop import BinanceDataEventLoop
 from client.binance_client import BinanceSwapClient
 import dotenv
 
-from template import zecusdc
-
 dotenv.load_dotenv()
 
 logger = log.getLogger(__name__)
