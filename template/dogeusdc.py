@@ -17,7 +17,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         symbol=symbol,
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
-        per_order_qty=100,
+        per_order_qty=200,
         grid_spacing_rate=0.002,
         max_order=10,
         # highest_price=1,
@@ -26,7 +26,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
         signal_min_take_profit_rate=0.002,
         enable_fixed_profit_taking=True,
-        fixed_take_profit_rate=0.01,
+        fixed_take_profit_rate=0.015,
         order_file_path=f'{DATA_PATH}/signal_grid_short_sell_{symbol.simple()}_{timeframe}.json',
         enable_max_order_stop_loss=True,
     )

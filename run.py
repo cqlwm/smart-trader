@@ -47,10 +47,10 @@ if __name__ == '__main__':
         # zecusdc.short_sell(main_binance_client),
 
         # dogeusdc.long_buy(main_binance_client),
-        # dogeusdc.short_sell(main_binance_client),
+        dogeusdc.short_sell(main_binance_client),
 
-        btcusdc.scalping_long(main_binance_client),
-        btcusdc.scalping_short(main_binance_client),
+        # btcusdc.scalping_long(main_binance_client),
+        # btcusdc.scalping_short(main_binance_client),
     ]
 
     kline_subscribes: List[str] = []
