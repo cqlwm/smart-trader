@@ -42,31 +42,36 @@ class StrategyV2(ABC):
         pass
 
     def run(self, kline: Kline):
-        with self.data_lock:
-            if len(self.klines) == 0:
-                ohlcv = self.ex_client.fetch_ohlcv(kline.symbol, kline.timeframe, self.init_kline_nums)
-                for row in ohlcv:
-                    timestamp, open_price, high_price, low_price, close_price, volume = row
-                    historical_kline = Kline(
-                        symbol=kline.symbol,
-                        timeframe=kline.timeframe,
-                        open=open_price,
-                        high=high_price,
-                        low=low_price,
-                        close=close_price,
-                        volume=volume,
-                        timestamp=timestamp,
-                        finished=True
-                    )
-                    self.klines.append(historical_kline.to_dict())
+        if self.data_lock.acquire(blocking=kline.finished):
+            try:
+                if len(self.klines) == 0:
+                    ohlcv = self.ex_client.fetch_ohlcv(kline.symbol, kline.timeframe, self.init_kline_nums)
+                    for row in ohlcv:
+                        timestamp, open_price, high_price, low_price, close_price, volume = row
+                        historical_kline = Kline(
+                            symbol=kline.symbol,
+                            timeframe=kline.timeframe,
+                            open=open_price,
+                            high=high_price,
+                            low=low_price,
+                            close=close_price,
+                            volume=volume,
+                            timestamp=timestamp,
+                            finished=True
+                        )
+                        self.klines.append(historical_kline.to_dict())
 
-            self.last_kline = kline
+                self.last_kline = kline
 
-            # 检查是否需要更新最后一个kline或添加新的kline
-            if len(self.klines) > 0 and self.klines[-1]['datetime'] == self.last_kline.datetime:
-                self.klines[-1] = self.last_kline.to_dict()
-            else:
-                self.klines.append(self.last_kline.to_dict())
+                # 检查是否需要更新最后一个kline或添加新的kline
+                if len(self.klines) > 0 and self.klines[-1]['datetime'] == kline.datetime:
+                    self.klines[-1] = kline.to_dict()
+                else:
+                    self.klines.append(kline.to_dict())
+            finally:
+                self.data_lock.release()
+        else:
+            return
 
         if self.on_kline_lock.acquire(blocking=False):
             try:
@@ -74,7 +79,7 @@ class StrategyV2(ABC):
             finally:
                 self.on_kline_lock.release()
 
-        if self.last_kline.finished:
+        if kline.finished:
             if self.on_kline_finished_lock.acquire(blocking=False):
                 try:
                     self.on_kline_finished()
