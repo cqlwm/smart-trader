@@ -35,9 +35,11 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 
 if __name__ == '__main__':
 
-    from template import dogeusdc, btcdom, zecusdc, btcusdc, ethusdc
+    from template import dogeusdc, btcdom, zecusdc, btcusdc, ethusdc, hypeusdt
     
     tasks = [
+        hypeusdt.short_sell(copy_trading_binance_client),
+
         # bobusdt.long_buy(main_binance_client),
 
         # ethusdc.scalping(main_binance_client),
