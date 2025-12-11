@@ -18,7 +18,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
         per_order_qty=2,
-        grid_spacing_rate=0.002,
+        grid_spacing_rate=0.005,
         max_order=10,
         lowest_price=15,
         enable_exit_signal=True,
