@@ -31,3 +31,27 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
     strategy = SignalGridStrategy(config, exchange_client)
 
     return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
+
+def long_buy_rollover(exchange_client: ExSwapClient) -> StrategyTask:
+    symbol=Symbol(base="hype", quote="usdt")
+    timeframe='1m'
+
+    config=SignalGridStrategyConfig(
+        symbol=symbol,
+        position_side=PositionSide.SHORT,
+        master_side=OrderSide.SELL,
+        per_order_qty=2,
+        grid_spacing_rate=0.002,
+        max_order=10,
+        # highest_price=15,
+        enable_exit_signal=True,
+        signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
+        signal_min_take_profit_rate=0.5,
+        enable_fixed_profit_taking=True,
+        fixed_take_profit_rate=0.5,
+        order_file_path=f'{DATA_PATH}/signal_grid_long_buy_rollover_{symbol.simple()}_{timeframe}.json',
+        position_reverse=True,
+    )
+    strategy = SignalGridStrategy(config, exchange_client)
+
+    return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
