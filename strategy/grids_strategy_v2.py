@@ -26,6 +26,14 @@ class Order(BaseModel):
     exit_price: float | None = None
     status: str | None = None
 
+    # Stop loss fields
+    stop_loss_rate: float = 0.0
+    enable_stop_loss: bool = False
+    trailing_stop_rate: float = 0.0
+    enable_trailing_stop: bool = False
+    trailing_stop_activation_profit_rate: float = 0.0
+    current_stop_price: float | None = None
+
     def __hash__(self):
         return hash(self.custom_id)
 
@@ -145,6 +153,14 @@ class SignalGridStrategyConfig(BaseModel):
     # 限价止盈
     enable_limit_take_profit: bool = False
 
+    # 单笔订单止损
+    enable_order_stop_loss: bool = False
+    order_stop_loss_rate: float = 0.05
+    # 跟踪止损
+    enable_trailing_stop: bool = False
+    trailing_stop_rate: float = 0.02
+    trailing_stop_activation_profit_rate: float = 0.01
+
 class SignalGridStrategy(StrategyV2):
 
     def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient):
@@ -181,6 +197,27 @@ class SignalGridStrategy(StrategyV2):
             return True
         return False
 
+    def _update_trailing_stops(self, current_price: float):
+        """更新跟踪止损价格"""
+        for order in self.orders:
+            if not order.enable_trailing_stop or order.current_stop_price is None:
+                continue
+
+            # 检查是否达到激活盈利条件
+            activation_price = None
+            if order.side == OrderSide.BUY:
+                activation_price = order.price * (1 + order.trailing_stop_activation_profit_rate)
+                if current_price >= activation_price:
+                    # 更新止损价：取当前止损价和 (当前价 - 跟踪止损百分比) 的最大值
+                    new_stop_price = current_price * (1 - order.trailing_stop_rate)
+                    order.current_stop_price = max(order.current_stop_price, new_stop_price)
+            else:  # SELL
+                activation_price = order.price * (1 - order.trailing_stop_activation_profit_rate)
+                if current_price <= activation_price:
+                    # 更新止损价：取当前止损价和 (当前价 + 跟踪止损百分比) 的最小值
+                    new_stop_price = current_price * (1 + order.trailing_stop_rate)
+                    order.current_stop_price = min(order.current_stop_price, new_stop_price)
+
     def check_open_order(self) -> bool:
 
         # 检查订单是否到达上限
@@ -207,14 +244,33 @@ class SignalGridStrategy(StrategyV2):
             if self._check_max_order_stop_loss():
                 return False
             order_id = build_order_id(self.config.master_side)
+            # Initialize stop loss settings
+            stop_loss_rate = self.config.order_stop_loss_rate if self.config.enable_order_stop_loss else 0.0
+            trailing_stop_rate = self.config.trailing_stop_rate if self.config.enable_trailing_stop else 0.0
+            trailing_activation_rate = self.config.trailing_stop_activation_profit_rate if self.config.enable_trailing_stop else 0.0
+
+            # Calculate initial stop price
+            current_stop_price = None
+            if self.config.enable_order_stop_loss or self.config.enable_trailing_stop:
+                if self.config.master_side == OrderSide.BUY:
+                    current_stop_price = close_price * (1 - stop_loss_rate)
+                else:  # SELL
+                    current_stop_price = close_price * (1 + stop_loss_rate)
+
             order = Order(
-                custom_id=order_id, 
-                side=self.config.master_side, 
-                price=close_price, 
+                custom_id=order_id,
+                side=self.config.master_side,
+                price=close_price,
                 quantity=self.config.per_order_qty,
-                fixed_take_profit_rate=self.config.fixed_take_profit_rate, 
+                fixed_take_profit_rate=self.config.fixed_take_profit_rate,
                 signal_min_take_profit_rate=self.config.signal_min_take_profit_rate,
-                status=OrderStatus.OPEN.value
+                status=OrderStatus.OPEN.value,
+                stop_loss_rate=stop_loss_rate,
+                enable_stop_loss=self.config.enable_order_stop_loss,
+                trailing_stop_rate=trailing_stop_rate,
+                enable_trailing_stop=self.config.enable_trailing_stop,
+                trailing_stop_activation_profit_rate=trailing_activation_rate,
+                current_stop_price=current_stop_price
             )
             self.orders.append(order)
             if self.config.per_order_qty == 0:
@@ -238,7 +294,16 @@ class SignalGridStrategy(StrategyV2):
         stop_loss_order_all = self._check_max_order_stop_loss() or self.close_position
         for order in self.orders:
             profit_level = order.profit_level(self.last_kline.close)
-            if stop_loss_order_all or (profit_level == 2 and self.config.enable_fixed_profit_taking) or (profit_level == 1 and exit_signal):
+
+            # 检查止损条件
+            stop_loss_triggered = False
+            if order.enable_stop_loss and order.current_stop_price is not None:
+                if order.side == OrderSide.BUY:
+                    stop_loss_triggered = self.last_kline.close <= order.current_stop_price
+                else:  # SELL
+                    stop_loss_triggered = self.last_kline.close >= order.current_stop_price
+
+            if stop_loss_order_all or (profit_level == 2 and self.config.enable_fixed_profit_taking) or (profit_level == 1 and exit_signal) or stop_loss_triggered:
                 if order.status == 'open':
                     query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
                     if query_order and query_order['status'] != 'closed':
@@ -280,8 +345,12 @@ class SignalGridStrategy(StrategyV2):
     def on_kline_finished(self):
         if not self.is_running:
             return
-        
+
         self.orders = self.order_recorder.check_reload() or self.orders
+
+        # 更新跟踪止损
+        current_price = self.last_kline.close
+        self._update_trailing_stops(current_price)
 
         if not self.check_open_order():
             close_orders = self.check_close_order()
