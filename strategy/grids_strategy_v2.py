@@ -25,6 +25,7 @@ class Order(BaseModel):
     signal_min_take_profit_rate: float
     exit_price: float | None = None
     status: str | None = None
+    exit_order_id: str | None = None
 
     # Stop loss fields
     stop_loss_rate: float = 0.0
@@ -300,6 +301,10 @@ class SignalGridStrategy(StrategyV2):
         flat_qty = 0
         stop_loss_order_all = self._check_max_order_stop_loss() or self.close_position
         for order in self.orders:
+            if order.exit_order_id:
+                new_orders.append(order)
+                continue
+
             profit_level = order.profit_level(self.last_kline.close)
 
             # 检查止损条件
@@ -388,5 +393,14 @@ class SignalGridStrategy(StrategyV2):
                     continue
 
                 order.exit_price = exit_price
-                self.place_order(exit_order_id, exit_order_side, order.quantity, exit_price, first_price=exit_price)
-            
+                place_order_result = self.place_order(exit_order_id, exit_order_side, order.quantity, exit_price, first_price=exit_price)
+                if place_order_result and place_order_result.get('clientOrderId'):
+                    order.exit_order_id = place_order_result['clientOrderId']
+
+        # 检查退出订单是否完成
+        for order in self.orders[:]:
+            if order.exit_order_id:
+                query_order = self.ex_client.query_order(order.exit_order_id, self.config.symbol)
+                if query_order and OrderStatus.is_closed(query_order['status']):
+                    order.status = OrderStatus.CLOSED.value
+                    self.orders.remove(order)
