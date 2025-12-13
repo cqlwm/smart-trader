@@ -22,8 +22,8 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         max_order=24,
         enable_exit_signal=True,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
-        signal_min_take_profit_rate=0.15,
-        enable_fixed_profit_taking=True,
+        exit_signal_take_profit_min_rate=0.15,
+        fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.15,
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
         

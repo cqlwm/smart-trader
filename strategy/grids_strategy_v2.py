@@ -383,7 +383,6 @@ class SignalGridStrategy(StrategyV2):
 
         # 更新跟踪止损
         extremum_price = self.last_kline.high if self.config.master_side == OrderSide.BUY else self.last_kline.low
-        # 这里需要线程安全的更新跟踪止损
         current_orders = self.order_manager.orders
         for order in current_orders:
             if not order.enable_trailing_stop or order.current_stop_price is None:

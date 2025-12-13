@@ -11,7 +11,7 @@ def test_close_position_ratio():
     config = SignalGridStrategyConfig(
         symbol=symbol,
         close_position_ratio=0.99,
-        enable_fixed_profit_taking=True,
+        fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.01,
         per_order_qty=100,
     )
@@ -59,7 +59,7 @@ def test_close_position_ratio_default():
     symbol = Symbol(base="BTC", quote="USDT")
     config = SignalGridStrategyConfig(
         symbol=symbol,
-        enable_fixed_profit_taking=True,
+        fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.01,
         per_order_qty=100,
     )
@@ -100,7 +100,7 @@ def test_close_position_ratio_multiple_orders():
     config = SignalGridStrategyConfig(
         symbol=symbol,
         close_position_ratio=0.95,
-        enable_fixed_profit_taking=True,
+        fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.01,
         per_order_qty=100,
     )

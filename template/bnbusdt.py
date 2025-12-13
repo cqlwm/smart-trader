@@ -27,8 +27,8 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         lowest_price=100,
         enable_exit_signal=True,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
-        signal_min_take_profit_rate=0.15,
-        enable_fixed_profit_taking=True,
+        exit_signal_take_profit_min_rate=0.15,
+        fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.15,
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
     )
@@ -51,8 +51,8 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         lowest_price=long_position_open_price,
         enable_exit_signal=True,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
-        signal_min_take_profit_rate=0.01,
-        enable_fixed_profit_taking=True,
+        exit_signal_take_profit_min_rate=0.01,
+        fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.05,
         order_file_path=f'{DATA_PATH}/signal_grid_short_sell_{symbol.simple()}_{timeframe}.json',
     )
