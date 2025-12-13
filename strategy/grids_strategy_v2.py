@@ -182,11 +182,19 @@ class SignalGridStrategyConfig(BaseModel):
     highest_price: float = 1000000
     lowest_price: float = 0
 
-    enable_exit_signal: bool = False
     signal: Signal | None = None
-    signal_min_take_profit_rate: float = 0.002
 
-    enable_fixed_profit_taking: bool = False
+    # 启用退出信号
+    enable_exit_signal: bool = True
+    # 退出信号最小止盈率
+    exit_signal_take_profit_min_rate: float = 0.002
+
+    # 固定比例止盈
+    fixed_rate_take_profit: bool = False
+    # 当fixed_rate_take_profit为True时, 是否使用限价单止盈
+    # 开启会在入场订单完成之后创建止盈订单(默认情况下只有K线的收盘价达到止盈标准时才会触发止盈)
+    take_profit_use_limit_order: bool = False
+    # 固定比例止盈率
     fixed_take_profit_rate: float = 0.006
 
     close_position_ratio: float = 1.0
@@ -195,16 +203,11 @@ class SignalGridStrategyConfig(BaseModel):
 
     order_file_path: str = 'data/grids_strategy_v2.json'
     
-    # position_stop_loss_rate: float = 0.1
-
     position_reverse: bool = False  # 是否反向持仓
     # 达到最大订单数全部止损
     enable_max_order_stop_loss: bool = False
     # 止损后暂停策略
     paused_after_stop_loss: bool = True
-    # 限价止盈
-    enable_limit_take_profit: bool = False
-
     # 单笔订单止损
     enable_order_stop_loss: bool = False
     order_stop_loss_rate: float = 0.05
@@ -293,7 +296,7 @@ class SignalGridStrategy(StrategyV2):
                 price=close_price,
                 quantity=self.config.per_order_qty,
                 fixed_take_profit_rate=self.config.fixed_take_profit_rate,
-                signal_min_take_profit_rate=self.config.signal_min_take_profit_rate,
+                signal_min_take_profit_rate=self.config.exit_signal_take_profit_min_rate,
                 status=OrderStatus.OPEN.value,
                 stop_loss_rate=stop_loss_rate,
                 enable_stop_loss=self.config.enable_order_stop_loss,
@@ -338,7 +341,7 @@ class SignalGridStrategy(StrategyV2):
                 else:  # SELL
                     stop_loss_triggered = self.last_kline.close >= order.current_stop_price
 
-            if stop_loss_order_all or (profit_level == 2 and self.config.enable_fixed_profit_taking) or (profit_level == 1 and exit_signal) or stop_loss_triggered:
+            if stop_loss_order_all or (profit_level == 2 and self.config.fixed_rate_take_profit) or (profit_level == 1 and exit_signal) or stop_loss_triggered:
                 if order.status == 'open':
                     query_order = self.ex_client.query_order(order.entry_id, self.config.symbol)
                     if query_order and query_order['status'] != 'closed':
@@ -379,7 +382,7 @@ class SignalGridStrategy(StrategyV2):
         self.order_manager.load_orders()
 
         # 更新跟踪止损
-        current_price = self.last_kline.close
+        extremum_price = self.last_kline.high if self.config.master_side == OrderSide.BUY else self.last_kline.low
         # 这里需要线程安全的更新跟踪止损
         current_orders = self.order_manager.orders
         for order in current_orders:
@@ -388,8 +391,8 @@ class SignalGridStrategy(StrategyV2):
 
             # 检查是否达到激活盈利条件
             activation_price = order.price * (1 + order.trailing_stop_activation_profit_rate * order.side.to_int())
-            if order.side.compare_fun(and_eq=True)(current_price, activation_price):
-                new_stop_price = current_price * (1 - order.trailing_stop_rate * order.side.to_int())
+            if order.side.compare_fun(and_eq=True)(extremum_price, activation_price):
+                new_stop_price = extremum_price * (1 - order.trailing_stop_rate * order.side.to_int())
                 order.current_stop_price = order.side.reversal().extremum_fun()(order.current_stop_price, new_stop_price)
 
         if not self.check_open_order():
@@ -403,7 +406,7 @@ class SignalGridStrategy(StrategyV2):
         orders_to_process = self.order_manager.orders
 
         # 检查是否需要触发实时止盈订单
-        if self.config.enable_limit_take_profit:
+        if self.config.fixed_rate_take_profit and self.config.take_profit_use_limit_order:
             for order in orders_to_process:
                 if order.exit_price or order.quantity == 0:
                     continue
