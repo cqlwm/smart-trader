@@ -35,24 +35,12 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 
 if __name__ == '__main__':
 
-    from template import dogeusdc, btcdom, zecusdc, btcusdc, ethusdc, hypeusdt
+    from template import dogeusdc, ethusdc
     
     tasks = [
-        hypeusdt.long_buy_rollover(copy_trading_binance_client),
-
-        # bobusdt.long_buy(main_binance_client),
-
-        # ethusdc.scalping(main_binance_client),
-
-        # btcdom.long_buy_simple_grid(copy_trading_binance_client),
-
-        # zecusdc.short_sell(main_binance_client),
-
-        # dogeusdc.long_buy(main_binance_client),
-        dogeusdc.short_sell(main_binance_client),
-
-        # btcusdc.scalping_long(main_binance_client),
-        # btcusdc.scalping_short(main_binance_client),
+        ethusdc.long_buy(main_binance_client),
+        ethusdc.short_sell(main_binance_client),
+        # dogeusdc.short_sell(main_binance_client),
     ]
 
     kline_subscribes: List[str] = []
