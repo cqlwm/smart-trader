@@ -93,17 +93,17 @@ class OrderRecorder(BaseModel):
     is_reload: bool = False
     reload_msg: str = ""
 
-    def record(self, latest_orders: List[Order], close_orders: List[Order]):
-        changed = False
+    def record(self, latest_orders: List[Order], close_orders: List[Order], refresh_orders: bool = False):
+        
         if len(latest_orders) != len(self.orders):
             self.orders = latest_orders.copy()
-            changed = True
+            refresh_orders = True
 
         if close_orders:
             self.history_orders += close_orders
-            changed = True
+            refresh_orders = True
 
-        if changed:
+        if refresh_orders:
             with open(self.order_file_path, 'w') as f:
                 f.write(self.model_dump_json())
 
@@ -161,14 +161,15 @@ class OrderManager:
                 for order in orders:
                     self.add_order(order)
 
-    def record_orders(self, closed_orders: List[Order]) -> None:
+    def record_orders(self, closed_orders: List[Order] = [], refresh_orders: bool = False) -> None:
         """
         记录订单到文件, 如果closed_orders为空, 则只记录当前订单
         @param closed_orders 已经关闭订单
+        @param refresh_orders 刷新到文件
         """
         if self._order_recorder:
             with self._lock:
-                self._order_recorder.record(list(self._orders.values()), closed_orders)
+                self._order_recorder.record(list(self._orders.values()), closed_orders, refresh_orders)
 
 class SignalGridStrategyConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -406,6 +407,7 @@ class SignalGridStrategy(StrategyV2):
 
     def on_kline(self):
         orders_to_process = self.order_manager.orders
+        refresh_orders = False
 
         # 检查是否需要触发实时止盈订单
         if self.config.fixed_rate_take_profit and self.config.take_profit_use_limit_order:
@@ -430,6 +432,8 @@ class SignalGridStrategy(StrategyV2):
                 if exit_order_result and exit_order_result.get('clientOrderId'):
                     order.exit_order_id = exit_order_result['clientOrderId']
                     order.exit_price = exit_price
+                    refresh_orders = True
+                    
 
         # 检查退出订单是否完成并移除已完成的订单
         for order in orders_to_process:
@@ -438,3 +442,6 @@ class SignalGridStrategy(StrategyV2):
                 if query_order and OrderStatus.is_closed(query_order['status']):
                     order.status = OrderStatus.CLOSED.value
                     self.order_manager.remove_order(order.entry_id)
+                    refresh_orders = True
+        
+        self.order_manager.record_orders(refresh_orders=refresh_orders)
