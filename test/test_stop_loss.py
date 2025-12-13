@@ -22,7 +22,7 @@ def test_order_stop_loss_buy():
     # 创建买入订单，价格100，止损价95
     strategy.orders = [
         Order(
-            custom_id="buy1",
+            entry_id="buy1",
             side=OrderSide.BUY,
             price=100.0,
             quantity=100.0,
@@ -65,7 +65,7 @@ def test_order_stop_loss_sell():
     # 创建卖出订单，价格100，止损价105
     strategy.orders = [
         Order(
-            custom_id="sell1",
+            entry_id="sell1",
             side=OrderSide.SELL,
             price=100.0,
             quantity=100.0,
@@ -107,7 +107,7 @@ def test_trailing_stop_buy():
 
     # 创建买入订单，价格100，初始止损价98 (100 * (1 - 0.02))
     order = Order(
-        custom_id="buy1",
+        entry_id="buy1",
         side=OrderSide.BUY,
         price=100.0,
         quantity=100.0,
@@ -147,7 +147,7 @@ def test_trailing_stop_sell():
 
     # 创建卖出订单，价格100，初始止损价102 (100 * (1 + 0.02))
     order = Order(
-        custom_id="sell1",
+        entry_id="sell1",
         side=OrderSide.SELL,
         price=100.0,
         quantity=100.0,
@@ -186,7 +186,7 @@ def test_trailing_stop_not_activated():
 
     # 创建买入订单，价格100，激活价格101
     order = Order(
-        custom_id="buy1",
+        entry_id="buy1",
         side=OrderSide.BUY,
         price=100.0,
         quantity=100.0,

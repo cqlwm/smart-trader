@@ -22,7 +22,7 @@ def test_close_position_ratio():
     # 模拟订单和当前价格
     strategy.orders = [
         Order(
-            custom_id="test1",
+            entry_id="test1",
             side=OrderSide.BUY,
             price=100.0,
             quantity=100.0,
@@ -71,7 +71,7 @@ def test_close_position_ratio_default():
 
     strategy.orders = [
         Order(
-            custom_id="test1",
+            entry_id="test1",
             side=OrderSide.BUY,
             price=100.0,
             quantity=100.0,
@@ -111,7 +111,7 @@ def test_close_position_ratio_multiple_orders():
     # 多个盈利订单
     strategy.orders = [
         Order(
-            custom_id="test1",
+            entry_id="test1",
             side=OrderSide.BUY,
             price=100.0,
             quantity=100.0,
@@ -120,7 +120,7 @@ def test_close_position_ratio_multiple_orders():
             status="closed"
         ),
         Order(
-            custom_id="test2",
+            entry_id="test2",
             side=OrderSide.BUY,
             price=99.0,
             quantity=50.0,

@@ -16,7 +16,7 @@ def build_order_id(side: OrderSide):
     return f'{side.value}{secrets.token_hex(nbytes=5)}'
 
 class Order(BaseModel):
-    custom_id: str
+    entry_id: str
     side: OrderSide
     price: float
     quantity: float
@@ -35,11 +35,11 @@ class Order(BaseModel):
     current_stop_price: float | None = None
 
     def __hash__(self):
-        return hash(self.custom_id)
+        return hash(self.entry_id)
 
     def __eq__(self, other: Any):
         if isinstance(other, Order):
-            return self.custom_id == other.custom_id
+            return self.entry_id == other.entry_id
         return False
 
     def profit_level(self, current_price: float) -> int:
@@ -141,7 +141,7 @@ class OrderManager:
     def add_order(self, order: Order) -> None:
         """添加订单"""
         with self._lock:
-            self._orders[order.custom_id] = order
+            self._orders[order.entry_id] = order
 
     def remove_order(self, custom_id: str) -> bool:
         """根据custom_id移除订单"""
@@ -288,7 +288,7 @@ class SignalGridStrategy(StrategyV2):
                     current_stop_price = close_price * (1 + stop_loss_rate)
 
             order = Order(
-                custom_id=order_id,
+                entry_id=order_id,
                 side=self.config.master_side,
                 price=close_price,
                 quantity=self.config.per_order_qty,
@@ -340,10 +340,10 @@ class SignalGridStrategy(StrategyV2):
 
             if stop_loss_order_all or (profit_level == 2 and self.config.enable_fixed_profit_taking) or (profit_level == 1 and exit_signal) or stop_loss_triggered:
                 if order.status == 'open':
-                    query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
+                    query_order = self.ex_client.query_order(order.entry_id, self.config.symbol)
                     if query_order and query_order['status'] != 'closed':
                         if query_order['status'] == OrderStatus.OPEN.value:
-                            self.ex_client.cancel(order.custom_id, self.config.symbol)
+                            self.ex_client.cancel(order.entry_id, self.config.symbol)
                         continue
                     else:
                         order.status = OrderStatus.CLOSED.value
@@ -359,7 +359,7 @@ class SignalGridStrategy(StrategyV2):
             if exit_order_result:
                 for order in exit_orders:
                     order.exit_price = exit_order_result['price']
-                    self.order_manager.remove_order(order.custom_id)
+                    self.order_manager.remove_order(order.entry_id)
 
         if self.close_position:
             self.close_position = False
@@ -413,7 +413,7 @@ class SignalGridStrategy(StrategyV2):
                 exit_price = order.price * (1 + self.config.master_side.to_int() * self.config.fixed_take_profit_rate)
 
                 if OrderStatus.is_open(order.status):
-                    query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
+                    query_order = self.ex_client.query_order(order.entry_id, self.config.symbol)
                     if query_order and OrderStatus.is_closed(query_order['status']):
                         order.status = OrderStatus.CLOSED.value
                     else:
@@ -423,7 +423,6 @@ class SignalGridStrategy(StrategyV2):
 
                 place_order_result = self.place_order(exit_order_id, exit_order_side, order.quantity, exit_price, first_price=exit_price)
                 if place_order_result and place_order_result.get('clientOrderId'):
-                    order.exit_order_id = place_order_result['clientOrderId']
                     order.exit_price = exit_price
 
         # 检查退出订单是否完成并移除已完成的订单
@@ -432,4 +431,4 @@ class SignalGridStrategy(StrategyV2):
                 query_order = self.ex_client.query_order(order.exit_order_id, self.config.symbol)
                 if query_order and OrderStatus.is_closed(query_order['status']):
                     order.status = OrderStatus.CLOSED.value
-                    self.order_manager.remove_order(order.custom_id)
+                    self.order_manager.remove_order(order.entry_id)
