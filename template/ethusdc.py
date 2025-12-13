@@ -36,7 +36,7 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
 
         enable_trailing_stop=True,
         trailing_stop_rate=0.02,
-        trailing_stop_activation_profit_rate=0.02,
+        trailing_stop_activation_profit_rate=0.01,
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
@@ -68,7 +68,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
 
         enable_trailing_stop=True,
         trailing_stop_rate=0.02,
-        trailing_stop_activation_profit_rate=0.02,
+        trailing_stop_activation_profit_rate=0.01,
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
