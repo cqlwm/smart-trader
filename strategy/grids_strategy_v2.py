@@ -399,7 +399,7 @@ class SignalGridStrategy(StrategyV2):
 
         # 检查退出订单是否完成
         for order in self.orders[:]:
-            if order.exit_order_id:
+            if order.exit_order_id and order.exit_price is not None and self.last_kline.low <= order.exit_price <= self.last_kline.high:
                 query_order = self.ex_client.query_order(order.exit_order_id, self.config.symbol)
                 if query_order and OrderStatus.is_closed(query_order['status']):
                     order.status = OrderStatus.CLOSED.value
