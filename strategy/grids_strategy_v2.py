@@ -384,6 +384,7 @@ class SignalGridStrategy(StrategyV2):
 
         # 检查是否需要重新加载订单
         self.order_manager.load_orders()
+        refresh = False
 
         # 更新跟踪止损
         extremum_price = self.last_kline.high if self.config.master_side == OrderSide.BUY else self.last_kline.low
@@ -397,13 +398,15 @@ class SignalGridStrategy(StrategyV2):
             if order.side.compare_fun(and_eq=True)(extremum_price, activation_price):
                 new_stop_price = extremum_price * (1 - order.trailing_stop_rate * order.side.to_int())
                 order.current_stop_price = order.side.reversal().extremum_fun()(order.current_stop_price, new_stop_price)
+                refresh = True
 
         if not self.check_open_order():
             closed_orders = self.check_close_order()
         else:
             closed_orders = []
+            refresh = True
 
-        self.order_manager.record_orders(closed_orders)
+        self.order_manager.record_orders(closed_orders, refresh)
 
     def on_kline(self):
         orders_to_process = self.order_manager.orders
