@@ -1,7 +1,7 @@
 import os
 import secrets
 import threading
-from typing import Any, List, Callable
+from typing import Any, List, Callable, Dict
 from client.ex_client import ExSwapClient
 from strategy import StrategyV2
 from model import OrderSide, OrderStatus, PlaceOrderBehavior, PositionSide
@@ -130,8 +130,8 @@ class OrderManager:
     """线程安全的订单管理器"""
 
     def __init__(self, order_file_path: str = ''):
-        self._orders: List[Order] = []
-        self._lock = threading.RLock()  # 使用可重入锁
+        self._orders: Dict[str, Order] = {}
+        self._lock = threading.RLock()
         self._order_file_path = order_file_path
         self._order_recorder = OrderRecorder(order_file_path=order_file_path) if order_file_path else None
 
@@ -139,20 +139,19 @@ class OrderManager:
     def orders(self) -> List[Order]:
         """获取订单列表的线程安全副本"""
         with self._lock:
-            return self._orders.copy()
+            return list(self._orders.values())
 
     def add_order(self, order: Order) -> None:
         """添加订单"""
         with self._lock:
-            self._orders.append(order)
+            self._orders[order.custom_id] = order
 
     def remove_order(self, custom_id: str) -> bool:
         """根据custom_id移除订单"""
         with self._lock:
-            for i, order in enumerate(self._orders):
-                if order.custom_id == custom_id:
-                    self._orders.pop(i)
-                    return True
+            if custom_id in self._orders:
+                del self._orders[custom_id]
+                return True
             return False
 
     def load_orders(self, force: bool = False) -> None:
@@ -162,13 +161,14 @@ class OrderManager:
                 return
             orders = self._order_recorder.check_reload(force=force)
             if orders:
-                self._orders = orders
+                for order in orders:
+                    self.add_order(order)
 
     def record_orders(self, close_orders: List[Order]) -> None:
         """记录订单到文件"""
         if self._order_recorder:
             with self._lock:
-                self._order_recorder.record(self._orders, close_orders)
+                self._order_recorder.record(list(self._orders.values()), close_orders)
 
 class SignalGridStrategyConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -431,23 +431,15 @@ class SignalGridStrategy(StrategyV2):
                 elif not OrderStatus.is_closed(order.status):
                     continue
 
-                order.exit_price = exit_price
                 place_order_result = self.place_order(exit_order_id, exit_order_side, order.quantity, exit_price, first_price=exit_price)
                 if place_order_result and place_order_result.get('clientOrderId'):
                     order.exit_order_id = place_order_result['clientOrderId']
+                    order.exit_price = exit_price
 
         # 检查退出订单是否完成并移除已完成的订单
-        remaining_orders = []
-        orders_to_remove = []
         for order in orders_to_process:
             if order.exit_order_id and order.exit_price is not None and self.last_kline.low <= order.exit_price <= self.last_kline.high:
                 query_order = self.ex_client.query_order(order.exit_order_id, self.config.symbol)
                 if query_order and OrderStatus.is_closed(query_order['status']):
                     order.status = OrderStatus.CLOSED.value
-                    orders_to_remove.append(order.custom_id)
-                    continue  # 不添加到remaining_orders中，相当于删除了
-            remaining_orders.append(order)
-
-        # 移除已完成的订单
-        for custom_id in orders_to_remove:
-            self.order_manager.remove_order(custom_id)
+                    self.order_manager.remove_order(order.custom_id)
