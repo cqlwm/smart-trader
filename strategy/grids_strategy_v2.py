@@ -1,7 +1,7 @@
 import os
 import secrets
 import threading
-from typing import Any, List, Callable, Optional
+from typing import Any, List, Callable
 from client.ex_client import ExSwapClient
 from strategy import StrategyV2
 from model import OrderSide, OrderStatus, PlaceOrderBehavior, PositionSide
