@@ -172,7 +172,6 @@ class SignalGridStrategy(StrategyV2):
         self.on_stop_loss_order_all: Callable[[], None] = lambda: None
         self.close_position: bool = False
         self.is_running: bool = True
-        self.lock = threading.Lock()
 
     def place_order(self, order_id: str, side: OrderSide, qty: float, price: float, first_price: float | None = None):
         if self.config.position_reverse:
@@ -360,28 +359,26 @@ class SignalGridStrategy(StrategyV2):
         self.order_recorder.record(self.orders, close_orders)
 
     def on_kline(self):
-        if self.config.enable_limit_take_profit and self.lock.acquire(blocking=False):
-            try:
-                for order in self.orders:
-                    if order.exit_price or order.quantity == 0:
-                        continue
-                    
-                    exit_order_side = self.config.master_side.reversal()
-                    exit_order_id = build_order_id(exit_order_side)
-                    exit_price = order.price * (1 + self.config.master_side.to_int() * self.config.fixed_take_profit_rate)
+        if self.config.enable_limit_take_profit:
+            for order in self.orders:
+                if order.exit_price or order.quantity == 0:
+                    continue
+                
+                exit_order_side = self.config.master_side.reversal()
+                exit_order_id = build_order_id(exit_order_side)
+                exit_price = order.price * (1 + self.config.master_side.to_int() * self.config.fixed_take_profit_rate)
 
-                    if OrderStatus.is_open(order.status):
-                        query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
-                        if query_order and OrderStatus.is_closed(query_order['status']):
-                            order.status = OrderStatus.CLOSED.value
-                        else:
-                            continue
-                    elif OrderStatus.is_closed(order.status):
-                        pass
+                if OrderStatus.is_open(order.status):
+                    query_order = self.ex_client.query_order(order.custom_id, self.config.symbol)
+                    if query_order and OrderStatus.is_closed(query_order['status']):
+                        order.status = OrderStatus.CLOSED.value
                     else:
                         continue
+                elif OrderStatus.is_closed(order.status):
+                    pass
+                else:
+                    continue
 
-                    order.exit_price = exit_price
-                    self.place_order(exit_order_id, exit_order_side, order.quantity, exit_price, first_price=exit_price)
-            finally:
-                self.lock.release()
+                order.exit_price = exit_price
+                self.place_order(exit_order_id, exit_order_side, order.quantity, exit_price, first_price=exit_price)
+            

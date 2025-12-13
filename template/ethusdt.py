@@ -11,7 +11,7 @@ logger = log.getLogger(__name__)
 
 def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
     symbol=Symbol(base="eth", quote="usdt")
-    timeframe='1m'
+    timeframe='15m'
 
     config=SignalGridStrategyConfig(
         symbol=symbol,
@@ -26,6 +26,12 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         enable_fixed_profit_taking=True,
         fixed_take_profit_rate=0.15,
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
+        
+        enable_order_stop_loss=True,
+        order_stop_loss_rate=0.02,
+        enable_trailing_stop=True,
+        trailing_stop_rate=0.02,
+        trailing_stop_activation_profit_rate=0.02,
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
