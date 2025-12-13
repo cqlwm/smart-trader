@@ -151,15 +151,17 @@ class OrderManager:
                 return True
             return False
 
-    def load_orders(self, force: bool = False) -> None:
+    def load_orders(self, force: bool = False) -> bool:
         """从文件加载订单"""
         with self._lock:
             if not self._order_recorder:
-                return
+                return False
             orders = self._order_recorder.check_reload(force=force)
             if orders:
                 for order in orders:
                     self.add_order(order)
+                return True
+            return False
 
     def record_orders(self, closed_orders: List[Order] = [], refresh_orders: bool = False) -> None:
         """
@@ -383,8 +385,7 @@ class SignalGridStrategy(StrategyV2):
             return
 
         # 检查是否需要重新加载订单
-        self.order_manager.load_orders()
-        refresh = False
+        refresh = self.order_manager.load_orders()
 
         # 更新跟踪止损
         extremum_price = self.last_kline.high if self.config.master_side == OrderSide.BUY else self.last_kline.low
