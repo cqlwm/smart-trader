@@ -9,7 +9,6 @@ import logging
 from pydantic import BaseModel, ConfigDict
 from model import Symbol
 from strategy import Signal
-import builtins
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +52,7 @@ class Order(BaseModel):
             1盈利中
             2达到止盈标准
         """
-        compare_fun = builtins.float.__gt__
-        if self.side == OrderSide.SELL:
-            compare_fun = builtins.float.__lt__
+        compare_fun = self.side.compare_fun()
 
         if compare_fun(current_price, self._profit(self.fixed_take_profit_rate)):
             return 2
@@ -164,11 +161,14 @@ class OrderManager:
                 for order in orders:
                     self.add_order(order)
 
-    def record_orders(self, close_orders: List[Order]) -> None:
-        """记录订单到文件"""
+    def record_orders(self, closed_orders: List[Order]) -> None:
+        """
+        记录订单到文件, 如果closed_orders为空, 则只记录当前订单
+        @param closed_orders 已经关闭订单
+        """
         if self._order_recorder:
             with self._lock:
-                self._order_recorder.record(list(self._orders.values()), close_orders)
+                self._order_recorder.record(list(self._orders.values()), closed_orders)
 
 class SignalGridStrategyConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -266,8 +266,7 @@ class SignalGridStrategy(StrategyV2):
             return False
 
         if self.order_manager.orders:
-            extremum_fun = min if self.config.master_side == OrderSide.BUY else max
-            recent_price_order = extremum_fun(self.order_manager.orders, key=lambda order: order.price)
+            recent_price_order = self.config.master_side.extremum_fun()(self.order_manager.orders, key=lambda order: order.price)
         else:
             recent_price_order = None
 
@@ -388,26 +387,17 @@ class SignalGridStrategy(StrategyV2):
                 continue
 
             # 检查是否达到激活盈利条件
-            activation_price = None
-            if order.side == OrderSide.BUY:
-                activation_price = order.price * (1 + order.trailing_stop_activation_profit_rate)
-                if current_price >= activation_price:
-                    # 更新止损价：取当前止损价和 (当前价 - 跟踪止损百分比) 的最大值
-                    new_stop_price = current_price * (1 - order.trailing_stop_rate)
-                    order.current_stop_price = max(order.current_stop_price, new_stop_price)
-            else:  # SELL
-                activation_price = order.price * (1 - order.trailing_stop_activation_profit_rate)
-                if current_price <= activation_price:
-                    # 更新止损价：取当前止损价和 (当前价 + 跟踪止损百分比) 的最小值
-                    new_stop_price = current_price * (1 + order.trailing_stop_rate)
-                    order.current_stop_price = min(order.current_stop_price, new_stop_price)
+            activation_price = order.price * (1 + order.trailing_stop_activation_profit_rate * order.side.to_int())
+            if order.side.compare_fun(and_eq=True)(current_price, activation_price):
+                new_stop_price = current_price * (1 - order.trailing_stop_rate * order.side.to_int())
+                order.current_stop_price = order.side.reversal().extremum_fun()(order.current_stop_price, new_stop_price)
 
         if not self.check_open_order():
-            close_orders = self.check_close_order()
+            closed_orders = self.check_close_order()
         else:
-            close_orders = []
+            closed_orders = []
 
-        self.order_manager.record_orders(close_orders)
+        self.order_manager.record_orders(closed_orders)
 
     def on_kline(self):
         orders_to_process = self.order_manager.orders

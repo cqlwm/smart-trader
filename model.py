@@ -16,9 +16,36 @@ class OrderSide(Enum):
     def reversal(self):
         return OrderSide.SELL if self == OrderSide.BUY else OrderSide.BUY
     
-    # 数字表示，1 为买，-1 为卖
     def to_int(self):
+        '''
+        返回订单方向的整数表示
+        @return: 
+            买单时,返回1
+            卖单时,返回-1
+        '''
         return 1 if self == OrderSide.BUY else -1
+    
+    def extremum_fun(self):
+        '''
+        返回极值函数
+        @return: 
+            买单时,极值函数为min
+            卖单时,极值函数为max
+        '''
+
+        return min if self == OrderSide.BUY else max
+
+    def compare_fun(self, and_eq: bool = False):
+        '''
+        返回比较函数
+        @param and_eq: 是否包含等于情况
+        @return: 
+            买单时,比较函数为大于函数
+            卖单时,比较函数为小于函数
+        '''
+        if and_eq:
+            return builtins.float.__ge__ if self == OrderSide.BUY else builtins.float.__le__
+        return builtins.float.__gt__ if self == OrderSide.BUY else builtins.float.__lt__
 
 # order status
         # statuses: dict = {
