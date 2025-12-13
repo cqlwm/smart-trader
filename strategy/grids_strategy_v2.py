@@ -42,8 +42,16 @@ class Order(BaseModel):
             return self.custom_id == other.custom_id
         return False
 
-    # profit_level：表示盈利级别，值为 -1不可盈利，0损失手续费，1可盈利，2达到止盈标准
     def profit_level(self, current_price: float) -> int:
+        """
+        计算订单的盈利级别
+        @param current_price 当前价格
+        @return 表示盈利级别
+            -1亏损中
+            0盈利无法覆盖手续费
+            1盈利中
+            2达到止盈标准
+        """
         compare_fun = builtins.float.__gt__
         if self.side == OrderSide.SELL:
             compare_fun = builtins.float.__lt__
@@ -318,6 +326,7 @@ class SignalGridStrategy(StrategyV2):
             else:
                 new_orders.append(order)
 
+        # 如果开启了限价止盈单，说明已经提前止盈，不需要再止盈
         if flat_qty > 0 and not self.config.enable_limit_take_profit:
             flat_order_side = self.config.master_side.reversal()
             flat_order_id = build_order_id(flat_order_side)
@@ -359,6 +368,7 @@ class SignalGridStrategy(StrategyV2):
         self.order_recorder.record(self.orders, close_orders)
 
     def on_kline(self):
+        # 检查是否需要触发实时止盈订单
         if self.config.enable_limit_take_profit:
             for order in self.orders:
                 if order.exit_price or order.quantity == 0:
@@ -374,9 +384,7 @@ class SignalGridStrategy(StrategyV2):
                         order.status = OrderStatus.CLOSED.value
                     else:
                         continue
-                elif OrderStatus.is_closed(order.status):
-                    pass
-                else:
+                elif not OrderStatus.is_closed(order.status):
                     continue
 
                 order.exit_price = exit_price
