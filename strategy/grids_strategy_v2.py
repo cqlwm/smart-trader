@@ -312,11 +312,13 @@ class SignalGridStrategy(StrategyV2):
                 order.status = OrderStatus.CLOSED.value
                 return True
             
-            place_order_result = self.place_order(order_id, self.config.master_side, self.config.per_order_qty, close_price)
-            if place_order_result:
-                if place_order_result.get('clientOrderId'):
-                    order.price = place_order_result['price']
-                    order.status = place_order_result['status']
+            entry_order_result = self.place_order(order_id, self.config.master_side, self.config.per_order_qty, close_price, first_price=close_price)
+            if entry_order_result:
+                if entry_order_result.get('clientOrderId'):
+                    # 入场订单ID可能因为追单行为而改变,所以使用返回的订单ID
+                    order.entry_id = entry_order_result['clientOrderId']
+                    order.price = entry_order_result['price']
+                    order.status = entry_order_result['status']
             return True
         return False
 
@@ -361,6 +363,7 @@ class SignalGridStrategy(StrategyV2):
             exit_order_result = self.place_order(exit_order_id, exit_order_side, actual_exit_qty, self.last_kline.close)
             if exit_order_result:
                 for order in exit_orders:
+                    order.exit_order_id = exit_order_result['clientOrderId']
                     order.exit_price = exit_order_result['price']
                     self.order_manager.remove_order(order.entry_id)
 
@@ -423,8 +426,9 @@ class SignalGridStrategy(StrategyV2):
                 elif not OrderStatus.is_closed(order.status):
                     continue
 
-                place_order_result = self.place_order(exit_order_id, exit_order_side, order.quantity, exit_price, first_price=exit_price)
-                if place_order_result and place_order_result.get('clientOrderId'):
+                exit_order_result = self.place_order(exit_order_id, exit_order_side, order.quantity, exit_price, first_price=exit_price)
+                if exit_order_result and exit_order_result.get('clientOrderId'):
+                    order.exit_order_id = exit_order_result['clientOrderId']
                     order.exit_price = exit_price
 
         # 检查退出订单是否完成并移除已完成的订单
