@@ -143,7 +143,7 @@ class OrderManager:
         with self._lock:
             self._orders[order.entry_id] = order
 
-    def remove_order(self, custom_id: str) -> bool:
+    def _remove_order(self, custom_id: str) -> bool:
         """根据custom_id移除订单"""
         with self._lock:
             if custom_id in self._orders:
@@ -171,6 +171,10 @@ class OrderManager:
         """
         if self._order_recorder:
             with self._lock:
+                for order in closed_orders:
+                    if order.entry_id in self._orders:
+                        self._remove_order(order.entry_id)
+
                 self._order_recorder.record(list(self._orders.values()), closed_orders, refresh_orders)
 
 class SignalGridStrategyConfig(BaseModel):
@@ -371,7 +375,6 @@ class SignalGridStrategy(StrategyV2):
                 for order in exit_orders:
                     order.exit_id = execute_exit_order_result['clientOrderId']
                     order.exit_price = execute_exit_order_result['price']
-                    self.order_manager.remove_order(order.entry_id)
 
         if self.close_position:
             self.close_position = False
@@ -427,8 +430,8 @@ class SignalGridStrategy(StrategyV2):
                 exit_price = order.price * (1 + self.config.master_side.to_int() * self.config.fixed_take_profit_rate)
 
                 if OrderStatus.is_open(order.status):
-                    query_order = self.ex_client.query_order(order.entry_id, self.config.symbol)
-                    if query_order and OrderStatus.is_closed(query_order['status']):
+                    exit_order_query_result = self.ex_client.query_order(order.entry_id, self.config.symbol)
+                    if exit_order_query_result and OrderStatus.is_closed(exit_order_query_result['status']):
                         order.status = OrderStatus.CLOSED.value
                     else:
                         continue
@@ -442,13 +445,12 @@ class SignalGridStrategy(StrategyV2):
                     refresh_orders = True
                     
 
-        # 检查退出订单是否完成并移除已完成的订单
-        for order in orders_to_process:
-            if order.exit_id and order.exit_price is not None and self.last_kline.low <= order.exit_price <= self.last_kline.high:
-                query_order = self.ex_client.query_order(order.exit_id, self.config.symbol)
-                if query_order and OrderStatus.is_closed(query_order['status']):
-                    order.status = OrderStatus.CLOSED.value
-                    self.order_manager.remove_order(order.entry_id)
-                    refresh_orders = True
-        
-        self.order_manager.record_orders(refresh_orders=refresh_orders)
+            # 检查退出订单是否完成并移除已完成的订单
+            closed_orders = []
+            for order in orders_to_process:
+                if order.exit_id and order.exit_price is not None and self.last_kline.low <= order.exit_price <= self.last_kline.high:
+                    exit_order_query_result = self.ex_client.query_order(order.exit_id, self.config.symbol)
+                    if exit_order_query_result and OrderStatus.is_closed(exit_order_query_result['status']):
+                        closed_orders.append(order)
+            
+            self.order_manager.record_orders(closed_orders, refresh_orders=refresh_orders)
