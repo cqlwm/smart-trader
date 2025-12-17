@@ -162,11 +162,8 @@ class OrderManager:
         @param refresh_orders 刷新到文件
         """
         with self._lock:
-            logger.info(f'before remove order count: {len(self.orders)}')
             for order in closed_orders:
                 self._remove_order(order.entry_id)
-                logger.info(f"Remove order {order.entry_id}")
-            logger.info(f'after remove order count: {len(self.orders)}')
             self._order_recorder.record(self.orders, closed_orders, refresh_orders)
 
 class SignalGridStrategyConfig(BaseModel):
