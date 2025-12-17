@@ -91,19 +91,17 @@ class OrderRecorder(BaseModel):
     orders: List[Order] = []
     history_orders: List[Order] = []
     is_reload: bool = False
-    reload_msg: str = ""
 
-    def record(self, latest_orders: List[Order], close_orders: List[Order], refresh_orders: bool = False):
-        
-        if len(latest_orders) != len(self.orders):
-            self.orders = latest_orders.copy()
+    def record(self, latest_orders: List[Order], closed_orders: List[Order], refresh_orders: bool = False):
+
+        self.orders = latest_orders
+        refresh_orders = refresh_orders or len(latest_orders) != len(self.orders)
+
+        if closed_orders:
+            self.history_orders += closed_orders
             refresh_orders = True
 
-        if close_orders:
-            self.history_orders += close_orders
-            refresh_orders = True
-
-        if refresh_orders:
+        if refresh_orders and self.order_file_path:
             with open(self.order_file_path, 'w') as f:
                 f.write(self.model_dump_json())
 
@@ -112,25 +110,21 @@ class OrderRecorder(BaseModel):
         从本地文件中读取订单，并检查是否需要重新加载
         @param force 强制重新加载
         '''
-        if not self.order_file_path:
-            return None
-        if not os.path.exists(self.order_file_path):
-            return None
-        with open(self.order_file_path, 'r') as f:
-            _recorder = OrderRecorder.model_validate_json(f.read())
-            if _recorder.is_reload or force:
-                self.orders = _recorder.orders
-                return self.orders.copy()
+        if self.order_file_path and os.path.exists(self.order_file_path):
+            with open(self.order_file_path, 'r') as f:
+                _recorder = OrderRecorder.model_validate_json(f.read())
+                if _recorder.is_reload or force:
+                    logger.info(f"Reload orders from {self.order_file_path}, force={force}")
+                    return _recorder.orders
         return None
 
 class OrderManager:
     """线程安全的订单管理器"""
 
-    def __init__(self, order_file_path: str = ''):
+    def __init__(self, order_file_path: str):
         self._orders: Dict[str, Order] = {}
         self._lock = threading.RLock()
-        self._order_file_path = order_file_path
-        self._order_recorder = OrderRecorder(order_file_path=order_file_path) if order_file_path else None
+        self._order_recorder = OrderRecorder(order_file_path=order_file_path)
 
     @property
     def orders(self) -> List[Order]:
@@ -154,8 +148,6 @@ class OrderManager:
     def load_orders(self, force: bool = False) -> bool:
         """从文件加载订单"""
         with self._lock:
-            if not self._order_recorder:
-                return False
             orders = self._order_recorder.check_reload(force=force)
             if orders:
                 for order in orders:
@@ -169,13 +161,13 @@ class OrderManager:
         @param closed_orders 已经关闭订单
         @param refresh_orders 刷新到文件
         """
-        if self._order_recorder:
-            with self._lock:
-                for order in closed_orders:
-                    if order.entry_id in self._orders:
-                        self._remove_order(order.entry_id)
-
-                self._order_recorder.record(list(self._orders.values()), closed_orders, refresh_orders)
+        with self._lock:
+            logger.info(f'before remove order count: {len(self.orders)}')
+            for order in closed_orders:
+                self._remove_order(order.entry_id)
+                logger.info(f"Remove order {order.entry_id}")
+            logger.info(f'after remove order count: {len(self.orders)}')
+            self._order_recorder.record(self.orders, closed_orders, refresh_orders)
 
 class SignalGridStrategyConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -313,19 +305,17 @@ class SignalGridStrategy(StrategyV2):
                 current_stop_price=current_stop_price
             )
 
-            self.order_manager.add_order(order)
             
             if self.config.per_order_qty == 0:
                 order.status = OrderStatus.CLOSED.value
-                return True
-            
-            entry_order_result = self.place_order(order_id, self.config.master_side, self.config.per_order_qty, close_price, first_price=close_price)
-            if entry_order_result:
-                if entry_order_result.get('clientOrderId'):
+            else:
+                entry_order_result = self.place_order(order_id, self.config.master_side, self.config.per_order_qty, close_price, first_price=close_price)
+                if entry_order_result and entry_order_result.get('clientOrderId'):
                     # 入场订单ID可能因为追单行为而改变,所以使用返回的订单ID
                     order.entry_id = entry_order_result['clientOrderId']
                     order.price = entry_order_result['price']
                     order.status = entry_order_result['status']
+            self.order_manager.add_order(order)
             return True
         return False
 
