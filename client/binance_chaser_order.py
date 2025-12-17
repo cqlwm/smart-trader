@@ -27,7 +27,7 @@ class LimitOrderChaser:
         self.order = None
         self.chase_result = False
         self.first_price: float | None = None
-        self.fee: float = 0.00075
+        self.fee: float = 0.002
 
     def place_order_gtx(self, price: float):
         custom_id=f'{self.side.value}{secrets.token_hex(nbytes=5)}'
