@@ -149,11 +149,11 @@ class OrderManager:
         """从文件加载订单"""
         with self._lock:
             orders = self._order_recorder.check_reload(force=force)
-            if orders:
-                for order in orders:
-                    self.add_order(order)
-                return True
-            return False
+            if orders is None:
+                return False
+            for order in orders:
+                self.add_order(order)
+            return True
 
     def record_orders(self, closed_orders: List[Order] = [], refresh_orders: bool = False) -> None:
         """
