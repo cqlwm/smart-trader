@@ -27,39 +27,28 @@ def _alpha_trend_signal(df: DataFrame, atr_multiple: float = 1.0, period: int = 
     high_values, low_values, close_values, volume_values = df[[_high, _low, _close, _volume]].values.astype(np.float64)
     atr_values = ta.ATR(high_values, low_values, close_values, timeperiod=period)
     atr_range_values = atr_values * atr_multiple
+    atr_base_low_values = low_values - atr_range_values
+    atr_base_high_values = high_values + atr_range_values
+    mfi_values = ta.MFI(high_values, low_values, close_values, volume_values, timeperiod=period)
 
     df[_atr] = atr_values
-    df[_atr_base_low] = low_values - atr_range_values
-    df[_atr_base_high] = high_values + atr_range_values
-    df[_mfi] = ta.MFI(high_values, low_values, close_values, volume_values, timeperiod=period)
+    df[_atr_base_low] = atr_base_low_values
+    df[_atr_base_high] = atr_base_high_values
+    df[_mfi] = mfi_values
 
-    # 初始化 _alpha_trend 列
-    df[_alpha_trend] = np.nan
-    
-    # 预提取列数据到 NumPy 数组，避免在循环中使用 df.at
-    mfi_values = df[_mfi].values
-    atr_base_low_values = df[_atr_base_low].values
-    atr_base_high_values = df[_atr_base_high].values
-    
-    # 创建 alpha_trend 数组并初始化第一个有效值
     alpha_trend_values = np.full(len(df), np.nan)
-    
-    # 设置初始值
     if period < len(df):
-        # 只在必要时使用一次 df.at
         alpha_trend_values[period] = atr_base_low_values[period] if mfi_values[period] >= 50 else atr_base_high_values[period]
         
-        # 使用 NumPy 数组进行循环计算，避免 df.at 调用
         for i in range(period + 1, len(df)):
             if mfi_values[i] >= 50:
                 alpha_trend_values[i] = max(alpha_trend_values[i-1], atr_base_low_values[i])
             else:
                 alpha_trend_values[i] = min(alpha_trend_values[i-1], atr_base_high_values[i])
     
-    # 将计算结果赋值回 DataFrame
     df[_alpha_trend] = alpha_trend_values
 
-    # 计算买卖信号
+    # 通过alpha_trend交叉计算买卖信号
     alpha_trend_shift2 = df[_alpha_trend].shift(2)
     df[_buy_signal] = (df[_alpha_trend] > alpha_trend_shift2).astype('boolean')
     df[_sell_signal] = (df[_alpha_trend] < alpha_trend_shift2).astype('boolean')
@@ -72,7 +61,6 @@ def _alpha_trend_signal(df: DataFrame, atr_multiple: float = 1.0, period: int = 
         default=np.nan                        # 默认值
     )
 
-    # 返回更新后的 DataFrame
     return df
 
 
