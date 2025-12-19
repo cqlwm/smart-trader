@@ -3,7 +3,7 @@ import secrets
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 
-from strategy import StrategyV2
+from strategy import MultiTimeframeStrategy
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from client.ex_client import ExSwapClient
 from model import OrderSide, PositionSide, PlaceOrderBehavior, Symbol, OrderStatus
@@ -41,7 +41,7 @@ class AlphaTrendStrategyConfig(BaseModel):
     backup_file_path: str = "data/alpha_trend_strategy_state.json"  # Path to store strategy state
 
 
-class AlphaTrendStrategy(StrategyV2):
+class AlphaTrendStrategy(MultiTimeframeStrategy):
     def __init__(self, ex_client: ExSwapClient, config: AlphaTrendStrategyConfig):
         super().__init__()
         self.config = config
@@ -235,7 +235,11 @@ class AlphaTrendStrategy(StrategyV2):
         if df.empty or len(df) < 10:
             return
 
-        current_price = self.get_last_kline(main_timeframe).close
+        current_kline = self.get_last_kline(main_timeframe)
+        if not current_kline:
+            return
+
+        current_price = current_kline.close if current_kline.close is not None else 0
 
         # Get current alpha_trend_value
         signal_df = self.signals[main_timeframe]._compute_signal(df.copy(), first_run=False)
