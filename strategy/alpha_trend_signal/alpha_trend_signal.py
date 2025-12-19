@@ -24,10 +24,14 @@ _signal = 'signal'
 
 def _alpha_trend_signal(df: DataFrame, atr_multiple: float = 1.0, period: int = 8):
     # 计算技术指标
-    df[_atr] = ta.ATR(df[_high], df[_low], df[_close], timeperiod=period)
-    df[_atr_base_low] = df[_low] - df[_atr] * atr_multiple
-    df[_atr_base_high] = df[_high] + df[_atr] * atr_multiple
-    df[_mfi] = ta.MFI(df[_high], df[_low], df[_close], df[_volume], timeperiod=period)
+    high_values, low_values, close_values, volume_values = df[[_high, _low, _close, _volume]].values.astype(np.float64)
+    atr_values = ta.ATR(high_values, low_values, close_values, timeperiod=period)
+    atr_range_values = atr_values * atr_multiple
+
+    df[_atr] = atr_values
+    df[_atr_base_low] = low_values - atr_range_values
+    df[_atr_base_high] = high_values + atr_range_values
+    df[_mfi] = ta.MFI(high_values, low_values, close_values, volume_values, timeperiod=period)
 
     # 初始化 _alpha_trend 列
     df[_alpha_trend] = np.nan
