@@ -3,7 +3,6 @@ import log
 import os
 from data_event_loop import BinanceDataEventLoop
 from client.binance_client import BinanceSwapClient
-from task.strategy_task import StrategyTask, MultiTimeframeStrategyTask
 import dotenv
 
 dotenv.load_dotenv()
