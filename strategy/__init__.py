@@ -145,7 +145,35 @@ class MultiTimeframeStrategy(Strategy):
             self._call_on_kline_finished(timeframe)
 
 class SingleTimeframeStrategy(MultiTimeframeStrategy):
-    pass
+    def __init__(self, timeframe: str):
+        super().__init__([timeframe])
+
+    @property
+    def timeframe(self) -> str:
+        """Get the single timeframe"""
+        return self.timeframes[0]
+
+    @property
+    def klines_df(self) -> DataFrame:
+        """Get the klines DataFrame for the single timeframe"""
+        return self.klines(self.timeframe)
+
+    @property
+    def latest_kline_obj(self) -> Optional[Kline]:
+        """Get the latest Kline for the single timeframe"""
+        return self.latest_kline(self.timeframe)
+    
+    def _on_kline(self):
+        pass
+    
+    def _on_kline_finished(self):
+        pass
+
+    def on_kline(self, timeframe: str):
+        self._on_kline()
+
+    def on_kline_finished(self, timeframe: str):
+        self._on_kline_finished()
 
 
 class StrategyV2(ABC):
