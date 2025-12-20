@@ -74,10 +74,10 @@ class AlphaTrendSignal(Signal):
         self.datetime: str | None = None
         self.current_signal: int = 0
         self.current_kline_status: int = 0
+        self.current_alpha_trend: float = 0.0
 
     def _compute_signal(self, df: DataFrame, first_run: bool = False) -> int:
-        df = _alpha_trend_signal(df, self.atr_multiple, self.period)
-
+        
         if first_run:
             last_valid_index = df[_signal].last_valid_index()
             self.current_signal = int(df[_signal].loc[last_valid_index])
@@ -104,8 +104,10 @@ class AlphaTrendSignal(Signal):
 
         if self.datetime == last_time:
             return self.current_kline_status
-            
-        self.current_kline_status = self._compute_signal(klines, self.datetime is None)
+        
+        df = _alpha_trend_signal(klines, self.atr_multiple, self.period)
+        self.current_kline_status = self._compute_signal(df, self.datetime is None)
+        self.current_alpha_trend = df[_alpha_trend].iloc[-1] if len(df[_alpha_trend]) > 0 else 0
         self.datetime = last_time
 
         return self.current_kline_status

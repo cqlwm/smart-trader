@@ -1,6 +1,7 @@
 import os
 import secrets
 from typing import Optional, Dict, Any
+import numpy as np
 from pydantic import BaseModel
 
 from strategy import MultiTimeframeStrategy
@@ -86,13 +87,13 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
         if self.position is not None:
             return False
 
-        if position_side == PositionSide.LONG and not self.config.enable_long_trades:
-            return False
+        if position_side == PositionSide.LONG and self.config.enable_long_trades:
+            return True
 
-        if position_side == PositionSide.SHORT and not self.config.enable_short_trades:
-            return False
+        if position_side == PositionSide.SHORT and self.config.enable_short_trades:
+            return True
 
-        return True
+        return False
 
     def _generate_order_id(self, side: OrderSide) -> str:
         """Generate unique order ID"""
@@ -242,18 +243,14 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
         current_price = current_kline.close if current_kline.close is not None else 0
 
         # Get current alpha_trend_value
-        signal_df = self.signals[main_timeframe]._compute_signal(df.copy(), first_run=False)
-        current_alpha_trend = df.iloc[-1]['alpha_trend'] if 'alpha_trend' in df.columns else 0
+        signal_instance = self.signals[main_timeframe]
+        current_signal_status = signal_instance.run(df)
+        current_alpha_trend_value = signal_instance.current_alpha_trend
 
-        # Check for long entry
-        if self.config.enable_long_trades and self.signals[main_timeframe].is_entry(df):
-            if self._can_open_position(PositionSide.LONG):
-                self._open_position(PositionSide.LONG, current_price, current_alpha_trend)
-
-        # Check for short entry
-        elif self.config.enable_short_trades and self.signals[main_timeframe].is_entry(df):
-            if self._can_open_position(PositionSide.SHORT):
-                self._open_position(PositionSide.SHORT, current_price, current_alpha_trend)
+        if current_signal_status == 1 and self._can_open_position(PositionSide.LONG):
+            self._open_position(PositionSide.LONG, current_price, current_alpha_trend_value)
+        elif current_signal_status == -1 and self._can_open_position(PositionSide.SHORT):
+            self._open_position(PositionSide.SHORT, current_price, current_alpha_trend_value)
 
     def _monitor_position_on_timeframe(self, timeframe: str):
         """Monitor existing position on specified timeframe"""
@@ -416,18 +413,3 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
             logger.error(f"Failed to load strategy state from {backup_path}: {e}")
             # Continue with fresh state if loading fails
 
-    def get_performance_stats(self) -> dict:
-        """Get current performance statistics"""
-        win_rate = self.winning_trades / self.total_trades if self.total_trades > 0 else 0
-
-        return {
-            'total_trades': self.total_trades,
-            'winning_trades': self.winning_trades,
-            'win_rate': win_rate,
-            'total_pnl': self.total_pnl,
-            'in_position': self.position is not None,
-            'position_side': self.position.position_side.value if self.position else None,
-            'exit_mode': self.position.exit_mode if self.position else False,
-            'current_monitor_timeframe': self.config.timeframes[self.current_monitor_timeframe_index] if self.position else None,
-            'timeframes': self.config.timeframes
-        }
