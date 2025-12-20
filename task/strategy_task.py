@@ -4,12 +4,12 @@ import re
 from typing import Any, Dict
 from data_event_loop import Task
 from model import Symbol, Kline
-from strategy import StrategyV2
+from strategy import SingleTimeframeStrategy
 
 logger = log.getLogger(__name__)
 
 class StrategyTask(Task):
-    def __init__(self, symbol: Symbol, timeframe: str, strategy: StrategyV2):
+    def __init__(self, symbol: Symbol, timeframe: str, strategy: SingleTimeframeStrategy):
         super().__init__()
         self.name = 'StrategyTask'
         self.symbol = symbol

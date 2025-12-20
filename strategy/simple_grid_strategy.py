@@ -4,18 +4,18 @@ from typing import List, Dict, Literal
 import pandas as pd
 from datetime import datetime
 import os
-from strategy import StrategyV2
+from strategy import SingleTimeframeStrategy
 from client.ex_client import ExSwapClient
 from model import Symbol, Kline, OrderSide, OrderStatus
 import log
 
 logger = log.getLogger(__name__)
 
-class SimpleGridStrategy(StrategyV2):
+class SimpleGridStrategy(SingleTimeframeStrategy):
     def __init__(self, ex_client: ExSwapClient, symbol: Symbol,
                  upper_price: float, lower_price: float, grid_num: int,
-                 quantity_per_grid: float, position_side: Literal['LONG', 'SHORT']):
-        super().__init__()
+                 quantity_per_grid: float, position_side: Literal['LONG', 'SHORT'], timeframe: str):
+        super().__init__(timeframe)
         self.ex_client = ex_client
         self.symbol = symbol
         self.upper_price = upper_price
@@ -39,8 +39,8 @@ class SimpleGridStrategy(StrategyV2):
 
     def get_current_price(self) -> float:
         """获取当前市场价格"""
-        if hasattr(self, 'last_kline') and self.last_kline:
-            return self.last_kline.close
+        if self.latest_kline_obj:
+            return self.latest_kline_obj.close
         # 如果没有K线数据，使用API获取
         ticker = self.ex_client.fetch_ticker(self.symbol)
         return float(ticker['last'])
@@ -186,12 +186,12 @@ class SimpleGridStrategy(StrategyV2):
                 logger.error(f"运行错误: {e}")
                 time.sleep(5)
 
-    # 实现StrategyV2的抽象方法
-    def on_kline(self):
+    # 实现SingleTimeframeStrategy的抽象方法
+    def _on_kline(self):
         """每次K线更新时调用"""
         pass
 
-    def on_kline_finished(self):
+    def _on_kline_finished(self):
         """K线完成时调用，可以在这里处理网格订单逻辑"""
         pass
 
@@ -233,17 +233,18 @@ def main():
         lower_price=lower_price,
         grid_num=grid_num,
         quantity_per_grid=quantity,
-        position_side=position_side
+        position_side=position_side,
+        timeframe='1m'
     )
     
     # 运行策略
     strategy.run_strategy()
 
 
-def create_strategy_for_event_loop(binance_client: ExSwapClient, symbol: Symbol, 
-                                 upper_price: float, lower_price: float, 
-                                 grid_num: int, quantity: float, 
-                                 position_side: Literal['LONG', 'SHORT']) -> SimpleGridStrategy:
+def create_strategy_for_event_loop(binance_client: ExSwapClient, symbol: Symbol,
+                                 upper_price: float, lower_price: float,
+                                 grid_num: int, quantity: float,
+                                 position_side: Literal['LONG', 'SHORT'], timeframe: str = '1m') -> SimpleGridStrategy:
     """
     创建用于事件循环系统的策略实例
     可以在run.py中调用此函数来集成到主系统中
@@ -255,7 +256,8 @@ def create_strategy_for_event_loop(binance_client: ExSwapClient, symbol: Symbol,
         lower_price=lower_price,
         grid_num=grid_num,
         quantity_per_grid=quantity,
-        position_side=position_side
+        position_side=position_side,
+        timeframe=timeframe
     )
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ from typing import List
 from datetime import datetime
 
 from pydantic import BaseModel
-from strategy import StrategyV2
+from strategy import SingleTimeframeStrategy
 from client.ex_client import ExSwapClient, ExClient
 from model import PlaceOrderBehavior, PositionSide, Symbol, OrderSide, OrderStatus
 import log
@@ -199,9 +199,9 @@ class SimpleGridStrategyConfig(BaseModel):
     backup_file: str = ""
 
 
-class SimpleGridStrategy(StrategyV2):
-    def __init__(self, ex_client: ExSwapClient, config: SimpleGridStrategyConfig):
-        super().__init__()
+class SimpleGridStrategy(SingleTimeframeStrategy):
+    def __init__(self, ex_client: ExSwapClient, config: SimpleGridStrategyConfig, timeframe: str):
+        super().__init__(timeframe)
         self.config = config
         self.ex_client = ex_client
         self.grids: List[OrderPair] = []
@@ -288,7 +288,7 @@ class SimpleGridStrategy(StrategyV2):
 
     def get_current_price(self) -> float:
         """获取当前市场价格"""
-        return self.last_kline.close
+        return self.latest_kline_obj.close
 
     def initialize_grids(self):
         """初始化网格订单对"""
@@ -318,7 +318,7 @@ class SimpleGridStrategy(StrategyV2):
             self.grids.append(order_pair)
         
         if not self.config.delay_pending_order:
-            current_price = self.last_kline.close
+            current_price = self.latest_kline_obj.close
             compare = builtins.float.__le__ if self.config.master_order_side == OrderSide.BUY else builtins.float.__ge__
             run_grids = list(filter(lambda grid: compare(current_price, grid.entry_price), self.grids))
             
@@ -379,7 +379,7 @@ class SimpleGridStrategy(StrategyV2):
         self.update_grid_orders()
         self.save_state()
 
-    def on_kline(self):
+    def _on_kline(self):
         """每次K线更新时调用"""
         if self.lock.acquire(blocking=False):
             try:
@@ -387,6 +387,6 @@ class SimpleGridStrategy(StrategyV2):
             finally:
                 self.lock.release()
 
-    def on_kline_finished(self):
+    def _on_kline_finished(self):
         """K线完成时调用"""
         pass

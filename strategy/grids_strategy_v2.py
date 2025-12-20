@@ -3,7 +3,7 @@ import secrets
 import threading
 from typing import Any, List, Callable, Dict
 from client.ex_client import ExSwapClient
-from strategy import StrategyV2
+from strategy import SingleTimeframeStrategy
 from model import OrderSide, OrderStatus, PlaceOrderBehavior, PositionSide
 import logging
 from pydantic import BaseModel, ConfigDict
@@ -212,10 +212,10 @@ class SignalGridStrategyConfig(BaseModel):
     trailing_stop_rate: float = 0.02
     trailing_stop_activation_profit_rate: float = 0.01
 
-class SignalGridStrategy(StrategyV2):
+class SignalGridStrategy(SingleTimeframeStrategy):
 
-    def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient):
-        super().__init__()
+    def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient, timeframe: str):
+        super().__init__(timeframe)
         self.config = config
         self.ex_client = ex_client
 
@@ -256,11 +256,14 @@ class SignalGridStrategy(StrategyV2):
 
         # 检查是否有入场信号
         if self.config.signal:
-            if not self.config.signal.is_entry(self.klines_to_dataframe()):
+            if not self.config.signal.is_entry(self.klines_df):
                 return False
 
         # 检查当前价格是否在可交易的价格区间
-        close_price = self.last_kline.close
+        if self.latest_kline_obj is None:
+            return False
+        
+        close_price = self.latest_kline_obj.close
         if close_price < self.config.lowest_price or close_price > self.config.highest_price:
             return False
 
@@ -317,22 +320,25 @@ class SignalGridStrategy(StrategyV2):
         return False
 
     def check_close_order(self) -> List[Order]:
+        if self.latest_kline_obj is None:
+            return []
+        
         current_orders = self.order_manager.orders
-        exit_signal = self.config.enable_exit_signal and self.config.signal and self.config.signal.is_exit(self.klines_to_dataframe())
+        exit_signal = self.config.enable_exit_signal and self.config.signal and self.config.signal.is_exit(self.klines_df)
 
         exit_orders: List[Order] = []
         exit_qty = 0
         stop_loss_order_all = self._check_max_order_stop_loss() or self.close_position
         for order in current_orders:
-            profit_level = order.profit_level(self.last_kline.close)
+            profit_level = order.profit_level(self.latest_kline_obj.close)
 
             # 检查止损条件
             stop_loss_triggered = False
             if order.enable_stop_loss and order.current_stop_price is not None:
                 if order.side == OrderSide.BUY:
-                    stop_loss_triggered = self.last_kline.close <= order.current_stop_price
+                    stop_loss_triggered = self.latest_kline_obj.close <= order.current_stop_price
                 else:  # SELL
-                    stop_loss_triggered = self.last_kline.close >= order.current_stop_price
+                    stop_loss_triggered = self.latest_kline_obj.close >= order.current_stop_price
 
             if stop_loss_order_all or (profit_level == 2 and self.config.fixed_rate_take_profit) or (profit_level == 1 and exit_signal) or stop_loss_triggered:
                 if OrderStatus.is_open(order.status):
@@ -350,14 +356,14 @@ class SignalGridStrategy(StrategyV2):
                             self.ex_client.cancel(order.exit_id, self.config.symbol)
 
                 exit_qty += order.quantity
-                order.exit_price = self.last_kline.close
+                order.exit_price = self.latest_kline_obj.close
                 exit_orders.append(order)
 
         if exit_qty > 0:
             exit_order_side = self.config.master_side.reversal()
             exit_order_id = build_order_id(exit_order_side)
             actual_exit_qty = exit_qty * self.config.close_position_ratio
-            execute_exit_order_result = self.place_order(exit_order_id, exit_order_side, actual_exit_qty, self.last_kline.close)
+            execute_exit_order_result = self.place_order(exit_order_id, exit_order_side, actual_exit_qty, self.latest_kline_obj.close)
             if execute_exit_order_result:
                 for order in exit_orders:
                     order.exit_id = execute_exit_order_result['clientOrderId']
@@ -373,15 +379,15 @@ class SignalGridStrategy(StrategyV2):
 
         return exit_orders
 
-    def on_kline_finished(self):
-        if not self.is_running:
+    def _on_kline_finished(self):
+        if not self.is_running or self.latest_kline_obj is None:
             return
 
         # 检查是否需要重新加载订单
         refresh = self.order_manager.load_orders()
 
         # 更新跟踪止损
-        extremum_price = self.last_kline.high if self.config.master_side == OrderSide.BUY else self.last_kline.low
+        extremum_price = self.latest_kline_obj.high if self.config.master_side == OrderSide.BUY else self.latest_kline_obj.low
         current_orders = self.order_manager.orders
         for order in current_orders:
             if not order.enable_trailing_stop or order.current_stop_price is None:
@@ -402,7 +408,10 @@ class SignalGridStrategy(StrategyV2):
 
         self.order_manager.record_orders(closed_orders, refresh)
 
-    def on_kline(self):
+    def _on_kline(self):
+        if self.latest_kline_obj is None:
+            return
+        
         orders_to_process = self.order_manager.orders
         refresh_orders = False
 
@@ -430,14 +439,14 @@ class SignalGridStrategy(StrategyV2):
                     order.exit_id = exit_order_result['clientOrderId']
                     order.exit_price = exit_price
                     refresh_orders = True
-                    
+
 
             # 检查退出订单是否完成并移除已完成的订单
             closed_orders = []
             for order in orders_to_process:
-                if order.exit_id and order.exit_price is not None and self.last_kline.low <= order.exit_price <= self.last_kline.high:
+                if order.exit_id and order.exit_price is not None and self.latest_kline_obj.low <= order.exit_price <= self.latest_kline_obj.high:
                     exit_order_query_result = self.ex_client.query_order(order.exit_id, self.config.symbol)
                     if exit_order_query_result and OrderStatus.is_closed(exit_order_query_result['status']):
                         closed_orders.append(order)
-            
+
             self.order_manager.record_orders(closed_orders, refresh_orders=refresh_orders)

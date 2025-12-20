@@ -1,7 +1,7 @@
 import json
 from client.ex_client import ExSwapClient
 from model import Kline
-from strategy import StrategyV2
+from strategy import SingleTimeframeStrategy
 from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig
 import log
 from pydantic import BaseModel
@@ -17,12 +17,12 @@ class BidirectionalGridRotationStrategyConfig(BaseModel):
     config_backup_path: str = 'bidirectional_grid_rotation_config.json'
 
 
-class BidirectionalGridRotationStrategy(StrategyV2):
-    def __init__(self, exchange_client: ExSwapClient, config: BidirectionalGridRotationStrategyConfig):
-        super().__init__()
+class BidirectionalGridRotationStrategy(SingleTimeframeStrategy):
+    def __init__(self, exchange_client: ExSwapClient, config: BidirectionalGridRotationStrategyConfig, timeframe: str):
+        super().__init__(timeframe)
         self.config = config
-        self.long_strategy = SignalGridStrategy(config.long_strategy_config, exchange_client)
-        self.short_strategy = SignalGridStrategy(config.short_strategy_config, exchange_client)
+        self.long_strategy = SignalGridStrategy(config.long_strategy_config, exchange_client, timeframe)
+        self.short_strategy = SignalGridStrategy(config.short_strategy_config, exchange_client, timeframe)
 
         self.running_strategy = self.long_strategy if config.default_strategy == 'long' else self.short_strategy
         if self.is_order_full(self.running_strategy):
@@ -31,19 +31,19 @@ class BidirectionalGridRotationStrategy(StrategyV2):
         logger.info(f"BidirectionalGridRotation Start with {config.default_strategy}")
     
     def is_order_full(self, strategy: SignalGridStrategy):
-        return len(strategy.orders) >= strategy.config.max_order
-    
+        return len(strategy.order_manager.orders) >= strategy.config.max_order
+
     def reset_running_strategy(self):
         self.long_strategy.config.max_order = 0
         self.short_strategy.config.max_order = 0
-        self.running_strategy.config.max_order = len(self.running_strategy.orders) + self.config.rotation_increment
+        self.running_strategy.config.max_order = len(self.running_strategy.order_manager.orders) + self.config.rotation_increment
 
     def rotation(self):
         self.running_strategy = self.short_strategy if self.running_strategy == self.long_strategy else self.long_strategy
         self.reset_running_strategy()
 
     def balance_max_order(self):
-        max_order_diff: int = self.running_strategy.config.max_order - len(self.running_strategy.orders) - self.config.rotation_increment
+        max_order_diff: int = self.running_strategy.config.max_order - len(self.running_strategy.order_manager.orders) - self.config.rotation_increment
         if max_order_diff > 0:
             self.running_strategy.config.max_order -= max_order_diff
 

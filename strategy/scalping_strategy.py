@@ -3,7 +3,7 @@ import os
 from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel
 
-from strategy import StrategyV2
+from strategy import SingleTimeframeStrategy
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from client.ex_client import ExSwapClient
 from model import OrderSide, PositionSide, PlaceOrderBehavior, Symbol, OrderStatus
@@ -62,9 +62,9 @@ class ScalpingStrategyConfig(BaseModel):
     backup_file_path: str = "data/scalping_strategy_state.json"  # Path to store strategy state
     place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER_OPEN  # Place order behavior
 
-class ScalpingStrategy(StrategyV2):
-    def __init__(self, ex_client: ExSwapClient, config: ScalpingStrategyConfig):
-        super().__init__()
+class ScalpingStrategy(SingleTimeframeStrategy):
+    def __init__(self, ex_client: ExSwapClient, config: ScalpingStrategyConfig, timeframe: str):
+        super().__init__(timeframe)
         self.config = config
         self.ex_client = ex_client
 
@@ -259,11 +259,11 @@ class ScalpingStrategy(StrategyV2):
 
     def _check_signals_and_trade(self):
         """Check signals and execute trades"""
-        df = self.klines_to_dataframe()
+        df = self.klines_df
         if df.empty:
             return
 
-        current_price = self.last_kline.close
+        current_price = self.latest_kline_obj.close
 
         if self.config.enable_long_trades:
             # Check long signals
@@ -297,7 +297,7 @@ class ScalpingStrategy(StrategyV2):
 
     def _manage_positions(self):
         """Manage existing positions (stop loss, take profit)"""
-        current_price = self.last_kline.close
+        current_price = self.latest_kline_obj.close
         positions_to_close: List[Tuple[ScalpPosition, float, str]] = []
 
         for position in self.positions.values():
@@ -317,7 +317,7 @@ class ScalpingStrategy(StrategyV2):
         for position, exit_price, reason in positions_to_close:
             self._close_position(position, exit_price, reason)
 
-    def on_kline_finished(self):
+    def _on_kline_finished(self):
         """Main strategy logic - called when K-line is finished"""
         # Check signals and execute new trades
         self._check_signals_and_trade()
