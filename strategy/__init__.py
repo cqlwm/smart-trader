@@ -7,32 +7,36 @@ from typing import Any, List, Dict, Optional
 from client.ex_client import ExClient
 from model import Kline, OrderSide
 import log
+from pydantic import BaseModel
 
 logger = log.getLogger(__name__)
 
-class MultiTimeframeStrategy(ABC):
-    def __init__(self):
+class Strategy(ABC):
+    def on_kline(self, timeframe: str):
+        pass
+    def on_kline_finished(self, timeframe: str):
+        pass
+    @abstractmethod
+    def run(self, kline: Kline):
+        pass
+
+class KlineData(BaseModel):
+    timeframe: str
+    klines: DataFrame
+    latest_kline: Optional[Kline]
+
+class MultiTimeframeStrategy(Strategy):
+    def __init__(self, timeframes: List[str]):
         self.ex_client: ExClient
-        # 多时间框架K线数据存储：timeframe -> klines list
-        self.klines_dict: Dict[str, List[Dict[str, Any]]] = {}
-        # 多时间框架最新K线存储：timeframe -> last kline
-        self.last_kline_dict: Dict[str, Optional[Kline]] = {}
+        self.timeframes: List[str] = timeframes
+        self.kline_data_dict: Dict[str, KlineData] = {}
         self.init_kline_nums = 300
         self.on_kline_finished_lock = threading.Lock()
         self.on_kline_lock = threading.Lock()
         self.data_lock = threading.Lock()
 
-    def add_timeframe(self, timeframe: str):
-        """添加支持的时间框架"""
-        if timeframe not in self.klines_dict:
-            self.klines_dict[timeframe] = []
-            self.last_kline_dict[timeframe] = None
-
-    def klines_to_dataframe(self, timeframe: str) -> DataFrame:
-        """将指定时间框架的klines转换为DataFrame进行分析"""
-        klines = self.klines_dict.get(timeframe, [])
-        if not klines:
-            return DataFrame({
+        for timeframe in timeframes:
+            empty_df = DataFrame({
                 'datetime': pd.Series(dtype='str'),
                 'open': pd.Series(dtype='float64'),
                 'high': pd.Series(dtype='float64'),
@@ -41,12 +45,19 @@ class MultiTimeframeStrategy(ABC):
                 'volume': pd.Series(dtype='float64'),
                 'finished': pd.Series(dtype='boolean')
             })
+            self.kline_data_dict[timeframe] = KlineData(timeframe=timeframe, klines=empty_df, latest_kline=None)
 
-        return DataFrame(klines)
+    def klines(self, timeframe: str) -> DataFrame:
+        """将指定时间框架的klines转换为DataFrame进行分析"""
+        if timeframe not in self.kline_data_dict:
+            raise ValueError(f"Timeframe {timeframe} not found")
+        return self.kline_data_dict[timeframe].klines
 
-    def get_last_kline(self, timeframe: str) -> Optional[Kline]:
+    def latest_kline(self, timeframe: str) -> Optional[Kline]:
         """获取指定时间框架的最新K线"""
-        return self.last_kline_dict.get(timeframe)
+        if timeframe not in self.kline_data_dict:
+            raise ValueError(f"Timeframe {timeframe} not found")
+        return self.kline_data_dict[timeframe].latest_kline
 
     def on_kline(self, timeframe: str):
         """处理K线更新事件（多时间框架版本）"""
@@ -57,10 +68,11 @@ class MultiTimeframeStrategy(ABC):
         pass
 
     def _initialize_klines_if_needed(self, kline: Kline):
-        """Initialize klines with historical data if the list is empty"""
+        """Initialize klines with historical data if the DataFrame is empty"""
         timeframe = kline.timeframe
-        if len(self.klines_dict[timeframe]) == 0:
+        if len(self.kline_data_dict[timeframe].klines) == 0:
             ohlcv = self.ex_client.fetch_ohlcv(kline.symbol, timeframe, self.init_kline_nums)
+            rows = []
             for row in ohlcv:
                 timestamp, open_price, high_price, low_price, close_price, volume = row
                 historical_kline = Kline(
@@ -74,18 +86,26 @@ class MultiTimeframeStrategy(ABC):
                     timestamp=timestamp,
                     finished=True
                 )
-                self.klines_dict[timeframe].append(historical_kline.to_dict())
+                rows.append(historical_kline.to_dict())
+            df = DataFrame(rows)
+            self.kline_data_dict[timeframe].klines = df
 
     def _update_klines(self, kline: Kline):
-        """Update the last kline and manage the klines list"""
+        """Update the last kline and manage the DataFrame"""
         timeframe = kline.timeframe
-        self.last_kline_dict[timeframe] = kline
+        self.kline_data_dict[timeframe].latest_kline = kline
+
+        kline_dict = kline.to_dict()
+        df = self.kline_data_dict[timeframe].klines
 
         # 检查是否需要更新最后一个kline或添加新的kline
-        if len(self.klines_dict[timeframe]) > 0 and self.klines_dict[timeframe][-1]['datetime'] == kline.datetime:
-            self.klines_dict[timeframe][-1] = kline.to_dict()
+        if len(df) > 0 and df.iloc[-1]['datetime'] == kline.datetime:
+            # Update last row
+            df.loc[df.index[-1]] = kline_dict
         else:
-            self.klines_dict[timeframe].append(kline.to_dict())
+            # Append new row
+            new_df = pd.concat([df, DataFrame([kline_dict])], ignore_index=True)
+            self.kline_data_dict[timeframe].klines = new_df
 
     def _call_on_kline(self, timeframe: str):
         """Safely call the on_kline method with locking"""
@@ -107,8 +127,8 @@ class MultiTimeframeStrategy(ABC):
         """处理K线数据（多时间框架版本）"""
         timeframe = kline.timeframe
         # 确保时间框架已注册
-        if timeframe not in self.klines_dict:
-            self.add_timeframe(timeframe)
+        if timeframe not in self.kline_data_dict:
+            raise ValueError(f"Timeframe {timeframe} not registered in the strategy")
 
         if self.data_lock.acquire(blocking=kline.finished):
             try:
@@ -124,104 +144,100 @@ class MultiTimeframeStrategy(ABC):
         if kline.finished:
             self._call_on_kline_finished(timeframe)
 
-class StrategyV2(MultiTimeframeStrategy):
+class SingleTimeframeStrategy(MultiTimeframeStrategy):
+    pass
+
+
+class StrategyV2(ABC):
     def __init__(self):
-        super().__init__()
-        # 默认时间框架，用于向后兼容
-        self.default_timeframe: str = ""
-        # 向后兼容的属性
-        self._klines: List[Dict[str, Any]] = []
-        self._last_kline: Optional[Kline] = None
+        self.ex_client: ExClient
+        self.klines: List[Dict[str, Any]] = []
+        self.last_kline: Kline
+        self.init_kline_nums = 300
+        self.on_kline_finished_lock = threading.Lock()
+        self.on_kline_lock = threading.Lock()
+        self.data_lock = threading.Lock()
+    
+    def klines_to_dataframe(self) -> DataFrame:
+        """将klines转换为DataFrame进行分析"""
+        if not self.klines:
+            return DataFrame({
+                'datetime': pd.Series(dtype='str'),
+                'open': pd.Series(dtype='float64'),
+                'high': pd.Series(dtype='float64'),
+                'low': pd.Series(dtype='float64'),
+                'close': pd.Series(dtype='float64'),
+                'volume': pd.Series(dtype='float64'),
+                'finished': pd.Series(dtype='boolean')
+            })
 
-    @property
-    def klines(self) -> List[Dict[str, Any]]:
-        """向后兼容的klines属性，返回默认时间框架的K线数据"""
-        if self.default_timeframe:
-            return self.klines_dict.get(self.default_timeframe, [])
-        return self._klines
+        return DataFrame(self.klines)
 
-    @klines.setter
-    def klines(self, value: List[Dict[str, Any]]):
-        """向后兼容的klines设置器"""
-        if self.default_timeframe:
-            self.klines_dict[self.default_timeframe] = value
-        else:
-            self._klines = value
-
-    @property
-    def last_kline(self) -> Optional[Kline]:
-        """向后兼容的last_kline属性"""
-        if self.default_timeframe:
-            return self.last_kline_dict.get(self.default_timeframe)
-        return self._last_kline
-
-    @last_kline.setter
-    def last_kline(self, value: Optional[Kline]):
-        """向后兼容的last_kline设置器"""
-        if self.default_timeframe:
-            self.last_kline_dict[self.default_timeframe] = value
-        else:
-            self._last_kline = value
-
-    def klines_to_dataframe(self, timeframe: Optional[str] = None) -> DataFrame:
-        """将klines转换为DataFrame进行分析（向后兼容）"""
-        if timeframe is None:
-            timeframe = self.default_timeframe or ""
-        return super().klines_to_dataframe(timeframe)
-
-    def on_kline(self, timeframe: Optional[str] = None):
-        """向后兼容的on_kline方法"""
+    def on_kline(self):
         pass
 
-    def on_kline_finished(self, timeframe: Optional[str] = None):
-        """向后兼容的on_kline_finished方法"""
+    def on_kline_finished(self):
         pass
 
-    def run(self, kline: Kline):
-        """处理K线数据，支持单时间框架向后兼容"""
-        # 如果还没有设置默认时间框架，则设置为当前K线的时间框架
-        if not self.default_timeframe:
-            self.default_timeframe = kline.timeframe
-            # 将向后兼容的数据迁移到多时间框架结构
-            if self._klines:
-                self.klines_dict[self.default_timeframe] = self._klines
-            if self._last_kline:
-                self.last_kline_dict[self.default_timeframe] = self._last_kline
+    def _initialize_klines_if_needed(self, kline: Kline):
+        """Initialize klines with historical data if the list is empty"""
+        if len(self.klines) == 0:
+            ohlcv = self.ex_client.fetch_ohlcv(kline.symbol, kline.timeframe, self.init_kline_nums)
+            for row in ohlcv:
+                timestamp, open_price, high_price, low_price, close_price, volume = row
+                historical_kline = Kline(
+                    symbol=kline.symbol,
+                    timeframe=kline.timeframe,
+                    open=open_price,
+                    high=high_price,
+                    low=low_price,
+                    close=close_price,
+                    volume=volume,
+                    timestamp=timestamp,
+                    finished=True
+                )
+                self.klines.append(historical_kline.to_dict())
 
-        # 调用父类的多时间框架处理逻辑
-        super().run(kline)
+    def _update_klines(self, kline: Kline):
+        """Update the last kline and manage the klines list"""
+        self.last_kline = kline
 
-        # 为了向后兼容，也调用旧的钩子方法（如果子类没有重写多时间框架版本）
-        if hasattr(self, 'on_kline') and callable(getattr(self, 'on_kline')) and len(self.on_kline.__code__.co_varnames) == 1:
-            # 如果子类只定义了无参数的on_kline，则调用它
-            self._call_on_kline_compat()
+        # 检查是否需要更新最后一个kline或添加新的kline
+        if len(self.klines) > 0 and self.klines[-1]['datetime'] == kline.datetime:
+            self.klines[-1] = kline.to_dict()
         else:
-            # 否则调用多时间框架版本
-            self._call_on_kline(kline.timeframe)
+            self.klines.append(kline.to_dict())
 
-        if kline.finished:
-            if hasattr(self, 'on_kline_finished') and callable(getattr(self, 'on_kline_finished')) and len(self.on_kline_finished.__code__.co_varnames) == 1:
-                # 如果子类只定义了无参数的on_kline_finished，则调用它
-                self._call_on_kline_finished_compat()
-            else:
-                # 否则调用多时间框架版本
-                self._call_on_kline_finished(kline.timeframe)
-
-    def _call_on_kline_compat(self):
-        """Safely call the backward-compatible on_kline method with locking"""
+    def _call_on_kline(self):
+        """Safely call the on_kline method with locking"""
         if self.on_kline_lock.acquire(blocking=False):
             try:
                 self.on_kline()
             finally:
                 self.on_kline_lock.release()
 
-    def _call_on_kline_finished_compat(self):
-        """Safely call the backward-compatible on_kline_finished method with locking"""
+    def _call_on_kline_finished(self):
+        """Safely call the on_kline_finished method with locking"""
         if self.on_kline_finished_lock.acquire(blocking=False):
             try:
                 self.on_kline_finished()
             finally:
                 self.on_kline_finished_lock.release()
+
+    def run(self, kline: Kline):
+        if self.data_lock.acquire(blocking=kline.finished):
+            try:
+                self._initialize_klines_if_needed(kline)
+                self._update_klines(kline)
+            finally:
+                self.data_lock.release()
+        else:
+            return
+
+        self._call_on_kline()
+
+        if kline.finished:
+            self._call_on_kline_finished()
 
 
 class Signal:

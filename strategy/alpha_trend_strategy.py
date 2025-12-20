@@ -43,17 +43,13 @@ class AlphaTrendStrategyConfig(BaseModel):
 
 class AlphaTrendStrategy(MultiTimeframeStrategy):
     def __init__(self, ex_client: ExSwapClient, config: AlphaTrendStrategyConfig):
-        super().__init__()
-        self.config = config
-        self.ex_client = ex_client
-
         # Validate timeframes configuration
-        if not self.config.timeframes or len(self.config.timeframes) < 2:
+        if not config.timeframes or len(config.timeframes) < 2:
             raise ValueError("At least 2 timeframes must be configured (main and auxiliary)")
 
-        # Add required timeframes
-        for timeframe in self.config.timeframes:
-            self.add_timeframe(timeframe)
+        super().__init__(config.timeframes)
+        self.config = config
+        self.ex_client = ex_client
 
         # Initialize signals for different timeframes
         self.signals: Dict[str, AlphaTrendSignal] = {}
@@ -237,11 +233,11 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
     def _check_entry_signals(self):
         """Check for entry signals on main timeframe"""
         main_timeframe = self.config.timeframes[0]
-        df = self.klines_to_dataframe(main_timeframe)
+        df = self.klines(main_timeframe)
         if df.empty or len(df) < 10:
             return
 
-        current_kline = self.get_last_kline(main_timeframe)
+        current_kline = self.latest_kline(main_timeframe)
         if not current_kline:
             return
 
@@ -262,11 +258,11 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
         if not self.position:
             return
 
-        df = self.klines_to_dataframe(timeframe)
+        df = self.klines(timeframe)
         if df.empty:
             return
 
-        current_kline = self.get_last_kline(timeframe)
+        current_kline = self.latest_kline(timeframe)
         if not current_kline:
             return
 
@@ -410,4 +406,3 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
 
         except Exception as e:
             logger.error(f"Failed to load strategy state from {backup_path}: {e}")
-
