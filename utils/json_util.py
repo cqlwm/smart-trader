@@ -1,5 +1,6 @@
 import json
 from enum import Enum
+import os
 from typing import Any
 
 def custom_serializer(obj: Any):
@@ -13,6 +14,8 @@ def dumps(obj: Any) -> str:
     return json.dumps(obj, default=custom_serializer)
 
 def dump_file(obj: Any, path: str):
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w') as file:
         json.dump(obj, file, default=custom_serializer)
         file.write('\n')
