@@ -170,6 +170,7 @@ class SignalGridStrategyConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
     symbol: Symbol
+    timeframe: str
     position_side: PositionSide = PositionSide.LONG
     master_side: OrderSide = OrderSide.BUY
     per_order_qty: float = 0.02
@@ -214,8 +215,8 @@ class SignalGridStrategyConfig(BaseModel):
 
 class SignalGridStrategy(SingleTimeframeStrategy):
 
-    def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient, timeframe: str):
-        super().__init__(timeframe)
+    def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient):
+        super().__init__(config.timeframe)
         self.config = config
         self.ex_client = ex_client
 

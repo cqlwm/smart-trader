@@ -3,6 +3,7 @@ import log
 import os
 from data_event_loop import BinanceDataEventLoop
 from client.binance_client import BinanceSwapClient
+from task.strategy_task import StrategyTask, MultiTimeframeStrategyTask
 import dotenv
 
 dotenv.load_dotenv()
@@ -35,12 +36,10 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 
 if __name__ == '__main__':
 
-    from template import hypeusdt, btcusdc
+    from template import hypeusdt, ethusdc
     
     tasks = [
-        # btcusdc.short_sell(main_binance_client),
-        # btcusdc.long_buy(main_binance_client),
-
+        ethusdc.alpha_trend(main_binance_client),
         hypeusdt.short_sell(copy_trading_binance_client),
     ]
 
@@ -48,12 +47,10 @@ if __name__ == '__main__':
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
 
     for task in tasks:
-        sub_key = task.symbol.binance_ws_sub_kline(task.timeframe)
-        if sub_key not in kline_subscribes:
-            kline_subscribes.append(sub_key)
+        for timeframe in task.strategy.timeframes:
+            sub_key = task.symbol.binance_ws_sub_kline(timeframe)
+            if sub_key not in kline_subscribes:
+                kline_subscribes.append(sub_key)
         data_event_loop.add_task(task)
 
     data_event_loop.start()
-
-
-

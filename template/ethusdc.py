@@ -5,6 +5,7 @@ from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyCon
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
 from strategy.scalping_strategy import ScalpingStrategy, ScalpingStrategyConfig
+from strategy.alpha_trend_strategy import AlphaTrendStrategy, AlphaTrendStrategyConfig
 from config import DATA_PATH
 from task.strategy_task import StrategyTask
 
@@ -16,6 +17,7 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
 
     config=SignalGridStrategyConfig(
         symbol=symbol,
+        timeframe=timeframe,
         position_side=PositionSide.LONG,
         master_side=OrderSide.BUY,
         per_order_qty=0.1,
@@ -40,7 +42,7 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
-    return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
+    return StrategyTask(symbol=symbol, strategy=strategy)
 
 def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
     symbol=Symbol(base="eth", quote="usdc")
@@ -48,6 +50,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
 
     config=SignalGridStrategyConfig(
         symbol=symbol,
+        timeframe=timeframe,
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
         per_order_qty=0.1,
@@ -72,8 +75,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
-    return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
-
+    return StrategyTask(symbol=symbol, strategy=strategy)
 
 def scalping(exchange_client: ExSwapClient) -> StrategyTask:
     timeframe='1m'
@@ -81,6 +83,7 @@ def scalping(exchange_client: ExSwapClient) -> StrategyTask:
 
     config = ScalpingStrategyConfig(
         symbol=symbol,
+        timeframe=timeframe,
         position_size=0.1,  # Small position size for scalping
         max_positions=2,  # Allow up to 2 concurrent positions
         stop_loss_rate=0.0129,  # 1.29% stop loss
@@ -94,4 +97,26 @@ def scalping(exchange_client: ExSwapClient) -> StrategyTask:
     )
     strategy = ScalpingStrategy(exchange_client, config)
 
-    return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
+    return StrategyTask(symbol=symbol, strategy=strategy)
+
+
+def alpha_trend(exchange_client: ExSwapClient) -> StrategyTask:
+    symbol = Symbol(base="eth", quote="usdc")
+    timeframes = ["15m", "5m"]  # Main timeframe first, then auxiliary
+
+    config = AlphaTrendStrategyConfig(
+        symbol=symbol,
+        timeframes=timeframes,
+        position_size=0.1,
+        stop_loss_rate=0.03,
+        distance_threshold=0.02,
+        atr_multiple=1.0,
+        period=8,
+        signal_reverse=False,
+        enable_short_trades=True,
+        enable_long_trades=True,
+        backup_file_path=f'{DATA_PATH}/alpha_trend_{symbol.simple()}.json',
+    )
+    strategy = AlphaTrendStrategy(exchange_client, config)
+
+    return StrategyTask(symbol=symbol, strategy=strategy)

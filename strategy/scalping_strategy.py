@@ -50,6 +50,7 @@ class ScalpPosition(BaseModel):
 class ScalpingStrategyConfig(BaseModel):
     """Scalping strategy configuration"""
     symbol: Symbol
+    timeframe: str
     position_size: float = 0.01  # Base position size per trade
     max_positions: int = 2  # Maximum concurrent positions (long + short)
     stop_loss_rate: float = 0.005  # 0.5% stop loss
@@ -63,8 +64,8 @@ class ScalpingStrategyConfig(BaseModel):
     place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER_OPEN  # Place order behavior
 
 class ScalpingStrategy(SingleTimeframeStrategy):
-    def __init__(self, ex_client: ExSwapClient, config: ScalpingStrategyConfig, timeframe: str):
-        super().__init__(timeframe)
+    def __init__(self, ex_client: ExSwapClient, config: ScalpingStrategyConfig):
+        super().__init__(config.timeframe)
         self.config = config
         self.ex_client = ex_client
 

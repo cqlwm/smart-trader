@@ -21,6 +21,8 @@ class Strategy(ABC):
         pass
 
 class KlineData(BaseModel):
+    model_config = {"arbitrary_types_allowed": True}
+
     timeframe: str
     klines: DataFrame
     latest_kline: Optional[Kline]
