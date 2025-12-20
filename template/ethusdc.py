@@ -107,8 +107,8 @@ def alpha_trend(exchange_client: ExSwapClient) -> StrategyTask:
     config = AlphaTrendStrategyConfig(
         symbol=symbol,
         timeframes=timeframes,
-        position_size=0.1,
-        stop_loss_rate=0.03,
+        position_size=0.01,
+        stop_loss_rate=0.02,
         distance_threshold=0.02,
         atr_multiple=1.0,
         period=8,
