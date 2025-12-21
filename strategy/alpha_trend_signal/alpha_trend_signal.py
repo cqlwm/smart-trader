@@ -24,7 +24,7 @@ _signal = 'signal'
 
 def _alpha_trend_signal(df: DataFrame, atr_multiple: float = 1.0, period: int = 8):
     # 计算技术指标
-    high_values, low_values, close_values, volume_values = df[[_high, _low, _close, _volume]].values.astype(np.float64)
+    high_values, low_values, close_values, volume_values = df[[_high, _low, _close, _volume]].values.T.astype(np.float64)
     atr_values = ta.ATR(high_values, low_values, close_values, timeperiod=period)
     atr_range_values = atr_values * atr_multiple
     atr_base_low_values = low_values - atr_range_values
