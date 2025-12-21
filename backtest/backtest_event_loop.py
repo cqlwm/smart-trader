@@ -18,7 +18,8 @@ class BacktestEventLoop(DataEventLoop):
     """
 
     def __init__(self, historical_klines: List[Kline], speed_multiplier: float = 1.0,
-                 on_progress_callback: Optional[Callable[[int, int], None]] = None):
+                 on_progress_callback: Optional[Callable[[int, int], None]] = None,
+                 start_index: int = 300):
         """
         初始化回测事件循环
 
@@ -26,13 +27,17 @@ class BacktestEventLoop(DataEventLoop):
             historical_klines: 历史K线数据列表（已按时间排序）
             speed_multiplier: 回放速度倍数，1.0为实时，0为手动步进
             on_progress_callback: 进度回调函数，参数为(当前索引, 总数)
+            start_index: 回测起始索引，默认300（为MultiTimeframeStrategy预留初始化数据）
         """
         super().__init__()
         self.historical_klines = historical_klines
         self.speed_multiplier = speed_multiplier
         self.on_progress_callback = on_progress_callback
 
-        self.current_index = 0
+        # 设置起始索引，确保在有效范围内
+        self.start_index = max(0, min(start_index, len(historical_klines) - 1))
+        self.current_index = self.start_index
+
         self.is_running = False
         self.is_paused = False
         self.backtest_client: Optional[BacktestClient] = None
@@ -41,7 +46,7 @@ class BacktestEventLoop(DataEventLoop):
         self.control_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
 
-        logger.info(f"BacktestEventLoop initialized with {len(historical_klines)} klines, speed: {speed_multiplier}x")
+        logger.info(f"BacktestEventLoop initialized with {len(historical_klines)} klines, start_index: {self.start_index}, speed: {speed_multiplier}x")
 
     def set_backtest_client(self, client: BacktestClient):
         """设置回测客户端"""
@@ -59,14 +64,14 @@ class BacktestEventLoop(DataEventLoop):
 
         self.is_running = True
         self.is_paused = False
-        self.current_index = 0
+        self.current_index = self.start_index  # 从start_index开始回测
         self.stop_event.clear()
 
         self.control_thread = threading.Thread(target=self._run_backtest)
         self.control_thread.daemon = True
         self.control_thread.start()
 
-        logger.info("Backtest started")
+        logger.info(f"Backtest started from index {self.start_index}")
 
     def stop(self):
         """停止回测"""
@@ -154,9 +159,10 @@ class BacktestEventLoop(DataEventLoop):
 
         kline = self.historical_klines[self.current_index]
 
-        # 更新回测客户端的价格
+        # 更新回测客户端的价格和时间戳
         if self.backtest_client:
             self.backtest_client.update_current_price(kline.symbol, kline.close)
+            self.backtest_client.update_current_timestamp(kline.timestamp)
 
         # 构造WebSocket消息格式的数据
         message_data = self._kline_to_ws_message(kline)
@@ -219,10 +225,18 @@ class BacktestEventLoop(DataEventLoop):
 
     @property
     def progress(self) -> float:
-        """获取回测进度（0.0-1.0）"""
+        """获取回测进度（0.0-1.0），相对于start_index计算"""
         if not self.historical_klines:
             return 0.0
-        return min(1.0, self.current_index / len(self.historical_klines))
+
+        # 计算实际回测范围（从start_index到结束）
+        total_backtest_klines = len(self.historical_klines) - self.start_index
+        if total_backtest_klines <= 0:
+            return 1.0
+
+        # 计算当前在回测范围内的进度
+        current_backtest_index = self.current_index - self.start_index
+        return min(1.0, max(0.0, current_backtest_index / total_backtest_klines))
 
     @property
     def current_kline(self) -> Optional[Kline]:

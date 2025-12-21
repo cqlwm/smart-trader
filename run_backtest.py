@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 from strategy.none_strategy import NoneStrategy
-from task.strategy_task import StrategyTask
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent
@@ -27,9 +26,13 @@ import log
 logger = log.getLogger(__name__)
 
 
-def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv"):
+def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv", start_index=300):
     """
     运行SignalGridStrategy回测示例
+
+    Args:
+        data_file: 数据文件路径
+        start_index: 回测起始索引，默认300（为MultiTimeframeStrategy预留初始化数据）
     """
     # 配置参数
     symbol = Symbol(base="ETH", quote="USDT")
@@ -62,10 +65,12 @@ def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv"):
         )
 
         # 4. 创建策略实例
-        strategy = NoneStrategy(Symbol(base='eth', quote='usdc'), '1m')
+        strategy = NoneStrategy(Symbol(base='eth', quote='usdc'), '1m', backtest_client)
 
         # 5. 创建回测任务
-        backtest_task = StrategyTask(symbol, strategy)
+        # 准备历史数据字典
+        historical_data = {timeframe: historical_klines}
+        backtest_task = BacktestTask(symbol, strategy, backtest_client, historical_data)
 
         # 6. 创建回测事件循环
         def progress_callback(current, total):
@@ -76,7 +81,8 @@ def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv"):
         event_loop = BacktestEventLoop(
             historical_klines=historical_klines,
             speed_multiplier=0.0,  # 手动控制速度，便于观察
-            on_progress_callback=progress_callback
+            on_progress_callback=progress_callback,
+            start_index=start_index
         )
         event_loop.set_backtest_client(backtest_client)
 
@@ -94,11 +100,11 @@ def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv"):
         event_loop.stop()
 
         # 8. 获取回测结果
-        
-        trade_history = backtest_client.get_trade_history()
+        results = backtest_task.get_results()
+        trade_history = results['trade_history']
 
         logger.info(f"回测完成! 总交易次数: {len(trade_history)}")
-        logger.info(f"最终余额: ${backtest_client.get_final_balance():.2f}")
+        logger.info(f"最终余额: ${results['final_balance']:.2f}")
 
         # 9. 分析结果
         analyzer = BacktestAnalyzer(initial_balance)

@@ -1,12 +1,14 @@
+from client.ex_client import ExClient
 from model import Symbol
 from strategy import SingleTimeframeStrategy
 
 
 class NoneStrategy(SingleTimeframeStrategy):
     """空策略，不做任何操作"""
-    def __init__(self, symbol: Symbol, timeframe: str):
+    def __init__(self, symbol: Symbol, timeframe: str, ex_clitent: ExClient):
         super().__init__(timeframe)
         self.symbol = symbol
+        self.ex_client = ex_clitent
 
     
     def _on_kline_finished(self):

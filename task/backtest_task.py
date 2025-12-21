@@ -1,7 +1,7 @@
 import json
 import log
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from data_event_loop import Task
 from model import Symbol, Kline
 from strategy import MultiTimeframeStrategy
@@ -15,7 +15,8 @@ class BacktestTask(Task):
     回测任务，使用模拟客户端运行策略
     """
 
-    def __init__(self, symbol: Symbol, strategy: MultiTimeframeStrategy, backtest_client: BacktestClient):
+    def __init__(self, symbol: Symbol, strategy: MultiTimeframeStrategy, backtest_client: BacktestClient,
+                 historical_data: Optional[Dict[str, List[Kline]]] = None):
         super().__init__()
         self.name: str = 'BacktestTask'
         self.symbol: Symbol = symbol
@@ -25,6 +26,15 @@ class BacktestTask(Task):
 
         # 设置策略的客户端
         self.strategy.ex_client = backtest_client
+
+        # 加载历史数据到客户端（用于多时间框架策略的fetch_ohlcv）
+        if historical_data:
+            for timeframe in self.timeframes:
+                if timeframe in historical_data:
+                    backtest_client.load_historical_data(timeframe, historical_data[timeframe])
+                    logger.info(f"Loaded {len(historical_data[timeframe])} historical klines for {timeframe} into backtest client")
+                else:
+                    logger.warning(f"No historical data provided for timeframe {timeframe}")
 
     def run(self, data: str) -> None:
         """

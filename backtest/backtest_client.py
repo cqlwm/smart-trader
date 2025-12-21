@@ -5,7 +5,7 @@ from datetime import datetime
 import threading
 
 from client.ex_client import ExSwapClient
-from model import Symbol, SymbolInfo, OrderSide, PositionSide, OrderStatus
+from model import Symbol, SymbolInfo, OrderSide, PositionSide, OrderStatus, Kline
 import log
 
 logger = log.getLogger(__name__)
@@ -77,6 +77,10 @@ class BacktestClient(ExSwapClient):
 
         # 当前市场价格（用于模拟成交）
         self.current_prices: Dict[str, float] = {}
+
+        # 历史数据存储和时间同步
+        self.historical_data: Dict[str, List[Kline]] = {}  # timeframe -> sorted klines
+        self.current_timestamp: int = 0  # 当前回测时间戳
 
         logger.info(f"BacktestClient initialized with balance: {initial_balance}")
 
@@ -286,3 +290,49 @@ class BacktestClient(ExSwapClient):
     def get_final_balance(self) -> float:
         """获取最终余额"""
         return self._balance
+
+    def load_historical_data(self, timeframe: str, klines: List[Kline]):
+        """加载指定时间框架的历史数据"""
+        with self.lock:
+            # 确保数据按时间戳排序
+            self.historical_data[timeframe] = sorted(klines, key=lambda k: k.timestamp)
+            logger.info(f"Loaded {len(klines)} klines for timeframe {timeframe}")
+
+    def update_current_timestamp(self, timestamp: int):
+        """更新当前回测时间戳"""
+        with self.lock:
+            self.current_timestamp = timestamp
+
+    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> List[List[Any]]:
+        """返回截至当前回测时间的K线数据，模拟真实交易所的fetch_ohlcv接口"""
+        with self.lock:
+            if timeframe not in self.historical_data:
+                logger.warning(f"No historical data available for timeframe {timeframe}")
+                return []
+
+            klines = self.historical_data[timeframe]
+
+            # 过滤出当前时间戳之前的K线数据
+            current_klines = [k for k in klines if k.timestamp <= self.current_timestamp]
+
+            if not current_klines:
+                logger.warning(f"No klines available before timestamp {self.current_timestamp} for timeframe {timeframe}")
+                return []
+
+            # 返回最近的limit根K线
+            recent_klines = current_klines[-limit:] if len(current_klines) >= limit else current_klines
+
+            # 转换为OHLCV格式 [timestamp, open, high, low, close, volume]
+            ohlcv_data = []
+            for kline in recent_klines:
+                ohlcv_data.append([
+                    kline.timestamp,
+                    kline.open,
+                    kline.high,
+                    kline.low,
+                    kline.close,
+                    kline.volume
+                ])
+
+            logger.debug(f"Returning {len(ohlcv_data)} klines for {symbol.binance()} {timeframe} at timestamp {self.current_timestamp}")
+            return ohlcv_data
