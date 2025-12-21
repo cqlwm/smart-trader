@@ -1,33 +1,9 @@
 import sys
 import os
 import dotenv
-
-# Add project root to Python path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from client.binance_client import BinanceSwapClient
-from model import Symbol
-import log
+import ccxt
 
 dotenv.load_dotenv()
-
-logger = log.getLogger(__name__)
-
-def parse_symbol(symbol_str: str) -> Symbol:
-    """Parse symbol string like 'BTCUSDT' into Symbol object"""
-    # Assume format is BASEQUOTE, where base is everything except last 4-5 chars for quote
-    # Common quotes are USDT, USDC, BUSD, etc.
-    if symbol_str.upper().endswith(('USDT', 'USDC', 'BUSD', 'TUSD')):
-        quote_len = 4
-    elif symbol_str.upper().endswith(('BTC', 'ETH')):
-        quote_len = 3
-    else:
-        # Default assumption: last 4 characters are quote
-        quote_len = 4
-
-    base = symbol_str[:-quote_len]
-    quote = symbol_str[-quote_len:]
-    return Symbol(base=base, quote=quote)
 
 if __name__ == '__main__':
     if len(sys.argv) != 3:
@@ -46,21 +22,25 @@ if __name__ == '__main__':
     if not api_key or not api_secret:
         raise ValueError('BINANCE_API_KEY and BINANCE_API_SECRET must be set in environment variables')
 
-    logger.info(f'api_key: {api_key[:5]}*****, api_secret: {api_secret[:5]}*****, is_test: {is_test}')
+    print(f'api_key: {api_key[:5]}*****, api_secret: {api_secret[:5]}*****, is_test: {is_test}')
 
-    # Create Binance client
-    binance_client = BinanceSwapClient(
-        api_key=api_key,
-        api_secret=api_secret,
-        is_test=is_test,
-    )
+    # Create Binance client using ccxt
+    exchange = ccxt.binance({
+        'apiKey': api_key,
+        'secret': api_secret,
+        'options': {
+            'defaultType': 'future',
+        }
+    })
 
-    # Parse symbol
-    symbol = parse_symbol(symbol_str)
+    if is_test:
+        exchange.set_sandbox_mode(True)
 
     try:
-        # Query the order
-        order = binance_client.query_order(order_id, symbol)
+        # Query the order using ccxt
+        order = exchange.fetch_order(id='', symbol=symbol_str.upper(), params={
+            'origClientOrderId': order_id
+        })
 
         # Print the order information
         print(f"Order ID: {order_id}")
@@ -80,6 +60,5 @@ if __name__ == '__main__':
         print(order)
 
     except Exception as e:
-        logger.error(f"Failed to query order {order_id} for symbol {symbol_str}: {str(e)}")
         print(f"Error: {str(e)}")
         sys.exit(1)
