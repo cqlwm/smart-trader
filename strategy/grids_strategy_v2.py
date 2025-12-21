@@ -361,6 +361,8 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                             continue
                         elif OrderStatus.is_open(exit_status):
                             self.ex_client.cancel(order.exit_id, self.config.symbol)
+                        else:
+                            pass
 
                 exit_qty += order.quantity
                 order.exit_price = self.latest_kline_obj.close
@@ -423,34 +425,42 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         refresh_orders = False
 
         # 检查是否需要触发实时止盈订单
+        closed_orders = []
         if self.config.fixed_rate_take_profit and self.config.take_profit_use_limit_order:
             for order in orders_to_process:
-                if order.exit_price or order.quantity == 0:
+                if order.quantity == 0:
                     continue
+                
+                if order.exit_id and order.exit_price:
+                    # 检查退出是否成交
+                    if self.latest_kline_obj.low <= order.exit_price <= self.latest_kline_obj.high:
+                        exit_order_query_result = self.ex_client.query_order(order.exit_id, self.config.symbol)
+                        if exit_order_query_result:
+                            exit_status = exit_order_query_result['status']
+                            if OrderStatus.is_closed(exit_status):
+                                closed_orders.append(order)
+                            elif OrderStatus.is_open(exit_status):
+                                pass # 等待订单成交
+                            else:
+                                logger.warning(f'Unknown exit order status: {exit_status} for order: {order}')
+                else:
+                    # 检查进入订单是否成交
+                    if OrderStatus.is_open(order.status):
+                        entry_order_query_result = self.ex_client.query_order(order.entry_id, self.config.symbol)
+                        if entry_order_query_result:
+                            order.status = entry_order_query_result['status']
+                    
+                    # 如果进入订单成交，触发实时止盈订单
+                    if OrderStatus.is_closed(order.status):
+                        exit_order_side = self.config.master_side.reversal()
+                        exit_order_id = build_order_id(exit_order_side)
+                        exit_price = order.price * (1 + self.config.master_side.to_int() * self.config.fixed_take_profit_rate)
+                        exit_qty = order.quantity * self.config.close_position_ratio
 
-                exit_order_side = self.config.master_side.reversal()
-                exit_order_id = build_order_id(exit_order_side)
-                exit_price = order.price * (1 + self.config.master_side.to_int() * self.config.fixed_take_profit_rate)
-
-                if OrderStatus.is_open(order.status):
-                    exit_order_query_result = self.ex_client.query_order(order.entry_id, self.config.symbol)
-                    if exit_order_query_result:
-                        order.status = exit_order_query_result['status']
-
-                if OrderStatus.is_closed(order.status):
-                    exit_order_result = self.place_order(exit_order_id, exit_order_side, order.quantity, exit_price, first_price=exit_price)
-                    if exit_order_result and exit_order_result.get('clientOrderId'):
-                        order.exit_id = exit_order_result['clientOrderId']
-                        order.exit_price = exit_price
-                        refresh_orders = True
-
-
-            # 检查退出订单是否完成并移除已完成的订单
-            closed_orders = []
-            for order in orders_to_process:
-                if order.exit_id and order.exit_price and self.latest_kline_obj.low <= order.exit_price <= self.latest_kline_obj.high:
-                    exit_order_query_result = self.ex_client.query_order(order.exit_id, self.config.symbol)
-                    if exit_order_query_result and OrderStatus.is_closed(exit_order_query_result['status']):
-                        closed_orders.append(order)
+                        exit_order_result = self.place_order(exit_order_id, exit_order_side, exit_qty, exit_price, first_price=exit_price)
+                        if exit_order_result and exit_order_result.get('clientOrderId'):
+                            order.exit_id = exit_order_result['clientOrderId']
+                            order.exit_price = exit_price
+                            refresh_orders = True
 
             self.order_manager.record_orders(closed_orders, refresh_orders=refresh_orders)
