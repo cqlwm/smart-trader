@@ -20,6 +20,7 @@ from task.backtest_task import BacktestTask
 from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
+from config import DATA_PATH
 import log
 
 logger = log.getLogger(__name__)
@@ -30,7 +31,7 @@ def run_signal_grid_backtest(data_file="data/ethusdt_2025_10_1m.csv"):
     运行SignalGridStrategy回测
     """
     # 配置参数
-    symbol = Symbol(base="ETH", quote="USDT")
+    symbol = Symbol(base="eth", quote="usdt")
     timeframe = "1m"
 
     # 检查数据文件是否存在
@@ -58,32 +59,36 @@ def run_signal_grid_backtest(data_file="data/ethusdt_2025_10_1m.csv"):
             taker_fee=0.0004   # 0.04%
         )
 
-        # 3. 创建策略配置
+        # 3. 创建策略配置 (使用与template/ethusdt.py相同的配置)
         config = SignalGridStrategyConfig(
             symbol=symbol,
             timeframe=timeframe,
-            position_side=PositionSide.LONG,  # 做多网格
-            master_side=OrderSide.BUY,  # 买入方向
-            per_order_qty=0.01,  # 每单0.01 ETH
-            grid_spacing_rate=0.01,  # 网格间距1% (放宽间距)
-            max_order=20,  # 最大20个订单 (减少数量)
-            highest_price=5000.0,  # 最高价限制
-            lowest_price=3000.0,   # 最低价限制
-            enable_exit_signal=False,  # 先禁用出场信号，使用纯网格策略
-            signal=None,  # 不使用信号
-            exit_signal_take_profit_min_rate=0.005,  # 出场信号最小盈利0.5% (降低要求)
-            fixed_rate_take_profit=True,  # 启用固定比例止盈
-            fixed_take_profit_rate=0.02,  # 固定止盈2% (提高止盈率)
-            enable_order_stop_loss=True,  # 启用订单止损
-            order_stop_loss_rate=0.05,   # 止损5% (放宽止损)
-            order_file_path=f'data/signal_grid_backtest_{symbol.simple()}_{timeframe}.json',
+            position_side=PositionSide.LONG,
+            master_side=OrderSide.BUY,
+            per_order_qty=0.02,
+            grid_spacing_rate=0.002,
+            max_order=24,
+            enable_exit_signal=True,
+            signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
+            exit_signal_take_profit_min_rate=0.15,
+            fixed_rate_take_profit=True,
+            fixed_take_profit_rate=0.15,
+            order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
+
+            enable_order_stop_loss=True,
+            order_stop_loss_rate=0.02,
+            enable_trailing_stop=True,
+            trailing_stop_rate=0.02,
+            trailing_stop_activation_profit_rate=0.02,
         )
 
         # 4. 创建策略实例
         strategy = SignalGridStrategy(config, backtest_client)
 
         # 5. 创建回测任务
-        backtest_task = BacktestTask(symbol, strategy, backtest_client)
+        # 准备历史数据字典
+        historical_data = {timeframe: historical_klines}
+        backtest_task = BacktestTask(symbol, strategy, backtest_client, historical_data)
 
         # 6. 创建回测事件循环
         def progress_callback(current, total):

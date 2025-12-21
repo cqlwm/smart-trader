@@ -15,6 +15,7 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
 
     config=SignalGridStrategyConfig(
         symbol=symbol,
+        timeframe=timeframe,
         position_side=PositionSide.LONG,
         master_side=OrderSide.BUY,
         per_order_qty=0.02,
@@ -35,4 +36,4 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
-    return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
+    return StrategyTask(symbol=symbol, strategy=strategy)
