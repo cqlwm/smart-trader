@@ -38,7 +38,7 @@ if __name__ == '__main__':
     from template import hypeusdt, ethusdc
     
     tasks = [
-        ethusdc.alpha_trend(main_binance_client),
+        # ethusdc.alpha_trend(main_binance_client),
         hypeusdt.short_sell(copy_trading_binance_client),
     ]
 
