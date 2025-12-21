@@ -116,7 +116,7 @@ class Symbol(BaseModel):
         return f'{self.base}{self.quote}'.upper()
     
     def binance_ws_sub_kline(self, timeframe: str):
-        return f'{self.binance()}@kline_{timeframe}'.lower()
+        return f'{self.binance().lower()}@kline_{timeframe}'
     
     def simple(self):
         return f'{self.base}{self.quote}'

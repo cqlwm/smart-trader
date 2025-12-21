@@ -8,20 +8,23 @@ import requests
 from model import PositionSide, Symbol, PlaceOrderBehavior, SymbolInfo
 from model import OrderSide
 import log
+from ccxt.base.types import ConstructorArgs
 
 logger = log.getLogger('BinanceSwapClient')
 
 class BinanceSwapClient(ExSwapClient):
     def __init__(self, api_key: str, api_secret: str, is_test: bool = False):
         self.exchange_name = 'binance'
-        self.exchange = ccxt.binance({  # type: ignore
-            'apiKey': api_key,
-            'secret': api_secret,
-            'options': {
-                'defaultType': 'future',
+        
+        self.exchange = ccxt.binance(ConstructorArgs(
+            apiKey=api_key,
+            secret=api_secret,
+            options={
+                "defaultType": "future",
             }
-        })
+        ))
         self.exchange.set_sandbox_mode(is_test)
+        self.exchange.load_markets()
         self.exchange_info: Dict[str, Any] = {}
 
     def symbol_info(self, symbol: Symbol) -> SymbolInfo:
