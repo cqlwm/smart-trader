@@ -4,4 +4,4 @@ WORKDIR /usr/local/app
 COPY ./pyproject.toml ./uv.lock ./
 RUN uv sync --frozen --no-install-project
 
-CMD ["uv", "run", "python", "run.py"]
+CMD ["python", "run.py"]
