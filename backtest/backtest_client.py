@@ -33,6 +33,7 @@ class BacktestOrder:
             'clientOrderId': self.custom_id,
             'symbol': self.symbol.binance(),
             'side': self.side.value,
+            'position_side': self.position_side.value,
             'type': self.order_type,
             'price': self.price,
             'amount': self.quantity,
@@ -143,6 +144,8 @@ class BacktestClient(ExSwapClient):
         order_type = 'limit' if price else 'market'
         current_price = self.get_current_price(symbol)
 
+        logger.debug(f"Placing order {custom_id}: symbol={symbol.binance()}, current_price={current_price}, prices={self.current_prices}")
+
         if not current_price:
             logger.warning(f"No current price for {symbol.binance()}, skipping order")
             return None
@@ -195,7 +198,7 @@ class BacktestClient(ExSwapClient):
         # 记录到历史
         self.order_history.append(order)
 
-        logger.debug(f"Order {order.custom_id} filled: {order.filled_quantity} @ {order.filled_price}")
+        logger.info(f"Order {order.custom_id} filled: {order.filled_quantity} @ {order.filled_price}, total orders: {len(self.order_history)}")
 
     def _update_balance_and_position(self, order: BacktestOrder):
         """更新余额和持仓"""

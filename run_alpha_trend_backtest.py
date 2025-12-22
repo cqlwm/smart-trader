@@ -52,6 +52,12 @@ def run_alpha_trend_backtest(data_files=None, start_index=300):
             return
 
     try:
+        # Delete strategy state file for fresh backtest
+        state_file = "data/alpha_trend_ethusdt.json"
+        if os.path.exists(state_file):
+            os.remove(state_file)
+            logger.info("Removed existing strategy state file for fresh backtest")
+
         # 1. 加载历史数据
         logger.info("加载历史数据...")
         data_loader = HistoricalDataLoader()
@@ -79,6 +85,13 @@ def run_alpha_trend_backtest(data_files=None, start_index=300):
         # 使用模板创建策略任务
         strategy_task = alpha_trend(mock_client)
         strategy = strategy_task.strategy
+
+        # For backtesting, reset strategy state to start fresh
+        strategy.position = None
+        strategy.current_monitor_timeframe_index = 0
+        strategy.total_trades = 0
+        strategy.winning_trades = 0
+        strategy.total_pnl = 0.0
 
         # 4. 创建回测任务
         backtest_task = BacktestTask(symbol, strategy, backtest_client, historical_data)
@@ -110,12 +123,28 @@ def run_alpha_trend_backtest(data_files=None, start_index=300):
 
         event_loop.stop()
 
+        # 等待所有异步操作完成
+        import time
+        time.sleep(1)
+
         # 7. 获取回测结果
         results = backtest_task.get_results()
         trade_history = results['trade_history']
 
         logger.info(f"回测完成! 总交易次数: {len(trade_history)}")
         logger.info(f"最终余额: ${results['final_balance']:.2f}")
+
+        # Debug: Print trade history details
+        if trade_history:
+            logger.info(f"First trade: {trade_history[0]}")
+        else:
+            logger.info("No trades in history")
+
+        # Debug: Check backtest client order history
+        backtest_orders = backtest_client.get_trade_history()
+        logger.info(f"Backtest client has {len(backtest_orders)} orders")
+        if backtest_orders:
+            logger.info(f"First order: {backtest_orders[0]}")
 
         # 8. 分析结果
         analyzer = BacktestAnalyzer(initial_balance)

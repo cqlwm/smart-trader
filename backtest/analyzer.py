@@ -32,25 +32,35 @@ class BacktestAnalyzer:
         df['filled_quantity'] = df['filled_quantity'].astype(float)
         df['fee'] = df['fee'].astype(float)
 
+        # 识别并计算已完成交易的盈亏
+        completed_trades = self._identify_completed_trades(df)
+
+        if not completed_trades:
+            logger.warning("No completed trades found in order history")
+            return self._empty_results()
+
+        # 转换为交易DataFrame
+        trades_df = pd.DataFrame(completed_trades)
+
         # 计算收益
-        total_return = self._calculate_total_return(df)
-        annualized_return = self._calculate_annualized_return(df, total_return)
+        total_return = trades_df['pnl'].sum()
+        annualized_return = self._calculate_annualized_return(trades_df, total_return)
 
         # 计算风险指标
-        volatility = self._calculate_volatility(df)
-        max_drawdown = self._calculate_max_drawdown(df)
+        volatility = self._calculate_volatility_from_trades(trades_df)
+        max_drawdown = self._calculate_max_drawdown_from_trades(trades_df)
         sharpe_ratio = self._calculate_sharpe_ratio(total_return, volatility)
 
         # 计算交易统计
-        win_rate = self._calculate_win_rate(df)
-        profit_factor = self._calculate_profit_factor(df)
-        avg_trade = self._calculate_avg_trade(df)
+        win_rate = self._calculate_win_rate_from_trades(trades_df)
+        profit_factor = self._calculate_profit_factor_from_trades(trades_df)
+        avg_trade = self._calculate_avg_trade_from_trades(trades_df)
 
         # 计算其他指标
-        total_trades = len(df)
-        total_fees = df['fee'].sum()
-        best_trade = df['filled_price'].max() if not df.empty else 0
-        worst_trade = df['filled_price'].min() if not df.empty else 0
+        total_trades = len(trades_df)
+        total_fees = trades_df['total_fees'].sum()
+        best_trade = trades_df['pnl'].max() if not trades_df.empty else 0
+        worst_trade = trades_df['pnl'].min() if not trades_df.empty else 0
 
         return {
             'summary': {
@@ -76,9 +86,9 @@ class BacktestAnalyzer:
                 'best_trade': best_trade,
                 'worst_trade': worst_trade
             },
-            'equity_curve': self._calculate_equity_curve(df),
-            'monthly_returns': self._calculate_monthly_returns(df),
-            'trade_analysis': self._analyze_trades(df)
+            'equity_curve': self._calculate_equity_curve_from_trades(trades_df),
+            'monthly_returns': self._calculate_monthly_returns_from_trades(trades_df),
+            'trade_analysis': self._analyze_completed_trades(trades_df)
         }
 
     def _empty_results(self) -> Dict[str, Any]:
@@ -112,16 +122,106 @@ class BacktestAnalyzer:
             'trade_analysis': {}
         }
 
-    def _calculate_total_return(self, df: pd.DataFrame) -> float:
-        """计算总收益"""
-        if df.empty:
-            return 0.0
+    def _identify_completed_trades(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """识别并计算已完成的交易"""
+        completed_trades = []
 
-        # 简单起见，假设所有交易都是买入并在某个时候卖出
-        # 这里需要根据实际的交易逻辑来计算
-        # 暂时用成交总额的简单计算
-        total_value = (df['filled_price'] * df['filled_quantity']).sum()
-        return total_value - self.initial_balance
+        # 按symbol和position_side分组
+        grouped = df.groupby(['symbol', 'position_side'])
+
+        for (symbol, position_side), group in grouped:
+            # 按时间排序
+            group = group.sort_values('timestamp')
+
+            # 初始化交易跟踪
+            open_positions = []  # [(quantity, entry_price, entry_fee, entry_time), ...]
+
+            for _, order in group.iterrows():
+                quantity = order['filled_quantity']
+                price = order['filled_price']
+                fee = order['fee']
+                timestamp = order['timestamp']
+                side = order['side']
+
+                if position_side == 'long':
+                    if side == 'BUY':
+                        # 开多仓
+                        open_positions.append((quantity, price, fee, timestamp))
+                    elif side == 'SELL':
+                        # 平多仓
+                        while quantity > 0 and open_positions:
+                            pos_qty, entry_price, entry_fee, entry_time = open_positions[0]
+
+                            if pos_qty <= quantity:
+                                # 完全平掉这个仓位
+                                close_qty = pos_qty
+                                open_positions.pop(0)
+                            else:
+                                # 部分平仓
+                                close_qty = quantity
+                                open_positions[0] = (pos_qty - close_qty, entry_price, entry_fee, entry_time)
+
+                            # 计算盈亏
+                            if position_side == 'long':
+                                pnl = (price - entry_price) * close_qty
+                            else:
+                                pnl = (entry_price - price) * close_qty
+
+                            total_fees = entry_fee + fee
+
+                            completed_trades.append({
+                                'symbol': symbol,
+                                'position_side': position_side,
+                                'entry_price': entry_price,
+                                'exit_price': price,
+                                'quantity': close_qty,
+                                'pnl': pnl,
+                                'total_fees': total_fees,
+                                'net_pnl': pnl - total_fees,
+                                'entry_time': entry_time,
+                                'exit_time': timestamp
+                            })
+
+                            quantity -= close_qty
+
+                elif position_side == 'short':
+                    if side == 'SELL':
+                        # 开空仓
+                        open_positions.append((quantity, price, fee, timestamp))
+                    elif side == 'BUY':
+                        # 平空仓
+                        while quantity > 0 and open_positions:
+                            pos_qty, entry_price, entry_fee, entry_time = open_positions[0]
+
+                            if pos_qty <= quantity:
+                                # 完全平掉这个仓位
+                                close_qty = pos_qty
+                                open_positions.pop(0)
+                            else:
+                                # 部分平仓
+                                close_qty = quantity
+                                open_positions[0] = (pos_qty - close_qty, entry_price, entry_fee, entry_time)
+
+                            # 计算盈亏
+                            pnl = (entry_price - price) * close_qty
+                            total_fees = entry_fee + fee
+
+                            completed_trades.append({
+                                'symbol': symbol,
+                                'position_side': position_side,
+                                'entry_price': entry_price,
+                                'exit_price': price,
+                                'quantity': close_qty,
+                                'pnl': pnl,
+                                'total_fees': total_fees,
+                                'net_pnl': pnl - total_fees,
+                                'entry_time': entry_time,
+                                'exit_time': timestamp
+                            })
+
+                            quantity -= close_qty
+
+        return completed_trades
 
     def _calculate_annualized_return(self, df: pd.DataFrame, total_return: float) -> float:
         """计算年化收益率"""
@@ -231,8 +331,14 @@ class BacktestAnalyzer:
         if df.empty:
             return []
 
+        # 确保timestamp是datetime
+        if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
+            df = df.copy()
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+
         # 按月分组计算收益
-        df['month'] = df['timestamp'].dt.to_period('M')
+        df = df.copy()
+        df['month'] = df['timestamp'].dt.strftime('%Y-%m')
         monthly = df.groupby('month')['filled_price'].sum()
 
         returns = []
@@ -244,6 +350,100 @@ class BacktestAnalyzer:
             })
 
         return returns
+
+    def _calculate_volatility_from_trades(self, df: pd.DataFrame) -> float:
+        """基于交易计算波动率"""
+        if df.empty or len(df) < 2:
+            return 0.0
+
+        # 计算交易收益率的波动率
+        returns = df['pnl'].pct_change().dropna()
+        if returns.empty:
+            return 0.0
+
+        return returns.std() * np.sqrt(365)  # 年化波动率
+
+    def _calculate_max_drawdown_from_trades(self, df: pd.DataFrame) -> float:
+        """基于交易计算最大回撤"""
+        if df.empty:
+            return 0.0
+
+        # 计算累积收益
+        cumulative = (1 + df['pnl'].pct_change().fillna(0)).cumprod()
+        running_max = cumulative.expanding().max()
+        drawdown = (cumulative - running_max) / running_max
+
+        return drawdown.min() * self.initial_balance
+
+    def _calculate_win_rate_from_trades(self, df: pd.DataFrame) -> float:
+        """基于交易计算胜率"""
+        if df.empty:
+            return 0.0
+
+        winning_trades = (df['pnl'] > 0).sum()
+        return winning_trades / len(df)
+
+    def _calculate_profit_factor_from_trades(self, df: pd.DataFrame) -> float:
+        """基于交易计算盈利因子"""
+        if df.empty:
+            return 0.0
+
+        profits = df[df['pnl'] > 0]['pnl'].sum()
+        losses = abs(df[df['pnl'] <= 0]['pnl'].sum())
+
+        if losses == 0:
+            return float('inf')
+
+        return profits / losses
+
+    def _calculate_avg_trade_from_trades(self, df: pd.DataFrame) -> float:
+        """基于交易计算平均交易收益"""
+        if df.empty:
+            return 0.0
+
+        return df['pnl'].mean()
+
+    def _calculate_equity_curve_from_trades(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """基于交易计算权益曲线"""
+        if df.empty:
+            return []
+
+        # 按时间排序
+        df = df.sort_values('exit_time')
+
+        # 计算累积收益
+        cumulative_pnl = df['pnl'].cumsum()
+        equity = self.initial_balance + cumulative_pnl
+
+        curve = []
+        for i, (timestamp, eq, pnl) in enumerate(zip(df['exit_time'], equity, df['pnl'])):
+            curve.append({
+                'timestamp': timestamp.timestamp() * 1000 if hasattr(timestamp, 'timestamp') else timestamp,
+                'equity': eq,
+                'return': pnl
+            })
+
+        return curve
+
+    def _calculate_monthly_returns_from_trades(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
+        """基于交易计算月度收益"""
+        # 暂时简化实现，返回空列表
+        return []
+
+    def _analyze_completed_trades(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """分析已完成交易详情"""
+        if df.empty:
+            return {}
+
+        return {
+            'largest_win': df['pnl'].max(),
+            'largest_loss': df['pnl'].min(),
+            'avg_win': df[df['pnl'] > 0]['pnl'].mean() if (df['pnl'] > 0).any() else 0,
+            'avg_loss': df[df['pnl'] <= 0]['pnl'].mean() if (df['pnl'] <= 0).any() else 0,
+            'trade_count': len(df),
+            'profitable_trades': (df['pnl'] > 0).sum(),
+            'losing_trades': (df['pnl'] <= 0).sum()
+        }
 
     def _analyze_trades(self, df: pd.DataFrame) -> Dict[str, Any]:
         """分析交易详情"""
