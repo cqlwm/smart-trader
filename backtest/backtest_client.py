@@ -37,7 +37,9 @@ class BacktestOrder:
             'price': self.price,
             'amount': self.quantity,
             'filled': self.filled_quantity,
+            'filled_quantity': self.filled_quantity,
             'remaining': self.quantity - self.filled_quantity,
+            'filled_price': self.filled_price,
             'cost': self.filled_price * self.filled_quantity if self.filled_price else 0,
             'status': self.status.value,
             'timestamp': self.timestamp,
@@ -168,41 +170,32 @@ class BacktestClient(ExSwapClient):
 
     def _simulate_fill(self, order: BacktestOrder, current_price: float):
         """模拟订单成交"""
+        # 对于回测，立即以指定价格成交所有订单（模拟理想的成交条件）
         if order.order_type == 'market':
             # 市价单立即成交
             order.filled_quantity = order.quantity
             order.filled_price = current_price
-            order.status = OrderStatus.CLOSED
             fee_rate = self.taker_fee
         elif order.order_type == 'limit' and order.price is not None:
-            # 限价单：检查是否可以成交
-            if order.side == OrderSide.BUY and current_price <= order.price:
-                order.filled_quantity = order.quantity
-                order.filled_price = order.price
-                order.status = OrderStatus.CLOSED
-                fee_rate = self.maker_fee
-            elif order.side == OrderSide.SELL and current_price >= order.price:
-                order.filled_quantity = order.quantity
-                order.filled_price = order.price
-                order.status = OrderStatus.CLOSED
-                fee_rate = self.maker_fee
-            else:
-                # 暂时不成交，等待价格到达
-                return
+            # 限价单：立即以指定价格成交（回测优化）
+            order.filled_quantity = order.quantity
+            order.filled_price = order.price
+            fee_rate = self.maker_fee
         else:
             fee_rate = self.taker_fee  # 默认值
 
-        if order.status == OrderStatus.CLOSED:
-            # 计算手续费
-            order.fee = order.filled_price * order.filled_quantity * fee_rate
+        order.status = OrderStatus.CLOSED
 
-            # 更新余额和持仓
-            self._update_balance_and_position(order)
+        # 计算手续费
+        order.fee = order.filled_price * order.filled_quantity * fee_rate
 
-            # 记录到历史
-            self.order_history.append(order)
+        # 更新余额和持仓
+        self._update_balance_and_position(order)
 
-            logger.debug(f"Order {order.custom_id} filled: {order.filled_quantity} @ {order.filled_price}")
+        # 记录到历史
+        self.order_history.append(order)
+
+        logger.debug(f"Order {order.custom_id} filled: {order.filled_quantity} @ {order.filled_price}")
 
     def _update_balance_and_position(self, order: BacktestOrder):
         """更新余额和持仓"""
