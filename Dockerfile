@@ -1,4 +1,4 @@
-FROM localhost/pytalib:0.0.1
+FROM localhost/pytalib:0.0.2
 
 WORKDIR /usr/local/app
 COPY ./pyproject.toml ./uv.lock ./
