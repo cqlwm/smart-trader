@@ -18,10 +18,15 @@ RUN pip install --no-cache-dir uv
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-# Create virtual environment and install dependencies
-RUN uv sync --frozen --no-install-project
-
+# 验证到底复制了哪些文件
 # Copy source code
 COPY . .
+RUN ls -la
+
+# Create virtual environment and install dependencies
+ENV UV_LINK_MODE=copy
+RUN uv sync --frozen --no-install-project --no-cache 
+
+
 
 CMD ["uv", "run", "python", "run.py"]
