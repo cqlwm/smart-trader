@@ -20,9 +20,13 @@ _alpha_trend = 'alpha_trend'
 _buy_signal = 'buy_signal'
 _sell_signal = 'sell_signal'
 _signal = 'signal'
+_macd = 'macd'
+_macd_signal = 'macd_signal'
+_macd_hist = 'macd_hist'
 
 
-def _alpha_trend_signal(df: DataFrame, atr_multiple: float = 1.0, period: int = 8):
+def _alpha_trend_signal(df: DataFrame, atr_multiple: float = 1.0, period: int = 8,
+                        macd_fast_period: int = 12, macd_slow_period: int = 26, macd_signal_period: int = 9):
     # 计算技术指标
     high_values, low_values, close_values, volume_values = df[[_high, _low, _close, _volume]].values.T.astype(np.float64)
     atr_values = ta.ATR(high_values, low_values, close_values, timeperiod=period)
@@ -53,6 +57,18 @@ def _alpha_trend_signal(df: DataFrame, atr_multiple: float = 1.0, period: int = 
     df[_buy_signal] = (df[_alpha_trend] > alpha_trend_shift2).astype('boolean')
     df[_sell_signal] = (df[_alpha_trend] < alpha_trend_shift2).astype('boolean')
 
+    # 计算MACD指标
+    macd_values, macd_signal_values, macd_hist_values = ta.MACD(
+        close_values,
+        fastperiod=macd_fast_period,
+        slowperiod=macd_slow_period,
+        signalperiod=macd_signal_period
+    )
+
+    df[_macd] = macd_values
+    df[_macd_signal] = macd_signal_values
+    df[_macd_hist] = macd_hist_values
+
     # 新增一列 _signal 用于存储最终信号
     df[_signal] = np.nan
     df[_signal] = np.select(
@@ -65,16 +81,25 @@ def _alpha_trend_signal(df: DataFrame, atr_multiple: float = 1.0, period: int = 
 
 
 class AlphaTrendSignal(Signal):
-    def __init__(self, side: OrderSide, atr_multiple: float = 1.0, period: int = 8, reverse: bool = False):
+    def __init__(self, side: OrderSide, atr_multiple: float = 1.0, period: int = 8, reverse: bool = False,
+                 macd_fast_period: int = 12, macd_slow_period: int = 26, macd_signal_period: int = 9):
         super().__init__(side)
         self.atr_multiple = atr_multiple
         self.period = period
         self.reverse = reverse
+        self.macd_fast_period = macd_fast_period
+        self.macd_slow_period = macd_slow_period
+        self.macd_signal_period = macd_signal_period
 
         self.datetime: str | None = None
         self.current_signal: int = 0
         self.current_kline_status: int = 0
         self.current_alpha_trend: float = 0.0
+        self.current_macd: float = 0.0
+        self.current_macd_signal: float = 0.0
+        self.current_macd_hist: float = 0.0
+        self.previous_macd: float = 0.0
+        self.previous_macd_signal: float = 0.0
 
     def _compute_signal(self, df: DataFrame, first_run: bool = False) -> int:
         
@@ -104,10 +129,19 @@ class AlphaTrendSignal(Signal):
 
         if self.datetime == last_time:
             return self.current_kline_status
-        
-        df = _alpha_trend_signal(klines, self.atr_multiple, self.period)
+
+        df = _alpha_trend_signal(klines, self.atr_multiple, self.period,
+                                self.macd_fast_period, self.macd_slow_period, self.macd_signal_period)
         self.current_kline_status = self._compute_signal(df, self.datetime is None)
         self.current_alpha_trend = df[_alpha_trend].iloc[-1] if len(df[_alpha_trend]) > 0 else 0
+
+        # Update MACD values for crossover detection
+        self.previous_macd = self.current_macd
+        self.previous_macd_signal = self.current_macd_signal
+        self.current_macd = df[_macd].iloc[-1] if len(df[_macd]) > 0 and pd.notna(df[_macd].iloc[-1]) else 0
+        self.current_macd_signal = df[_macd_signal].iloc[-1] if len(df[_macd_signal]) > 0 and pd.notna(df[_macd_signal].iloc[-1]) else 0
+        self.current_macd_hist = df[_macd_hist].iloc[-1] if len(df[_macd_hist]) > 0 and pd.notna(df[_macd_hist].iloc[-1]) else 0
+
         self.datetime = last_time
 
         return self.current_kline_status

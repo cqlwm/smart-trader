@@ -39,6 +39,10 @@ class AlphaTrendStrategyConfig(BaseModel):
     enable_short_trades: bool = True  # Allow short positions
     enable_long_trades: bool = True  # Allow long positions
     backup_file_path: str = "data/alpha_trend_strategy_state.json"  # Path to store strategy state
+    # MACD parameters for early profit taking
+    macd_fast_period: int = 12  # MACD fast EMA period
+    macd_slow_period: int = 26  # MACD slow EMA period
+    macd_signal_period: int = 9  # MACD signal line period
 
 
 class AlphaTrendStrategy(MultiTimeframeStrategy):
@@ -58,7 +62,10 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
                 OrderSide.BUY,
                 self.config.atr_multiple,
                 self.config.period,
-                reverse=self.config.signal_reverse
+                reverse=self.config.signal_reverse,
+                macd_fast_period=self.config.macd_fast_period,
+                macd_slow_period=self.config.macd_slow_period,
+                macd_signal_period=self.config.macd_signal_period
             )
 
         # Position tracking
@@ -303,8 +310,11 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
         # 检查止损
         if self._should_stop_loss(current_price):
             exit_reason = "stop_loss"
-        elif self.is_default_timeframe(timeframe) and self._should_normal_exit(signal_instance, current_price):
-            exit_reason = "normal_exit"
+        elif self.is_default_timeframe(timeframe):
+            if self._should_normal_exit(signal_instance, current_price):
+                exit_reason = "normal_exit"
+            elif self._should_exit_on_macd_crossover(signal_instance, current_price):
+                exit_reason = "macd_crossover_early_profit_taking"
         elif self.is_monitoring_timeframe(timeframe) and self._should_exit_on_distance(signal_instance, current_price):
             exit_reason = f"exit_mode_signal_{timeframe}"
 
@@ -343,6 +353,39 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
             return current_price < current_alpha_trend_value or current_signal_status == -1
         else:
             return current_price > current_alpha_trend_value or current_signal_status == 1
+
+    def _is_position_profitable(self, current_price: float) -> bool:
+        """Check if the current position is in profit"""
+        if not self.position:
+            return False
+
+        if self.position.position_side == PositionSide.LONG:
+            return current_price > self.position.entry_price
+        else:  # SHORT
+            return current_price < self.position.entry_price
+
+    def _should_exit_on_macd_crossover(self, signal: AlphaTrendSignal, current_price: float) -> bool:
+        """Check if we should exit based on MACD crossover in profitable positions"""
+        if not self.position:
+            return False
+
+        # Only apply MACD exit logic to profitable positions
+        if not self._is_position_profitable(current_price):
+            return False
+
+        # Check for MACD crossover in opposite direction to trend
+        # Dead cross (MACD falls below signal) during uptrend = exit long
+        # Golden cross (MACD rises above signal) during downtrend = exit short
+
+        # Need at least 2 data points to detect crossover
+        if self.position.position_side == PositionSide.LONG:
+            # For long positions: dead cross during uptrend
+            return (signal.previous_macd > signal.previous_macd_signal and
+                    signal.current_macd < signal.current_macd_signal)
+        else:  # SHORT
+            # For short positions: golden cross during downtrend
+            return (signal.previous_macd < signal.previous_macd_signal and
+                    signal.current_macd > signal.current_macd_signal)
 
     def on_kline_finished(self, timeframe: Optional[str] = None):
         """Main strategy logic - called when K-line is finished"""
