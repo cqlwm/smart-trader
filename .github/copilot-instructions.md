@@ -37,7 +37,7 @@ Smart Trader是一个加密货币自动交易系统,主要功能包括:
 1. 依赖管理:
    ```bash
    uv venv  # 创建虚拟环境
-   uv pip install -r requirements.txt
+   uv sync  # 安装依赖
    ```
 
 2. 代码风格:
