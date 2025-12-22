@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # 定义镜像名称和标签
-IMAGE_NAME="smart-trader-v2"
-IMAGE_TAG="0.0.1"
+IMAGE_NAME="smart-trader"
+IMAGE_TAG="0.0.2"
 CONTAINER_NAME="smart-trader"
 
 # 指定Dockerfile的路径
@@ -17,6 +17,6 @@ docker rm "${CONTAINER_NAME}"
 # 部署
 docker run --name "${CONTAINER_NAME}" --restart=always \
   -v /etc/localtime:/etc/localtime \
-  -v /root/projects/smart-trader:/usr/local/app \
+  -v /root/projects/smart-trader/.env:/usr/local/app/.env \
   -d "$IMAGE_NAME:$IMAGE_TAG"
 
