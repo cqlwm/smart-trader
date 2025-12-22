@@ -15,8 +15,12 @@ docker stop "${CONTAINER_NAME}"
 docker rm "${CONTAINER_NAME}"
 
 # 部署
+if [ ! -f .env ]; then
+    echo "Error: .env file not found. Please create a .env file before running the container."
+    exit 1
+fi
 docker run --name "${CONTAINER_NAME}" --restart=always \
   -v /etc/localtime:/etc/localtime \
-  -v /root/projects/smart-trader/.env:/usr/local/app/.env \
+  -v ./.env:/usr/local/app/.env \
+  -v ./data:/usr/local/app/data \
   -d "$IMAGE_NAME:$IMAGE_TAG"
-
