@@ -300,9 +300,6 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
                     else:
                         logger.info(f"Already on lowest timeframe: {timeframe}")
 
-            elif self.is_default_timeframe(timeframe):
-                self.position.exit_mode = False
-
 
         current_price = current_kline.close
 
