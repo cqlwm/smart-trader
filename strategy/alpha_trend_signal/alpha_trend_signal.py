@@ -67,7 +67,7 @@ def _alpha_trend_indicator(df: DataFrame, atr_multiple: float = 1.0, period: int
     return df
 
 def _macd_indicator(df: DataFrame, macd_fast_period: int = 12, macd_slow_period: int = 26, macd_signal_period: int = 9) -> DataFrame:
-    close_values = df[[_close]].values.astype(np.float64)
+    close_values = np.asarray(df[_close].values, dtype=np.float64)
     macd_values, macd_signal_values, macd_hist_values = ta.MACD(
         close_values,
         fastperiod=macd_fast_period,
@@ -150,12 +150,11 @@ class AlphaTrendSignal(Signal):
             return self.current_kline_status
 
         df = _alpha_trend_indicator(klines, self.atr_multiple, self.period,
-                                self.macd_fast_period, self.macd_slow_period, self.macd_signal_period)
-        df = _macd_indicator(df, self.macd_fast_period, self.macd_slow_period, self.macd_signal_period)
-        
+                                self.macd_fast_period, self.macd_slow_period, self.macd_signal_period)        
         self.current_kline_status = self._compute_signal(df, self.datetime is None)
         self.current_alpha_trend = df[_alpha_trend].iloc[-1] if len(df[_alpha_trend]) > 0 else 0
 
+        df = _macd_indicator(df, self.macd_fast_period, self.macd_slow_period, self.macd_signal_period)
         self._macd_signal(df)
 
         self.datetime = last_time
