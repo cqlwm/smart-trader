@@ -341,8 +341,9 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
 
     def _should_exit_on_distance(self, signal: AlphaTrendSignal, current_price: float) -> bool:
         """Check if we should exit based on distance threshold"""
-        if not self.position or self.position.exit_mode:
+        if not (self.position and self.position.exit_mode):
             return False
+        
         current_signal_status = signal.current_kline_status
         current_alpha_trend_value = signal.current_alpha_trend
 
