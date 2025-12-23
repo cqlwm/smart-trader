@@ -375,15 +375,12 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
         # Dead cross (MACD falls below signal) during uptrend = exit long
         # Golden cross (MACD rises above signal) during downtrend = exit short
 
-        # Need at least 2 data points to detect crossover
         if self.position.position_side == PositionSide.LONG:
             # For long positions: dead cross during uptrend
-            return (signal.previous_macd > signal.previous_macd_signal and
-                    signal.current_macd < signal.current_macd_signal)
+            return signal.dead_cross()
         else:  # SHORT
             # For short positions: golden cross during downtrend
-            return (signal.previous_macd < signal.previous_macd_signal and
-                    signal.current_macd > signal.current_macd_signal)
+            return signal.golden_cross()
 
     def on_kline_finished(self, timeframe: Optional[str] = None):
         """Main strategy logic - called when K-line is finished"""

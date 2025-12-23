@@ -74,8 +74,8 @@ def test_alpha_trend_signal_basic():
         sell_result = sell_signal.run(current_data)
         
         # 计算alpha_trend值（需要重新计算来获取当前值）
-        from strategy.alpha_trend_signal.alpha_trend_signal import _alpha_trend_signal
-        processed_data = _alpha_trend_signal(current_data.copy())
+        from strategy.alpha_trend_signal.alpha_trend_signal import _alpha_trend_indicator
+        processed_data = _alpha_trend_indicator(current_data.copy())
         
         # 获取最新的数据
         latest_row = processed_data.iloc[-1]
@@ -204,8 +204,8 @@ def test_alpha_trend_is_entry_is_exit():
         current_row = current_data.iloc[-1]
         
         # 计算alpha_trend值
-        from strategy.alpha_trend_signal.alpha_trend_signal import _alpha_trend_signal
-        processed_data = _alpha_trend_signal(current_data.copy())
+        from strategy.alpha_trend_signal.alpha_trend_signal import _alpha_trend_indicator
+        processed_data = _alpha_trend_indicator(current_data.copy())
         alpha_trend_value = processed_data.iloc[-1]['alpha_trend'] if pd.notna(processed_data.iloc[-1]['alpha_trend']) else None
         
         entry_exit_data.append({

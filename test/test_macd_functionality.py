@@ -7,7 +7,7 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from model import OrderSide
-from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal, _alpha_trend_signal
+from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal, _alpha_trend_indicator
 
 
 def test_macd_calculation():
@@ -43,7 +43,7 @@ def test_macd_calculation():
     df = pd.DataFrame(data)
 
     # Test the _alpha_trend_signal function with MACD
-    processed_df = _alpha_trend_signal(df)
+    processed_df = _alpha_trend_indicator(df)
 
     # Check that MACD columns exist
     assert 'macd' in processed_df.columns, "MACD column should exist"
