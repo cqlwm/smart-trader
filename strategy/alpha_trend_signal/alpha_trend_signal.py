@@ -103,10 +103,13 @@ class AlphaTrendSignal(Signal):
         self.previous_macd_signal: float = 0.0
 
     def _compute_signal(self, df: DataFrame, first_run: bool = False) -> int:
-        
+        if len(df) < self.period + 2:
+            return 0
+
         if first_run:
             last_valid_index = df[_signal].last_valid_index()
-            self.current_signal = int(df[_signal].loc[last_valid_index])
+            if last_valid_index is not None:
+                self.current_signal = int(df[_signal].loc[last_valid_index])
 
         signal = 0
         last_row = df.iloc[-1]
@@ -125,7 +128,9 @@ class AlphaTrendSignal(Signal):
             return 0
     
     def _macd_signal(self, df: DataFrame):
-        # Update MACD values for crossover detection
+        if len(df) < max(self.macd_fast_period, self.macd_slow_period, self.macd_signal_period) + 2:
+            return
+        
         self.previous_macd = self.current_macd
         self.previous_macd_signal = self.current_macd_signal
         self.current_macd = df[_macd].iloc[-1] if len(df[_macd]) > 0 and pd.notna(df[_macd].iloc[-1]) else 0
@@ -134,11 +139,17 @@ class AlphaTrendSignal(Signal):
 
     def golden_cross(self) -> bool:
         """Check if MACD line crosses above the signal line (bullish crossover)"""
+        if self.previous_macd == 0 or self.previous_macd_signal == 0:
+            return False
+        
         return (self.previous_macd < self.previous_macd_signal and
                 self.current_macd > self.current_macd_signal)
 
     def dead_cross(self) -> bool:
         """Check if MACD line crosses below the signal line (bearish crossover)"""
+        if self.previous_macd == 0 or self.previous_macd_signal == 0:
+            return False
+        
         return (self.previous_macd > self.previous_macd_signal and
                 self.current_macd < self.current_macd_signal)
 
