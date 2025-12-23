@@ -187,7 +187,7 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
                         logger.error(f"Failed to cancel unfilled entry order: {self.position.entry_order_id}")
                         return False
         except Exception as e:
-            logger.error(f"Failed to query entry order {self.position.entry_order_id}: {e}")
+            logger.error(f"Failed to query entry order {self.position}: {e}")
             return False
 
         try:
