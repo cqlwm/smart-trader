@@ -439,10 +439,6 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                             exit_status = exit_order_query_result['status']
                             if OrderStatus.is_closed(exit_status):
                                 closed_orders.append(order)
-                            elif OrderStatus.is_open(exit_status):
-                                pass # 等待订单成交
-                            else:
-                                logger.warning(f'Unknown exit order status: {exit_status} for order: {order}')
                 else:
                     # 检查进入订单是否成交
                     if OrderStatus.is_open(order.status):

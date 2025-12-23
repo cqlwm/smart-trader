@@ -95,6 +95,10 @@ class OrderStatus(Enum):
     @staticmethod
     def is_closed(status: 'str | OrderStatus | None') -> bool:
         return OrderStatus.compare(status, OrderStatus.CLOSED)
+    
+    @staticmethod
+    def is_canceled(status:'str | OrderStatus | None') -> bool:
+        return OrderStatus.compare(status, OrderStatus.CANCELED)
 
 
 class PlaceOrderBehavior(Enum):
