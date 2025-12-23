@@ -22,8 +22,6 @@ class AlphaTrendPosition(BaseModel):
     entry_order_id: Optional[str] = None
     exit_order_id: Optional[str] = None
     alpha_trend_value_at_entry: float = 0.0
-    extremum_price_since_entry: float = 0.0
-    exit_mode: bool = False  # True when price moved >2% away from alpha_trend_value
 
 
 class AlphaTrendStrategyConfig(BaseModel):
@@ -32,7 +30,6 @@ class AlphaTrendStrategyConfig(BaseModel):
     timeframes: list[str] = ["15m", "5m"]  # List of timeframes, ordered from main to auxiliary (higher to lower)
     position_size: float = 0.01  # Base position size per trade
     stop_loss_rate: float = 0.03  # 3% fixed stop loss
-    distance_threshold: float = 0.02  # 2% distance threshold for exit mode
     atr_multiple: float = 1.0  # AlphaTrend ATR multiplier
     period: int = 8  # AlphaTrend period
     signal_reverse: bool = False  # Reverse the signal direction
@@ -71,8 +68,8 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
         # Position tracking
         self.position: Optional[AlphaTrendPosition] = None
 
-        # Current monitoring timeframe index (starts with main timeframe)
-        self.current_monitor_timeframe_index: int = 0
+        # Current monitoring timeframe index (starts with second timeframe)
+        self.current_monitor_timeframe_index: int = 1
 
         # Performance tracking
         self.total_trades: int = 0
@@ -127,9 +124,7 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
             entry_price=entry_price,
             quantity=self.config.position_size,
             stop_loss_price=stop_loss_price,
-            alpha_trend_value_at_entry=alpha_trend_value,
-            extremum_price_since_entry=entry_price,
-            exit_mode=False
+            alpha_trend_value_at_entry=alpha_trend_value
         )
 
         try:
@@ -273,51 +268,26 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
         if not current_kline:
             return
 
-        if self.position.position_side == PositionSide.LONG:
-            self.position.extremum_price_since_entry = max(self.position.extremum_price_since_entry, current_kline.high)
-        elif self.position.position_side == PositionSide.SHORT:
-            self.position.extremum_price_since_entry = min(self.position.extremum_price_since_entry, current_kline.low)
-
         signal_instance = self.signals[timeframe]
         signal_instance.run(df)
-        current_alpha_trend_value = signal_instance.current_alpha_trend
-
-        # 任何周期都可以进行阈值检查
-        # 但只有默认时间框架才可以在退出模式下进行切换
-        if current_alpha_trend_value > 0:
-            distance = abs(self.position.extremum_price_since_entry - current_alpha_trend_value) / current_alpha_trend_value
-
-            if distance > self.config.distance_threshold:
-                if not self.position.exit_mode:
-                    self.position.exit_mode = True
-                    logger.info(f"Entered exit mode on {timeframe}: extremum_price={self.position.extremum_price_since_entry}, "
-                            f"alpha_trend={current_alpha_trend_value}, distance={distance:.4f}")
-
-                    if self.current_monitor_timeframe_index < len(self.config.timeframes) - 1:
-                        self.current_monitor_timeframe_index += 1
-                        next_timeframe = self.config.timeframes[self.current_monitor_timeframe_index]
-                        logger.info(f"Switching monitoring to lower timeframe: {next_timeframe}")
-                    else:
-                        logger.info(f"Already on lowest timeframe: {timeframe}")
-
 
         current_price = current_kline.close
 
         exit_reason: str | None = None
         # 检查止损
-        if self._should_stop_loss(current_price):
+        if self._should_stop_loss(current_price): # 止损
             exit_reason = "stop_loss"
         elif self.is_default_timeframe(timeframe):
-            if self._should_normal_exit(signal_instance, current_price):
+            if self._should_normal_exit(signal_instance, current_price): # 止盈 and 止损
                 exit_reason = "normal_exit"
-            elif self._should_exit_on_macd_crossover(signal_instance, current_price):
+            elif self._should_exit_on_macd_crossover(signal_instance, current_price): # 止盈
                 exit_reason = "macd_crossover_early_profit_taking"
-        elif self.is_monitoring_timeframe(timeframe) and self._should_exit_on_distance(signal_instance, current_price):
-            exit_reason = f"exit_mode_signal_{timeframe}"
+        elif self.is_monitoring_timeframe(timeframe) and self._should_take_profit_on_monitoring_timeframe(signal_instance, current_price):
+            exit_reason = f"take_profit_on_monitoring_{timeframe}"
 
         if exit_reason:
             self._close_position(current_price, exit_reason)
-            self.current_monitor_timeframe_index = 0
+            self.current_monitor_timeframe_index = 1  # Reset to initial monitoring timeframe
 
     def _should_stop_loss(self, current_price: float) -> bool:
         """Check if stop loss should trigger"""
@@ -331,26 +301,29 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
 
     def _should_normal_exit(self, signal: AlphaTrendSignal, current_price: float) -> bool:
         """Check if we should exit in normal mode (price falling back to alpha_trend)"""
-        if not self.position or self.position.exit_mode:
+        if not self.position:
             return False
-        
+
         current_signal_status = signal.current_kline_status
 
         return self.position.position_side == PositionSide.LONG and current_signal_status == -1 or \
             self.position.position_side == PositionSide.SHORT and current_signal_status == 1
 
-    def _should_exit_on_distance(self, signal: AlphaTrendSignal, current_price: float) -> bool:
-        """Check if we should exit based on distance threshold"""
-        if not (self.position and self.position.exit_mode):
+    def _should_take_profit_on_monitoring_timeframe(self, signal: AlphaTrendSignal, current_price: float) -> bool:
+        """Check if we should take profit on monitoring timeframe when position is profitable"""
+        if not self.position:
             return False
-        
-        current_signal_status = signal.current_kline_status
+
+        # Only take profit if position is in profit
+        if not self._is_position_profitable(current_price):
+            return False
+
         current_alpha_trend_value = signal.current_alpha_trend
 
         if self.position.position_side == PositionSide.LONG:
-            return current_price < current_alpha_trend_value or current_signal_status == -1
-        else:
-            return current_price > current_alpha_trend_value or current_signal_status == 1
+            return current_price <= current_alpha_trend_value
+        else:  # SHORT
+            return current_price >= current_alpha_trend_value
 
     def _is_position_profitable(self, current_price: float) -> bool:
         """Check if the current position is in profit"""
@@ -432,7 +405,7 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
             if state_data.get('position'):
                 self.position = AlphaTrendPosition(**state_data['position'])
 
-            self.current_monitor_timeframe_index = state_data.get('current_monitor_timeframe_index', 0)
+            self.current_monitor_timeframe_index = state_data.get('current_monitor_timeframe_index', 1)
             self.total_trades = state_data.get('total_trades', 0)
             self.winning_trades = state_data.get('winning_trades', 0)
             self.total_pnl = state_data.get('total_pnl', 0.0)

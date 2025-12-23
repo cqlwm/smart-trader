@@ -109,7 +109,6 @@ def alpha_trend(exchange_client: ExSwapClient) -> StrategyTask:
         timeframes=timeframes,
         position_size=0.01,
         stop_loss_rate=0.02,
-        distance_threshold=0.02,
         atr_multiple=1.0,
         period=8,
         signal_reverse=False,
