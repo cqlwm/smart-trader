@@ -20,9 +20,8 @@ class AlphaTrendPosition(BaseModel):
     entry_price: float
     quantity: float
     stop_loss_price: float
-    entry_order_id: Optional[str] = None
-    exit_order_id: Optional[str] = None
-    alpha_trend_value_at_entry: float = 0.0
+    entry_order_id: str | None = None
+    exit_order_id: str | None = None
 
 
 class AlphaTrendStrategyConfig(BaseModel):
@@ -177,8 +176,7 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
             position_side=position_side,
             entry_price=entry_price,
             quantity=self.config.position_size,
-            stop_loss_price=stop_loss_price,
-            alpha_trend_value_at_entry=alpha_trend_value
+            stop_loss_price=stop_loss_price
         )
 
         try:

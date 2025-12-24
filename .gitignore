@@ -6,3 +6,4 @@ uv.lock
 data
 .env
 .env.*
+data.parquet
