@@ -2,9 +2,10 @@ import os
 import secrets
 from typing import Optional, Dict
 from pydantic import BaseModel
+from pandas import DataFrame
 
 from strategy import MultiTimeframeStrategy
-from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
+from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal, _alpha_trend
 from client.ex_client import ExSwapClient
 from model import OrderSide, PositionSide, PlaceOrderBehavior, Symbol, OrderStatus
 from utils.json_util import dump_file, loads
@@ -107,16 +108,69 @@ class AlphaTrendStrategy(MultiTimeframeStrategy):
         """Generate unique order ID"""
         return f"{side.value}{secrets.token_hex(nbytes=5)}"
 
+    def _find_alpha_trend_stop_loss(self, df: DataFrame, position_side: PositionSide, entry_price: float) -> float:
+        """Find alpha_trend_value within stop_loss_rate range that appears in at least 3 consecutive candles"""
+        # Fixed Stop-Loss Price
+        fixed_stop_loss_price = entry_price * (1 - self.config.stop_loss_rate) if position_side == PositionSide.LONG else entry_price * (1 + self.config.stop_loss_rate)
+        if df.empty or len(df) < 10:
+            # Fall back to fixed percentage if not enough data
+            return fixed_stop_loss_price
+
+        # Calculate stop loss price range
+        if position_side == PositionSide.LONG:
+            min_price = fixed_stop_loss_price
+            max_price = entry_price
+        else:  # SHORT
+            min_price = entry_price
+            max_price = fixed_stop_loss_price
+
+        # Get alpha_trend values and filter those within the range
+        alpha_trend_values = df[_alpha_trend].dropna()
+        valid_alpha_trend = alpha_trend_values[(alpha_trend_values >= min_price) & (alpha_trend_values <= max_price)]
+
+        if valid_alpha_trend.empty:
+            # Fall back to fixed percentage if no valid alpha_trend values found
+            return fixed_stop_loss_price
+
+        # Find the most recent sequence of at least 3 consecutive identical alpha_trend values
+        current_value = None
+        current_count = 0
+        stop_loss_value = None
+
+        for value in valid_alpha_trend[::-1]:  # Iterate from most recent to oldest
+            if value == current_value:
+                current_count += 1
+                if current_count >= 3:
+                    # Found a sequence of 3+ consecutive values, use this as stop loss
+                    stop_loss_value = current_value
+                    break
+            else:
+                current_value = value
+                current_count = 1
+        else:
+            # No sequences of 3+ found, fall back to fixed percentage
+            return fixed_stop_loss_price
+
+        # At this point, stop_loss_value is guaranteed to be set
+        assert stop_loss_value is not None
+
+        # Ensure the stop loss doesn't exceed the rate limit
+        if position_side == PositionSide.LONG:
+            return max(stop_loss_value, min_price)
+        else:  # SHORT
+            return min(stop_loss_value, max_price)
+
     def _open_position(self, position_side: PositionSide, entry_price: float, alpha_trend_value: float) -> Optional[str]:
         """Open a new position"""
         if not self._can_open_position(position_side):
             return None
 
-        # Calculate stop loss price
-        if position_side == PositionSide.LONG:
-            stop_loss_price = entry_price * (1 - self.config.stop_loss_rate)
-        else:  # SHORT
-            stop_loss_price = entry_price * (1 + self.config.stop_loss_rate)
+        # Get main timeframe dataframe to calculate alpha_trend stop loss
+        main_timeframe = self.config.timeframes[0]
+        df = self.klines(main_timeframe)
+
+        # Calculate stop loss price using alpha_trend values
+        stop_loss_price = self._find_alpha_trend_stop_loss(df, position_side, entry_price)
 
         # Create position tracking
         self.position = AlphaTrendPosition(
