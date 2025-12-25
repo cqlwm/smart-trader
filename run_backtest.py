@@ -80,7 +80,6 @@ def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv", start_index=30
 
         event_loop = BacktestEventLoop(
             historical_klines=historical_klines,
-            speed_multiplier=0.0,  # 手动控制速度，便于观察
             on_progress_callback=progress_callback,
             start_index=start_index
         )

@@ -102,7 +102,7 @@ def scalping(exchange_client: ExSwapClient) -> StrategyTask:
 
 def alpha_trend(exchange_client: ExSwapClient) -> StrategyTask:
     symbol = Symbol(base="eth", quote="usdc")
-    timeframes = ["15m", "5m"]  # Main timeframe first, then auxiliary
+    timeframes = ["3m", "1m"]  # Main timeframe first, then auxiliary
 
     config = AlphaTrendStrategyConfig(
         symbol=symbol,

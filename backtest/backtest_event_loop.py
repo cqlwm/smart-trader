@@ -17,7 +17,7 @@ class BacktestEventLoop(DataEventLoop):
     回测事件循环，从历史数据重放K线
     """
 
-    def __init__(self, historical_klines: List[Kline], speed_multiplier: float = 1.0,
+    def __init__(self, historical_klines: List[Kline],
                  on_progress_callback: Optional[Callable[[int, int], None]] = None,
                  start_index: int = 300):
         """
@@ -25,13 +25,11 @@ class BacktestEventLoop(DataEventLoop):
 
         Args:
             historical_klines: 历史K线数据列表（已按时间排序）
-            speed_multiplier: 回放速度倍数，1.0为实时，0为手动步进
             on_progress_callback: 进度回调函数，参数为(当前索引, 总数)
             start_index: 回测起始索引，默认300（为MultiTimeframeStrategy预留初始化数据）
         """
         super().__init__()
         self.historical_klines = historical_klines
-        self.speed_multiplier = speed_multiplier
         self.on_progress_callback = on_progress_callback
 
         # 设置起始索引，确保在有效范围内
@@ -46,7 +44,7 @@ class BacktestEventLoop(DataEventLoop):
         self.control_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
 
-        logger.info(f"BacktestEventLoop initialized with {len(historical_klines)} klines, start_index: {self.start_index}, speed: {speed_multiplier}x")
+        logger.info(f"BacktestEventLoop initialized with {len(historical_klines)} klines, start_index: {self.start_index}")
 
     def set_backtest_client(self, client: BacktestClient):
         """设置回测客户端"""
@@ -120,8 +118,6 @@ class BacktestEventLoop(DataEventLoop):
 
     def _run_backtest(self):
         """运行回测的主循环"""
-        last_timestamp = 0
-
         while self.is_running and self.current_index < len(self.historical_klines):
             if self.stop_event.is_set():
                 break
@@ -132,18 +128,6 @@ class BacktestEventLoop(DataEventLoop):
 
             # 处理下一根K线
             self._process_next_kline()
-
-            # 计算等待时间（基于速度倍数）
-            if self.speed_multiplier > 0 and self.current_index > 0:
-                current_kline = self.historical_klines[self.current_index - 1]
-                time_diff = current_kline.timestamp - last_timestamp
-
-                if time_diff > 0:
-                    wait_time = (time_diff / 1000.0) / self.speed_multiplier
-                    if wait_time > 0:
-                        time.sleep(wait_time)
-
-                last_timestamp = current_kline.timestamp
 
             # 进度回调
             if self.on_progress_callback:
