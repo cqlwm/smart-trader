@@ -126,101 +126,54 @@ class BacktestAnalyzer:
         """识别并计算已完成的交易"""
         completed_trades = []
 
-        # 按symbol和position_side分组
-        grouped = df.groupby(['symbol', 'position_side'])
+        logger.info(f"Analyzing {len(df)} orders for completed trades")
+        logger.info(f"Unique symbols: {df['symbol'].unique()}")
+        logger.info(f"Unique position_sides: {df['position_side'].unique()}")
 
-        for (symbol, position_side), group in grouped:
-            # 按时间排序
-            group = group.sort_values('timestamp')
+        # 对于这个策略，每个开仓订单后面紧跟着一个平仓订单
+        # 我们可以简单地配对连续的订单
 
-            # 初始化交易跟踪
-            open_positions = []  # [(quantity, entry_price, entry_fee, entry_time), ...]
+        # 按时间排序所有订单
+        df_sorted = df.sort_values('timestamp')
 
-            for _, order in group.iterrows():
-                quantity = order['filled_quantity']
-                price = order['filled_price']
-                fee = order['fee']
-                timestamp = order['timestamp']
-                side = order['side']
+        logger.info(f"First 10 orders:")
+        for idx in range(min(10, len(df_sorted))):
+            order = df_sorted.iloc[idx]
+            logger.info(f"  {idx}: {order['side']} {order['position_side']} @ {order['filled_price']}")
 
-                if position_side == 'long':
-                    if side == 'BUY':
-                        # 开多仓
-                        open_positions.append((quantity, price, fee, timestamp))
-                    elif side == 'SELL':
-                        # 平多仓
-                        while quantity > 0 and open_positions:
-                            pos_qty, entry_price, entry_fee, entry_time = open_positions[0]
+        # 简单配对：每两个连续的订单组成一个交易
+        i = 0
+        while i < len(df_sorted) - 1:
+            entry_order = df_sorted.iloc[i]
+            exit_order = df_sorted.iloc[i + 1]
 
-                            if pos_qty <= quantity:
-                                # 完全平掉这个仓位
-                                close_qty = pos_qty
-                                open_positions.pop(0)
-                            else:
-                                # 部分平仓
-                                close_qty = quantity
-                                open_positions[0] = (pos_qty - close_qty, entry_price, entry_fee, entry_time)
+            # 计算盈亏
+            if entry_order['position_side'] == 'long':
+                pnl = (exit_order['filled_price'] - entry_order['filled_price']) * entry_order['filled_quantity']
+            elif entry_order['position_side'] == 'short':
+                pnl = (entry_order['filled_price'] - exit_order['filled_price']) * entry_order['filled_quantity']
+            else:
+                pnl = 0.0
 
-                            # 计算盈亏
-                            if position_side == 'long':
-                                pnl = (price - entry_price) * close_qty
-                            else:
-                                pnl = (entry_price - price) * close_qty
+            total_fees = entry_order['fee'] + exit_order['fee']
 
-                            total_fees = entry_fee + fee
+            completed_trades.append({
+                'symbol': entry_order['symbol'],
+                'position_side': entry_order['position_side'],
+                'entry_price': entry_order['filled_price'],
+                'exit_price': exit_order['filled_price'],
+                'quantity': entry_order['filled_quantity'],
+                'pnl': pnl,
+                'total_fees': total_fees,
+                'net_pnl': pnl - total_fees,
+                'entry_time': entry_order['timestamp'],
+                'exit_time': exit_order['timestamp']
+            })
 
-                            completed_trades.append({
-                                'symbol': symbol,
-                                'position_side': position_side,
-                                'entry_price': entry_price,
-                                'exit_price': price,
-                                'quantity': close_qty,
-                                'pnl': pnl,
-                                'total_fees': total_fees,
-                                'net_pnl': pnl - total_fees,
-                                'entry_time': entry_time,
-                                'exit_time': timestamp
-                            })
+            logger.debug(f"Identified trade: {entry_order['position_side']} {entry_order['filled_quantity']} @ {entry_order['filled_price']} -> {exit_order['filled_price']}, pnl={pnl}")
+            i += 2  # 跳过已配对的订单
 
-                            quantity -= close_qty
-
-                elif position_side == 'short':
-                    if side == 'SELL':
-                        # 开空仓
-                        open_positions.append((quantity, price, fee, timestamp))
-                    elif side == 'BUY':
-                        # 平空仓
-                        while quantity > 0 and open_positions:
-                            pos_qty, entry_price, entry_fee, entry_time = open_positions[0]
-
-                            if pos_qty <= quantity:
-                                # 完全平掉这个仓位
-                                close_qty = pos_qty
-                                open_positions.pop(0)
-                            else:
-                                # 部分平仓
-                                close_qty = quantity
-                                open_positions[0] = (pos_qty - close_qty, entry_price, entry_fee, entry_time)
-
-                            # 计算盈亏
-                            pnl = (entry_price - price) * close_qty
-                            total_fees = entry_fee + fee
-
-                            completed_trades.append({
-                                'symbol': symbol,
-                                'position_side': position_side,
-                                'entry_price': entry_price,
-                                'exit_price': price,
-                                'quantity': close_qty,
-                                'pnl': pnl,
-                                'total_fees': total_fees,
-                                'net_pnl': pnl - total_fees,
-                                'entry_time': entry_time,
-                                'exit_time': timestamp
-                            })
-
-                            quantity -= close_qty
-
+        logger.info(f"Identified {len(completed_trades)} completed trades")
         return completed_trades
 
     def _calculate_annualized_return(self, df: pd.DataFrame, total_return: float) -> float:
@@ -228,9 +181,9 @@ class BacktestAnalyzer:
         if df.empty:
             return 0.0
 
-        # 计算持有期（天）
-        start_date = df['timestamp'].min()
-        end_date = df['timestamp'].max()
+        # 计算持有期（天）- 使用entry_time和exit_time
+        start_date = df['entry_time'].min()
+        end_date = df['exit_time'].max()
         days = (end_date - start_date).days
 
         if days <= 0:
@@ -330,11 +283,6 @@ class BacktestAnalyzer:
         """计算月度收益"""
         if df.empty:
             return []
-
-        # 确保timestamp是datetime
-        if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
-            df = df.copy()
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
 
         # 按月分组计算收益
         df = df.copy()

@@ -178,3 +178,9 @@ class AlphaTrendSignal(Signal):
             signal = -signal
 
         return signal
+
+
+
+def test():
+    import ccxt
+    pass
