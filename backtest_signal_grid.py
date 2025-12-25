@@ -98,7 +98,8 @@ def run_signal_grid_backtest(data_file="data/ethusdt_2025_10_1m.csv"):
 
         event_loop = BacktestEventLoop(
             historical_klines=historical_klines,
-            on_progress_callback=progress_callback
+            on_progress_callback=progress_callback,
+            start_timestamp=None  # 使用默认起始位置
         )
         event_loop.set_backtest_client(backtest_client)
 

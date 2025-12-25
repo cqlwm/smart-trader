@@ -17,7 +17,7 @@ import time
 logger = log.getLogger(__name__)
 
 
-def run_alpha_trend_backtest(data_files=None, start_index=300):
+def run_alpha_trend_backtest(data_files=None, start_timestamp=1759516200000):
     """
     运行AlphaTrendStrategy回测
 
@@ -78,7 +78,7 @@ def run_alpha_trend_backtest(data_files=None, start_index=300):
         event_loop = MultiTimeframeBacktestEventLoop(
             historical_data=historical_data,
             on_progress_callback=progress_callback,
-            start_index=start_index
+            start_timestamp=start_timestamp
         )
         event_loop.set_backtest_client(backtest_client)
 

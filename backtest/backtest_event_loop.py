@@ -19,21 +19,38 @@ class BacktestEventLoop(DataEventLoop):
 
     def __init__(self, historical_klines: List[Kline],
                  on_progress_callback: Optional[Callable[[int, int], None]] = None,
-                 start_index: int = 300):
+                 start_timestamp: Optional[int] = None,
+                 start_index: Optional[int] = None):
         """
         初始化回测事件循环
 
         Args:
             historical_klines: 历史K线数据列表（已按时间排序）
             on_progress_callback: 进度回调函数，参数为(当前索引, 总数)
-            start_index: 回测起始索引，默认300（为MultiTimeframeStrategy预留初始化数据）
+            start_timestamp: 回测起始时间戳（优先使用）
+            start_index: 回测起始索引（向后兼容用）
         """
         super().__init__()
         self.historical_klines = historical_klines
         self.on_progress_callback = on_progress_callback
 
-        # 设置起始索引，确保在有效范围内
-        self.start_index = max(0, min(start_index, len(historical_klines) - 1))
+        # 根据时间戳或索引设置起始位置
+        if start_timestamp is not None:
+            # 根据时间戳找到对应的索引
+            self.start_index = 0
+            for i, kline in enumerate(historical_klines):
+                if kline.timestamp >= start_timestamp:
+                    self.start_index = i
+                    break
+            # 确保在有效范围内
+            self.start_index = max(0, min(self.start_index, len(historical_klines) - 1))
+        elif start_index is not None:
+            # 使用索引（向后兼容）
+            self.start_index = max(0, min(start_index, len(historical_klines) - 1))
+        else:
+            # 默认值
+            self.start_index = 300
+
         self.current_index = self.start_index
 
         self.is_running = False

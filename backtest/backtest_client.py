@@ -72,7 +72,7 @@ class BacktestClient(ExSwapClient):
 
         # 订单和持仓管理
         self.orders: Dict[str, BacktestOrder] = {}
-        self.positions: Dict[str, BacktestPosition] = {}
+        self._positions: Dict[str, BacktestPosition] = {}
         self.order_history: List[BacktestOrder] = []
 
         # 锁保护并发访问
@@ -208,14 +208,14 @@ class BacktestClient(ExSwapClient):
             self._balance -= cost
 
             pos_key = f"{order.symbol.binance()}_{order.position_side.value}"
-            if pos_key in self.positions:
-                pos = self.positions[pos_key]
+            if pos_key in self._positions:
+                pos = self._positions[pos_key]
                 total_quantity = pos.quantity + order.filled_quantity
                 total_cost = pos.entry_price * pos.quantity + order.filled_price * order.filled_quantity
                 pos.entry_price = total_cost / total_quantity
                 pos.quantity = total_quantity
             else:
-                self.positions[pos_key] = BacktestPosition(
+                self._positions[pos_key] = BacktestPosition(
                     symbol=order.symbol,
                     side=order.position_side,
                     quantity=order.filled_quantity,
@@ -228,20 +228,20 @@ class BacktestClient(ExSwapClient):
             self._balance += revenue
 
             pos_key = f"{order.symbol.binance()}_{order.position_side.value}"
-            if pos_key in self.positions:
-                pos = self.positions[pos_key]
+            if pos_key in self._positions:
+                pos = self._positions[pos_key]
                 if pos.quantity >= order.filled_quantity:
                     pos.quantity -= order.filled_quantity
                     if pos.quantity == 0:
-                        del self.positions[pos_key]
+                        del self._positions[pos_key]
                 else:
                     logger.warning(f"Insufficient position for {pos_key}")
 
     def close_position(self, symbol: str, position_side: str, auto_cancel: bool = True) -> None:
         """平仓所有持仓"""
         pos_key = f"{symbol}_{position_side}"
-        if pos_key in self.positions:
-            pos = self.positions[pos_key]
+        if pos_key in self._positions:
+            pos = self._positions[pos_key]
             # 创建平仓订单
             side = OrderSide.SELL if position_side == 'long' else OrderSide.BUY
             current_price = self.get_current_price(pos.symbol)
@@ -263,12 +263,12 @@ class BacktestClient(ExSwapClient):
 
             self._update_balance_and_position(order)
             self.order_history.append(order)
-            del self.positions[pos_key]
+            del self._positions[pos_key]
 
     def positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """获取持仓"""
         result = []
-        for pos_key, pos in self.positions.items():
+        for pos_key, pos in self._positions.items():
             if symbol is None or symbol in pos_key:
                 result.append({
                     'symbol': pos.symbol.binance(),

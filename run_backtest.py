@@ -26,13 +26,13 @@ import log
 logger = log.getLogger(__name__)
 
 
-def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv", start_index=300):
+def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv", start_timestamp=None):
     """
     运行SignalGridStrategy回测示例
 
     Args:
         data_file: 数据文件路径
-        start_index: 回测起始索引，默认300（为MultiTimeframeStrategy预留初始化数据）
+        start_timestamp: 回测起始时间戳，如果为None则使用默认索引
     """
     # 配置参数
     symbol = Symbol(base="ETH", quote="USDT")
@@ -81,7 +81,7 @@ def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv", start_index=30
         event_loop = BacktestEventLoop(
             historical_klines=historical_klines,
             on_progress_callback=progress_callback,
-            start_index=start_index
+            start_timestamp=start_timestamp
         )
         event_loop.set_backtest_client(backtest_client)
 

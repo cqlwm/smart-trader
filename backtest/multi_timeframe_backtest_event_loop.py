@@ -17,14 +17,16 @@ class MultiTimeframeBacktestEventLoop:
 
     def __init__(self, historical_data: Dict[str, List[Kline]],
                  on_progress_callback: Optional[Callable[[int, int], None]] = None,
-                 start_index: int = 300):
+                 start_timestamp: Optional[int] = None,
+                 start_index: Optional[int] = None):
         """
         初始化多时间框架回测事件循环
 
         Args:
             historical_data: 字典，key为timeframe，value为对应的历史K线数据列表
             on_progress_callback: 进度回调函数，参数为(当前索引, 总数)
-            start_index: 回测起始索引，默认300（为MultiTimeframeStrategy预留初始化数据）
+            start_timestamp: 回测起始时间戳（优先使用）
+            start_index: 回测起始索引（向后兼容用）
         """
         self.historical_data = historical_data
         self.timeframes = list(historical_data.keys())
@@ -37,7 +39,20 @@ class MultiTimeframeBacktestEventLoop:
         self.start_indices = {}
         for timeframe in self.timeframes:
             klines = historical_data[timeframe]
-            self.start_indices[timeframe] = max(0, min(start_index, len(klines) - 1))
+            if start_timestamp is not None:
+                # 根据时间戳找到对应的索引
+                start_idx = 0
+                for i, kline in enumerate(klines):
+                    if kline.timestamp >= start_timestamp:
+                        start_idx = i
+                        break
+                self.start_indices[timeframe] = max(0, min(start_idx, len(klines) - 1))
+            elif start_index is not None:
+                # 使用索引（向后兼容）
+                self.start_indices[timeframe] = max(0, min(start_index, len(klines) - 1))
+            else:
+                # 默认值
+                self.start_indices[timeframe] = 300
 
         # 收集所有K线并按时间排序
         self.sorted_klines = self._collect_and_sort_klines()
