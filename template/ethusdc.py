@@ -20,9 +20,9 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         timeframe=timeframe,
         position_side=PositionSide.LONG,
         master_side=OrderSide.BUY,
-        per_order_qty=0.1,
-        grid_spacing_rate=-0.1,
-        max_order=10,
+        per_order_qty=0.01,
+        grid_spacing_rate=0.005,
+        max_order=4,
         signal=AlphaTrendSignal(OrderSide.BUY),
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
 
@@ -34,11 +34,11 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         fixed_take_profit_rate=0.04,
         
         enable_order_stop_loss=True,
-        order_stop_loss_rate=0.02,
+        order_stop_loss_rate=0.1,
 
-        enable_trailing_stop=True,
-        trailing_stop_rate=0.02,
-        trailing_stop_activation_profit_rate=0.01,
+        # enable_trailing_stop=True,
+        # trailing_stop_rate=0.02,
+        # trailing_stop_activation_profit_rate=0.01,
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
