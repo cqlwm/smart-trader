@@ -23,6 +23,7 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         per_order_qty=0.01,
         grid_spacing_rate=0.005,
         max_order=4,
+        lowest_price=2618.83,
         signal=AlphaTrendSignal(OrderSide.BUY),
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
 
