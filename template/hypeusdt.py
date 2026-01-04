@@ -21,7 +21,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         per_order_qty=1,
         grid_spacing_rate=0.002,
         max_order=12,
-        lowest_price=24.32945,
+        lowest_price=25.00549,
         enable_exit_signal=True,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL)),
         exit_signal_take_profit_min_rate=0.002,

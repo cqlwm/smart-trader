@@ -39,7 +39,7 @@ if __name__ == '__main__':
     
     tasks = [
         ethusdc.long_buy(main_binance_client),
-        hypeusdt.short_sell(copy_trading_binance_client),
+        # hypeusdt.short_sell(copy_trading_binance_client),
     ]
 
     kline_subscribes: List[str] = []
