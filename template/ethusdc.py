@@ -21,13 +21,14 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         position_side=PositionSide.LONG,
         master_side=OrderSide.BUY,
         per_order_qty=0.01,
-        grid_spacing_rate=0.005,
+        grid_spacing_rate=0.02,
         max_order=4,
+        highest_price=3188.41,
         lowest_price=2618.83,
         signal=AlphaTrendSignal(OrderSide.BUY),
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
 
-        enable_exit_signal=True,
+        enable_exit_signal=False,
         exit_signal_take_profit_min_rate=0.002,
 
         fixed_rate_take_profit=True,
