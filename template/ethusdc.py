@@ -13,7 +13,7 @@ logger = log.getLogger(__name__)
 
 def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
     symbol=Symbol(base="eth", quote="usdc")
-    timeframe='15m'
+    timeframe='4h'
 
     config=SignalGridStrategyConfig(
         symbol=symbol,
@@ -21,22 +21,22 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         position_side=PositionSide.LONG,
         master_side=OrderSide.BUY,
         per_order_qty=0.01,
-        grid_spacing_rate=0.02,
-        max_order=4,
-        highest_price=3188.41,
-        lowest_price=2618.83,
+        grid_spacing_rate=-0.5,
+        max_order=10,
+        # highest_price=3188.41,
+        # lowest_price=2618.83,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
 
         enable_exit_signal=False,
-        exit_signal_take_profit_min_rate=0.002,
+        exit_signal_take_profit_min_rate=0.1,
 
         fixed_rate_take_profit=True,
         take_profit_use_limit_order=True,
-        fixed_take_profit_rate=0.04,
+        fixed_take_profit_rate=0.1,
         
-        enable_order_stop_loss=True,
-        order_stop_loss_rate=0.1,
+        enable_order_stop_loss=False,
+        order_stop_loss_rate=0.5,
 
         # enable_trailing_stop=True,
         # trailing_stop_rate=0.02,
