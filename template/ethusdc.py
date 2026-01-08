@@ -12,7 +12,7 @@ from task.strategy_task import StrategyTask
 logger = log.getLogger(__name__)
 
 def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
-    symbol=Symbol(base="eth", quote="usdc")
+    symbol=Symbol(base="eth", quote="usdt")
     timeframe='4h'
 
     config=SignalGridStrategyConfig(
