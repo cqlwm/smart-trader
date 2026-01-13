@@ -28,7 +28,7 @@ def create_binance_client(client_type: str) -> BinanceSwapClient:
     return binance_client
 
 # copy-trading binance client
-copy_trading_binance_client: BinanceSwapClient = create_binance_client('copy')
+# copy_trading_binance_client: BinanceSwapClient = create_binance_client('copy')
 
 # main binance client
 main_binance_client: BinanceSwapClient = create_binance_client('main')
