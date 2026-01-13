@@ -16,22 +16,23 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
 
     config=SignalGridStrategyConfig(
         symbol=symbol,
+        timeframe=timeframe,
         position_side=PositionSide.LONG,
         master_side=OrderSide.BUY,
         per_order_qty=0.002,
-        grid_spacing_rate=0.002,
+        grid_spacing_rate=-0.1,
         max_order=10,
         enable_exit_signal=True,
-        signal=AlphaTrendSignal(OrderSide.BUY),
-        exit_signal_take_profit_min_rate=-0.1,
+        signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
+        exit_signal_take_profit_min_rate=0.002,
         fixed_rate_take_profit=True,
-        take_profit_use_limit_order=True,
-        fixed_take_profit_rate=0.0025,
+        take_profit_use_limit_order=False,
+        fixed_take_profit_rate=0.004,
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
-    return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
+    return StrategyTask(symbol=symbol, strategy=strategy)
 
 
 def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
