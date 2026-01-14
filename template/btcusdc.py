@@ -52,7 +52,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
         exit_signal_take_profit_min_rate=0.002,
         fixed_rate_take_profit=True,
-        take_profit_use_limit_order=False,
+        take_profit_use_limit_order=True,
         fixed_take_profit_rate=0.002,
         order_file_path=f'{DATA_PATH}/signal_grid_short_sell_{symbol.simple()}_{timeframe}.json',
         # position_reverse=True,
