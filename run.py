@@ -38,7 +38,7 @@ if __name__ == '__main__':
     from template import hypeusdt, btcusdc
     
     tasks = [
-        btcusdc.long_buy(main_binance_client),
+        # btcusdc.long_buy(main_binance_client),
         btcusdc.short_sell(main_binance_client),
     ]
 
