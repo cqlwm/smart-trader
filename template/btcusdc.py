@@ -28,7 +28,8 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         fixed_rate_take_profit=True,
         take_profit_use_limit_order=False,
         fixed_take_profit_rate=0.002,
-        order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
+        order_file_path=f'{DATA_PATH}/signal_grid_long_buy_position_reverse_{symbol.simple()}_{timeframe}.json',
+        position_reverse=True,
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
