@@ -12,7 +12,7 @@ from task.strategy_task import StrategyTask
 logger = log.getLogger(__name__)
 
 def long_buy_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
-    symbol=Symbol(base="eth", quote="usdt")
+    symbol=Symbol(base="eth", quote="usdc")
     timeframe='1m'
 
     position_reverse=True
