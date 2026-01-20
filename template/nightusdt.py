@@ -46,7 +46,7 @@ def long_buy_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
         timeframe=timeframe,
         position_side=PositionSide.LONG,
         master_side=OrderSide.BUY,
-        per_order_qty=300,
+        per_order_qty=200,
         grid_spacing_rate=0.0001,
         max_order=50,
         enable_exit_signal=True,
