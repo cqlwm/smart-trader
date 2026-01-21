@@ -32,11 +32,11 @@ def long_buy_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy{file_name_flag}_{symbol.simple()}_{timeframe}.json',
 
         enable_exit_signal=False,
-        exit_signal_take_profit_min_rate=0.05,
+        exit_signal_take_profit_min_rate=0.02,
 
         fixed_rate_take_profit=True,
         take_profit_use_limit_order=False,
-        fixed_take_profit_rate=0.05,
+        fixed_take_profit_rate=0.02,
         
         enable_order_stop_loss=True,
         order_stop_loss_rate=0.1,
