@@ -35,7 +35,7 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 
 if __name__ == '__main__':
 
-    from template import dogeusdc, ethusdc, fogousdt, litusdt, nightusdt
+    from template import dogeusdc, ethusdc, fogousdt, litusdt, nightusdt, xnyusdt
     
     tasks = [
         ethusdc.long_buy_position_reverse(main_binance_client),
@@ -43,6 +43,7 @@ if __name__ == '__main__':
         fogousdt.long_buy(main_binance_client),
         litusdt.long_buy_position_reverse(main_binance_client),
         nightusdt.long_buy_position_reverse(main_binance_client),
+        xnyusdt.long_buy_position_reverse(main_binance_client),
     ]
 
     kline_subscribes: List[str] = []
