@@ -45,8 +45,8 @@ if __name__ == '__main__':
         nightusdt.long_buy_position_reverse(main_binance_client),
         xnyusdt.long_buy_position_reverse(main_binance_client),
 
-        solusdc.long_buy_position_reverse(main_binance_client),
-        solusdc.short_sell_position_reverse(main_binance_client),
+        # solusdc.long_buy_position_reverse(main_binance_client),
+        # solusdc.short_sell_position_reverse(main_binance_client),
     ]
 
     kline_subscribes: List[str] = []
