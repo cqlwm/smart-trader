@@ -39,14 +39,11 @@ if __name__ == '__main__':
     
     tasks = [
         ethusdc.short_sell_position_reverse(main_binance_client),
-        # dogeusdc.long_buy(main_binance_client),
+        dogeusdc.long_buy(main_binance_client),
         fogousdt.long_buy(main_binance_client),
         litusdt.long_buy_position_reverse(main_binance_client),
         nightusdt.long_buy_position_reverse(main_binance_client),
         xnyusdt.long_buy_position_reverse(main_binance_client),
-
-        # solusdc.long_buy_position_reverse(main_binance_client),
-        # solusdc.short_sell_position_reverse(main_binance_client),
     ]
 
     kline_subscribes: List[str] = []
