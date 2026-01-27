@@ -32,7 +32,7 @@ def short_sell_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
-    return StrategyTask(symbol=symbol, timeframe=timeframe, strategy=strategy)
+    return StrategyTask(symbol=symbol, strategy=strategy)
 
 def long_buy_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
     symbol=Symbol(base="doge", quote="usdc")
