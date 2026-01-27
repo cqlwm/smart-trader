@@ -64,7 +64,7 @@ def short_sell_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
         per_order_qty=0.01,
-        grid_spacing_rate=0.01,
+        grid_spacing_rate=0.0001,
         max_order=15,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.SELL)),
         order_file_path=f'{DATA_PATH}/signal_grid_short_sell_position_reverse_{symbol.simple()}_{timeframe}.json',
