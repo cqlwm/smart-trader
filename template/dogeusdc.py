@@ -28,6 +28,7 @@ def short_sell_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
         fixed_take_profit_rate=0.01,
         order_file_path=f'{DATA_PATH}/signal_grid_short_sell_position_reverse_{symbol.simple()}_{timeframe}.json',
         enable_max_order_stop_loss=True,
+        paused_after_stop_loss=False,
         position_reverse=True,
     )
     strategy = SignalGridStrategy(config, exchange_client)
