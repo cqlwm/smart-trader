@@ -44,8 +44,8 @@ if __name__ == '__main__':
         # nightusdt.long_buy_position_reverse(main_binance_client),
         # xnyusdt.long_buy_position_reverse(main_binance_client),
 
-        # litusdt.long_buy_position_reverse(main_binance_client),
-        litusdt.short_sell_position_reverse(main_binance_client),
+        litusdt.long_buy_position_reverse(main_binance_client),
+        # litusdt.short_sell_position_reverse(main_binance_client),
 
     ]
 
