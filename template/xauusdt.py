@@ -20,7 +20,7 @@ def template(exchange_client: ExSwapClient) -> StrategyTask:
         symbol=symbol,
         upper_price=5400.00,
         lower_price=4800.00,
-        grid_num=10,
+        grid_num=169,
         quantity_per_grid=0.002,
         position_side=PositionSide.SHORT,
         master_order_side=OrderSide.SELL,
