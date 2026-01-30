@@ -18,7 +18,7 @@ def template(exchange_client: ExSwapClient) -> StrategyTask:
     symbol = Symbol(base="XAU", quote="USDT")
     config = SimpleGridStrategyConfig(
         symbol=symbol,
-        upper_price=5000,
+        upper_price=5200,
         lower_price=4000,
         grid_num=10,
         quantity_per_grid=0.002,
