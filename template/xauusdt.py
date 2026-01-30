@@ -15,16 +15,17 @@ def template(exchange_client: ExSwapClient) -> StrategyTask:
     """
     简单网格策略模板
     """
-    symbol = Symbol(base="XAU", quote="USDT")
+    symbol = Symbol(base="xau", quote="usdt")
     config = SimpleGridStrategyConfig(
         symbol=symbol,
-        upper_price=5200,
-        lower_price=4000,
+        upper_price=5400.00,
+        lower_price=4800.00,
         grid_num=10,
         quantity_per_grid=0.002,
-        position_side=PositionSide.LONG,
-        master_order_side=OrderSide.BUY,
-        active_grid_count=8,
+        position_side=PositionSide.SHORT,
+        master_order_side=OrderSide.SELL,
+        active_grid_count=10,
+        delay_pending_order=True,
     )
     simple_grid_strategy = SimpleGridStrategy(ex_client=exchange_client, config=config, timeframe="1m")
     return StrategyTask(symbol=symbol, strategy=simple_grid_strategy)
