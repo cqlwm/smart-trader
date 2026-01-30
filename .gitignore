@@ -8,4 +8,4 @@ data
 .env.*
 data.parquet
 *.log
-backtest_report_alpha_trend_ETHUSDT_15m_5m.txt
+backtest_report*.txt
