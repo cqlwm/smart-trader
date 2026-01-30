@@ -35,16 +35,17 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 
 if __name__ == '__main__':
 
-    from template import dogeusdc, ethusdc, fogousdt, litusdt, nightusdt, xnyusdt, solusdc
+    from template import xauusdt
     
     tasks = [
+        xauusdt.template(main_binance_client),
         # ethusdc.short_sell_position_reverse(main_binance_client),
-        dogeusdc.long_buy_position_reverse(main_binance_client),
+        # dogeusdc.long_buy_position_reverse(main_binance_client),
         # fogousdt.long_buy(main_binance_client),
         # nightusdt.long_buy_position_reverse(main_binance_client),
         # xnyusdt.long_buy_position_reverse(main_binance_client),
 
-        litusdt.long_buy_position_reverse(main_binance_client),
+        # litusdt.long_buy_position_reverse(main_binance_client),
         # litusdt.short_sell_position_reverse(main_binance_client),
 
     ]
