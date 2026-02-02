@@ -1,4 +1,5 @@
 from client.ex_client import ExSwapClient
+from config import DATA_PATH
 import log
 from model import OrderSide, PositionSide, Symbol
 from task.strategy_task import StrategyTask
@@ -22,8 +23,9 @@ def short_grid(exchange_client: ExSwapClient) -> StrategyTask:
         position_side=PositionSide.SHORT,
         master_order_side=OrderSide.SELL,
         active_grid_count=10,
-        delay_pending_order=True,
-        backup_file="xauusdt_short_grid_4884_4381.json",
+        delay_pending_order=False,
+        initial_quota=0.2,
+        backup_file=f"{DATA_PATH}/xauusdt_short_grid_4884_4381.json",
     )
     simple_grid_strategy = SimpleGridStrategy(ex_client=exchange_client, config=config, timeframe="1m")
     return StrategyTask(symbol=symbol, strategy=simple_grid_strategy)
