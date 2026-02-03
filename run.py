@@ -38,7 +38,8 @@ if __name__ == '__main__':
     from template import xauusdt
     
     tasks = [
-        xauusdt.short_grid(main_binance_client),
+        # xauusdt.short_grid(main_binance_client),
+        xauusdt.long_grid(main_binance_client),
     ]
 
     kline_subscribes: List[str] = []
