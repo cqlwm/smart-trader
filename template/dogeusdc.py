@@ -60,3 +60,26 @@ def long_buy_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
 
     return StrategyTask(symbol=symbol, strategy=strategy)
 
+def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
+    symbol=Symbol(base="doge", quote="usdc")
+    timeframe='5m'
+
+    config=SignalGridStrategyConfig(
+        symbol=symbol,
+        timeframe=timeframe,
+        position_side=PositionSide.LONG,
+        master_side=OrderSide.BUY,
+        per_order_qty=900,
+        grid_spacing_rate=-0.1,
+        max_order=10,
+        enable_exit_signal=True,
+        signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
+        exit_signal_take_profit_min_rate=0.1,
+        fixed_rate_take_profit=True,
+        fixed_take_profit_rate=0.1,
+        order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
+        enable_max_order_stop_loss=True,
+    )
+    strategy = SignalGridStrategy(config, exchange_client)
+
+    return StrategyTask(symbol=symbol, strategy=strategy)
