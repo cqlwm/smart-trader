@@ -35,10 +35,11 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 
 if __name__ == '__main__':
 
-    from template import dogeusdc
+    from template import dogeusdc, ethusdc
     
     tasks = [
         dogeusdc.long_buy(main_binance_client),
+        ethusdc.long_buy(main_binance_client),
     ]
 
     kline_subscribes: List[str] = []
