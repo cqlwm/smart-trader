@@ -38,8 +38,8 @@ if __name__ == '__main__':
     from template import dogeusdc, ethusdc
     
     tasks = [
-        dogeusdc.long_buy(main_binance_client),
-        ethusdc.long_buy(main_binance_client),
+        dogeusdc.short_sell(main_binance_client),
+        ethusdc.short_sell(main_binance_client),
     ]
 
     kline_subscribes: List[str] = []
