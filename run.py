@@ -39,7 +39,7 @@ if __name__ == '__main__':
     
     tasks = [
         dogeusdc.short_sell(main_binance_client),
-        ethusdc.short_sell(main_binance_client),
+        # ethusdc.short_sell(main_binance_client),
     ]
 
     kline_subscribes: List[str] = []
