@@ -93,7 +93,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         timeframe=timeframe,
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
-        per_order_qty=1000,
+        per_order_qty=3300,
         grid_spacing_rate=-0.1,
         max_order=10,
         enable_exit_signal=True,
