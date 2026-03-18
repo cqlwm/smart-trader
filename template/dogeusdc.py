@@ -78,7 +78,6 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.1,
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
-        enable_max_order_stop_loss=True,
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
@@ -102,8 +101,29 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
         fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.1,
         order_file_path=f'{DATA_PATH}/signal_grid_short_sell_{symbol.simple()}_{timeframe}.json',
-        enable_max_order_stop_loss=True,
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
     return StrategyTask(symbol=symbol, strategy=strategy)
+
+
+def market_trend_task(exchange_client: ExSwapClient) -> StrategyTask | None:
+    symbols = [
+        Symbol(base="btc",  quote="usdc"),
+        Symbol(base="eth",  quote="usdc"),
+        Symbol(base="sol",  quote="usdc"),
+        Symbol(base="doge", quote="usdc"),
+    ]
+
+    def prev_day_change(symbol: Symbol) -> float:
+        ohlcv = exchange_client.fetch_ohlcv(symbol, '1d', limit=2)
+        prev = ohlcv[-2]
+        return prev[4] - prev[1]  # close - open
+
+    changes = [prev_day_change(s) for s in symbols]
+
+    if all(c > 0 for c in changes):
+        return long_buy(exchange_client)
+    if all(c < 0 for c in changes):
+        return short_sell(exchange_client)
+    return None
