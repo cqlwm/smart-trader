@@ -49,6 +49,9 @@ class MultiTimeframeStrategy(Strategy):
             })
             self.kline_data_dict[timeframe] = KlineData(timeframe=timeframe, klines=empty_df, latest_kline=None)
 
+    def ex_client(self) -> ExClient:
+        raise NotImplementedError()
+
     def klines(self, timeframe: str) -> DataFrame:
         """将指定时间框架的klines转换为DataFrame进行分析"""
         if timeframe not in self.kline_data_dict:
@@ -73,23 +76,8 @@ class MultiTimeframeStrategy(Strategy):
         """Initialize klines with historical data if the DataFrame is empty"""
         timeframe = kline.timeframe
         if len(self.kline_data_dict[timeframe].klines) == 0:
-            ohlcv = self.ex_client.fetch_ohlcv(kline.symbol, timeframe, self.init_kline_nums)
-            rows = []
-            for row in ohlcv:
-                timestamp, open_price, high_price, low_price, close_price, volume = row
-                historical_kline = Kline(
-                    symbol=kline.symbol,
-                    timeframe=timeframe,
-                    open=open_price,
-                    high=high_price,
-                    low=low_price,
-                    close=close_price,
-                    volume=volume,
-                    timestamp=timestamp,
-                    finished=True
-                )
-                rows.append(historical_kline.to_dict())
-            df = DataFrame(rows)
+            ohlcv = self.ex_client().fetch_ohlcv(kline.symbol, timeframe, self.init_kline_nums)
+            df = DataFrame([row.to_dict() for row in ohlcv])
             self.kline_data_dict[timeframe].klines = df
 
     def _update_klines(self, kline: Kline):
