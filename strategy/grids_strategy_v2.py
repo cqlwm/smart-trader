@@ -155,12 +155,15 @@ class OrderManager:
                 self.add_order(order)
             return True
 
-    def record_orders(self, closed_orders: List[Order] = [], refresh_orders: bool = False) -> None:
+    def record_orders(self, closed_orders: List[Order] | None = None, refresh_orders: bool = False) -> None:
         """
         记录订单到文件, 如果closed_orders为空, 则只记录当前订单
         @param closed_orders 已经关闭订单
         @param refresh_orders 刷新到文件
         """
+        if closed_orders is None:
+            closed_orders = []
+            
         with self._lock:
             for order in closed_orders:
                 self._remove_order(order.entry_id)

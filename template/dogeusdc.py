@@ -60,10 +60,10 @@ def long_buy_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
 
     return StrategyTask(symbol=symbol, strategy=strategy)
 
-def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
-    symbol=Symbol(base="doge", quote="usdc")
-    timeframe='5m'
+symbol=Symbol(base="doge", quote="usdc")
+timeframe='5m'
 
+def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
     config=SignalGridStrategyConfig(
         symbol=symbol,
         timeframe=timeframe,
@@ -84,9 +84,6 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
     return StrategyTask(symbol=symbol, strategy=strategy)
 
 def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
-    symbol=Symbol(base="doge", quote="usdc")
-    timeframe='5m'
-
     config=SignalGridStrategyConfig(
         symbol=symbol,
         timeframe=timeframe,
