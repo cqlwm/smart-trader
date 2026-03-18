@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import threading
 import pandas as pd
 from pandas import DataFrame
-from typing import Any, List, Dict, Optional
+from typing import List, Dict, Optional
 
 from client.ex_client import ExClient
 from model import Kline, OrderSide
