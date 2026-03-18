@@ -1,7 +1,8 @@
+import time
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 
-from model import Symbol, SymbolInfo
+from model import Symbol, SymbolInfo, Kline
 from ccxt.base.exchange import Exchange
 
 from model import OrderSide
@@ -29,13 +30,41 @@ class ExClient(ABC):
 
     def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> List[List[Any]]:
         return self.exchange.fetch_ohlcv(symbol.ccxt(), timeframe, limit=limit)
-    
+
+    def fetch_ohlcv_v2(self, symbol: Symbol, timeframe: str, limit: int = 100) -> list[Kline]:
+        if limit < 1:
+            return []
+
+        list_ohlcv = self.exchange.fetch_ohlcv(symbol.ccxt(), timeframe, limit=limit)
+        klines: list[Kline]= []
+        for ohlcv in list_ohlcv:
+            klines.append(
+                Kline(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    timestamp=ohlcv[0],
+                    open=ohlcv[1],
+                    high=ohlcv[2],
+                    low=ohlcv[3],
+                    close=ohlcv[4],
+                    volume=ohlcv[5],
+                    finished=True
+                )
+            )
+
+        # 比较单位是秒
+        if klines:
+            timeframe_ms = self.exchange.parse_timeframe(timeframe)
+            klines[-1].finished = klines[-1].timestamp + timeframe_ms * 1000 <= int(time.time() * 1000)
+
+        return klines
+
     def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price: Optional[float] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        '''
-        kwargs: 
+        """
+        kwargs:
             position_side
             time_in_force
-        '''
+        """
         pass
 
 class ExSwapClient(ExClient):

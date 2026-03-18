@@ -116,9 +116,9 @@ def market_trend_task(exchange_client: ExSwapClient) -> StrategyTask | None:
     ]
 
     def prev_day_change(symbol: Symbol) -> float:
-        ohlcv = exchange_client.fetch_ohlcv(symbol, '1d', limit=2)
+        ohlcv = exchange_client.fetch_ohlcv_v2(symbol, '1d', limit=2)
         prev = ohlcv[-2]
-        return prev[4] - prev[1]  # close - open
+        return prev.close - prev.open
 
     changes = [prev_day_change(s) for s in symbols]
 
