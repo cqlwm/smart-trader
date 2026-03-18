@@ -117,7 +117,9 @@ def market_trend_task(exchange_client: ExSwapClient) -> StrategyTask | None:
     changes = [prev_day_change(s) for s in symbols]
 
     if all(c > 0 for c in changes):
+        logger.info("日线趋势为【多头趋势】")
         return long_buy(exchange_client)
     if all(c < 0 for c in changes):
+        logger.info("日线趋势为【空头趋势】")
         return short_sell(exchange_client)
     return None
