@@ -36,7 +36,7 @@ def create_binance_client(client_type: str) -> BinanceSwapClient:
 main_binance_client: BinanceSwapClient = create_binance_client('main')
 
 def main():
-    from template import dogeusdc, solusdc
+    from template import dogeusdc
 
     tasks: list[StrategyTask] = []
 
