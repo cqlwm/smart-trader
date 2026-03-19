@@ -230,7 +230,7 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         self.close_position: bool = False
         self.is_running: bool = True
 
-    def ex_client(self) -> ExSwapClient:
+    def exchange_client(self) -> ExSwapClient:
         return self.ex_client
 
     def place_order(self, order_id: str, side: OrderSide, qty: float, price: float, first_price: float | None = None):

@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 import threading
+
+import numpy as np
 import pandas as pd
 from pandas import DataFrame
 from typing import List, Dict, Optional
@@ -49,7 +51,7 @@ class MultiTimeframeStrategy(Strategy):
             })
             self.kline_data_dict[timeframe] = KlineData(timeframe=timeframe, klines=empty_df, latest_kline=None)
 
-    def ex_client(self) -> ExClient:
+    def exchange_client(self) -> ExClient:
         raise NotImplementedError()
 
     def klines(self, timeframe: str) -> DataFrame:
@@ -76,7 +78,7 @@ class MultiTimeframeStrategy(Strategy):
         """Initialize klines with historical data if the DataFrame is empty"""
         timeframe = kline.timeframe
         if len(self.kline_data_dict[timeframe].klines) == 0:
-            ohlcv = self.ex_client().fetch_ohlcv(kline.symbol, timeframe, self.init_kline_nums)
+            ohlcv = self.exchange_client().fetch_ohlcv(kline.symbol, timeframe, self.init_kline_nums)
             df = DataFrame([row.to_dict() for row in ohlcv])
             self.kline_data_dict[timeframe].klines = df
 
@@ -89,7 +91,7 @@ class MultiTimeframeStrategy(Strategy):
         df = self.kline_data_dict[timeframe].klines
 
         # 检查是否需要更新最后一个kline或添加新的kline
-        if len(df) > 0 and df.iloc[-1]['datetime'] == kline.datetime:
+        if len(df) > 0 and df['datetime'].iloc[-1] == kline.datetime:
             # Update last row
             df.loc[df.index[-1]] = kline_dict
         else:
