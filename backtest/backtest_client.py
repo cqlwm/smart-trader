@@ -1,7 +1,5 @@
-import time
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
-from datetime import datetime
 import threading
 
 from client.ex_client import ExSwapClient
@@ -61,43 +59,78 @@ class BacktestPosition:
 class BacktestClient(ExSwapClient):
     """回测客户端，模拟交易操作"""
 
-    def __init__(self, initial_balance: float = 10000.0, maker_fee: float = 0.0002, taker_fee: float = 0.0004):
+    def __init__(self, initial_balance: float = 10000.0, maker_fee: float = 0.0002,
+                 taker_fee: float = 0.0004,
+                 symbol_infos: Optional[Dict[str, SymbolInfo]] = None):
         self.exchange_name = 'backtest'
-        self.exchange = None  # type: ignore  # 回测不需要真实交易所
+        self.exchange = None  # type: ignore
 
-        # 账户状态
         self._balance = initial_balance
         self.maker_fee = maker_fee
         self.taker_fee = taker_fee
+
+        # symbol -> SymbolInfo override
+        self._symbol_infos: Dict[str, SymbolInfo] = symbol_infos or {}
 
         # 订单和持仓管理
         self.orders: Dict[str, BacktestOrder] = {}
         self._positions: Dict[str, BacktestPosition] = {}
         self.order_history: List[BacktestOrder] = []
 
-        # 锁保护并发访问
         self.lock = threading.RLock()
 
-        # 当前市场价格（用于模拟成交）
         self.current_prices: Dict[str, float] = {}
 
-        # 历史数据存储和时间同步
-        self.historical_data: Dict[str, List[Kline]] = {}  # timeframe -> sorted klines
-        self.current_timestamp: int = 0  # 当前回测时间戳
+        self.historical_data: Dict[str, List[Kline]] = {}
+        self.current_timestamp: int = 0
 
         logger.info(f"BacktestClient initialized with balance: {initial_balance}")
 
     def update_current_price(self, symbol: Symbol, price: float):
-        """更新当前市场价格"""
+        """更新当前市场价格，同时检查挂单成交并更新持仓盈亏"""
         with self.lock:
             self.current_prices[symbol.binance()] = price
 
+    def update_current_timestamp(self, timestamp: int):
+        """更新当前回测时间戳"""
+        with self.lock:
+            self.current_timestamp = timestamp
+
+    def check_pending_orders(self, kline: Kline):
+        """每根K线处理完后检查限价挂单是否触及成交"""
+        with self.lock:
+            pending = [o for o in self.orders.values() if o.status == OrderStatus.OPEN
+                       and o.order_type == 'limit' and o.symbol.binance() == kline.symbol.binance()]
+            for order in pending:
+                triggered = False
+                if order.side == OrderSide.BUY and kline.low <= order.price:
+                    triggered = True
+                elif order.side == OrderSide.SELL and kline.high >= order.price:
+                    triggered = True
+
+                if triggered:
+                    self._fill_order(order)
+
+        # 更新持仓浮盈
+        self._update_unrealized_pnl(kline.symbol, kline.close)
+
+    def _update_unrealized_pnl(self, symbol: Symbol, price: float):
+        with self.lock:
+            for pos in self._positions.values():
+                if pos.symbol.binance() != symbol.binance():
+                    continue
+                if pos.side == PositionSide.LONG:
+                    pos.unrealized_pnl = (price - pos.entry_price) * pos.quantity
+                else:
+                    pos.unrealized_pnl = (pos.entry_price - price) * pos.quantity
+
     def get_current_price(self, symbol: Symbol) -> float:
-        """获取当前市场价格"""
         return self.current_prices.get(symbol.binance(), 0.0)
 
     def symbol_info(self, symbol: Symbol) -> SymbolInfo:
-        """返回模拟的交易对信息"""
+        key = symbol.binance()
+        if key in self._symbol_infos:
+            return self._symbol_infos[key]
         return SymbolInfo(
             symbol=symbol,
             tick_size=0.01,
@@ -109,13 +142,11 @@ class BacktestClient(ExSwapClient):
         )
 
     def balance(self, coin: str) -> float:
-        """获取账户余额"""
-        if coin.upper() in ['USDT', 'USD', 'BUSD']:
+        if coin.upper() in ['USDT', 'USD', 'BUSD', 'USDC']:
             return self._balance
         return 0.0
 
     def cancel(self, custom_id: str, symbol: Symbol) -> Dict[str, Any]:
-        """取消订单"""
         with self.lock:
             if custom_id in self.orders:
                 order = self.orders[custom_id]
@@ -126,7 +157,6 @@ class BacktestClient(ExSwapClient):
             raise ValueError(f"Order {custom_id} not found")
 
     def query_order(self, custom_id: str, symbol: Symbol) -> Dict[str, Any]:
-        """查询订单"""
         with self.lock:
             if custom_id in self.orders:
                 return self.orders[custom_id].to_dict()
@@ -139,18 +169,15 @@ class BacktestClient(ExSwapClient):
         if isinstance(position_side, str):
             position_side = PositionSide(position_side)
 
-        place_order_behavior = kwargs.get('place_order_behavior')
-
         order_type = 'limit' if price else 'market'
         current_price = self.get_current_price(symbol)
 
-        logger.debug(f"Placing order {custom_id}: symbol={symbol.binance()}, current_price={current_price}, prices={self.current_prices}")
+        logger.debug(f"Placing order {custom_id}: symbol={symbol.binance()}, current_price={current_price}")
 
         if not current_price:
             logger.warning(f"No current price for {symbol.binance()}, skipping order")
             return None
 
-        # 创建订单
         order = BacktestOrder(
             custom_id=custom_id,
             symbol=symbol,
@@ -160,54 +187,54 @@ class BacktestClient(ExSwapClient):
             order_type=order_type,
             position_side=position_side,
             status=OrderStatus.OPEN,
-            timestamp=int(time.time() * 1000)
+            timestamp=self.current_timestamp  # 使用回测时间，非 wall clock
         )
 
         with self.lock:
             self.orders[custom_id] = order
 
-        # 模拟成交
-        self._simulate_fill(order, current_price)
+        if order_type == 'market':
+            self._fill_order(order, fill_price=current_price)
+        # 限价单不立即成交，等待 check_pending_orders 触发
 
         return order.to_dict()
 
-    def _simulate_fill(self, order: BacktestOrder, current_price: float):
-        """模拟订单成交"""
-        # 对于回测，立即以指定价格成交所有订单（模拟理想的成交条件）
+    def _fill_order(self, order: BacktestOrder, fill_price: Optional[float] = None):
+        """成交订单"""
         if order.order_type == 'market':
-            # 市价单立即成交
-            order.filled_quantity = order.quantity
-            order.filled_price = current_price
+            order.filled_price = fill_price or self.get_current_price(order.symbol)
             fee_rate = self.taker_fee
-        elif order.order_type == 'limit' and order.price is not None:
-            # 限价单：立即以指定价格成交（回测优化）
-            order.filled_quantity = order.quantity
-            order.filled_price = order.price
-            fee_rate = self.maker_fee
         else:
-            fee_rate = self.taker_fee  # 默认值
+            order.filled_price = order.price  # type: ignore[assignment]
+            fee_rate = self.maker_fee
 
+        order.filled_quantity = order.quantity
         order.status = OrderStatus.CLOSED
-
-        # 计算手续费
         order.fee = order.filled_price * order.filled_quantity * fee_rate
 
-        # 更新余额和持仓
         self._update_balance_and_position(order)
-
-        # 记录到历史
         self.order_history.append(order)
 
-        logger.info(f"Order {order.custom_id} filled: {order.filled_quantity} @ {order.filled_price}, total orders: {len(self.order_history)}")
+        logger.info(f"Order {order.custom_id} filled: {order.filled_quantity} @ {order.filled_price}, "
+                    f"total orders: {len(self.order_history)}")
 
     def _update_balance_and_position(self, order: BacktestOrder):
-        """更新余额和持仓"""
-        if order.side == OrderSide.BUY:
-            # 买入：减少余额，增加持仓
+        """更新余额和持仓。
+
+        开仓：LONG+BUY 或 SHORT+SELL → 增加持仓
+        平仓：LONG+SELL 或 SHORT+BUY → 减少/关闭持仓
+        """
+        pos_key = f"{order.symbol.binance()}_{order.position_side.value}"
+        is_open = (
+            (order.position_side == PositionSide.LONG and order.side == OrderSide.BUY) or
+            (order.position_side == PositionSide.SHORT and order.side == OrderSide.SELL)
+        )
+
+        if is_open:
+            # 开仓：占用资金
             cost = order.filled_price * order.filled_quantity + order.fee
             self._balance -= cost
 
-            pos_key = f"{order.symbol.binance()}_{order.position_side.value}"
             if pos_key in self._positions:
                 pos = self._positions[pos_key]
                 total_quantity = pos.quantity + order.filled_quantity
@@ -221,13 +248,11 @@ class BacktestClient(ExSwapClient):
                     quantity=order.filled_quantity,
                     entry_price=order.filled_price
                 )
-
-        elif order.side == OrderSide.SELL:
-            # 卖出：增加余额，减少持仓
+        else:
+            # 平仓：释放资金
             revenue = order.filled_price * order.filled_quantity - order.fee
             self._balance += revenue
 
-            pos_key = f"{order.symbol.binance()}_{order.position_side.value}"
             if pos_key in self._positions:
                 pos = self._positions[pos_key]
                 if pos.quantity >= order.filled_quantity:
@@ -242,12 +267,11 @@ class BacktestClient(ExSwapClient):
         pos_key = f"{symbol}_{position_side}"
         if pos_key in self._positions:
             pos = self._positions[pos_key]
-            # 创建平仓订单
             side = OrderSide.SELL if position_side == 'long' else OrderSide.BUY
             current_price = self.get_current_price(pos.symbol)
 
             order = BacktestOrder(
-                custom_id=f"close_{int(time.time())}",
+                custom_id=f"close_{self.current_timestamp}",
                 symbol=pos.symbol,
                 side=side,
                 quantity=pos.quantity,
@@ -255,7 +279,7 @@ class BacktestClient(ExSwapClient):
                 order_type='market',
                 position_side=PositionSide(position_side),
                 status=OrderStatus.CLOSED,
-                timestamp=int(time.time() * 1000),
+                timestamp=self.current_timestamp,  # 使用回测时间
                 filled_quantity=pos.quantity,
                 filled_price=current_price,
                 fee=current_price * pos.quantity * self.taker_fee
@@ -263,10 +287,10 @@ class BacktestClient(ExSwapClient):
 
             self._update_balance_and_position(order)
             self.order_history.append(order)
-            del self._positions[pos_key]
+            if pos_key in self._positions:
+                del self._positions[pos_key]
 
     def positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
-        """获取持仓"""
         result = []
         for pos_key, pos in self._positions.items():
             if symbol is None or symbol in pos_key:
@@ -280,55 +304,33 @@ class BacktestClient(ExSwapClient):
         return result
 
     def get_trade_history(self) -> List[Dict[str, Any]]:
-        """获取交易历史"""
         return [order.to_dict() for order in self.order_history]
 
     def get_final_balance(self) -> float:
-        """获取最终余额"""
         return self._balance
 
     def load_historical_data(self, timeframe: str, klines: List[Kline]):
-        """加载指定时间框架的历史数据"""
         with self.lock:
-            # 确保数据按时间戳排序
             self.historical_data[timeframe] = sorted(klines, key=lambda k: k.timestamp)
             logger.info(f"Loaded {len(klines)} klines for timeframe {timeframe}")
 
-    def update_current_timestamp(self, timestamp: int):
-        """更新当前回测时间戳"""
-        with self.lock:
-            self.current_timestamp = timestamp
-
     def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> List[List[Any]]:
-        """返回截至当前回测时间的K线数据，模拟真实交易所的fetch_ohlcv接口"""
+        """返回截至当前回测时间的K线数据"""
         with self.lock:
             if timeframe not in self.historical_data:
                 logger.warning(f"No historical data available for timeframe {timeframe}")
                 return []
 
             klines = self.historical_data[timeframe]
-
-            # 过滤出当前时间戳之前的K线数据
             current_klines = [k for k in klines if k.timestamp <= self.current_timestamp]
 
             if not current_klines:
                 logger.warning(f"No klines available before timestamp {self.current_timestamp} for timeframe {timeframe}")
                 return []
 
-            # 返回最近的limit根K线
             recent_klines = current_klines[-limit:] if len(current_klines) >= limit else current_klines
 
-            # 转换为OHLCV格式 [timestamp, open, high, low, close, volume]
-            ohlcv_data = []
-            for kline in recent_klines:
-                ohlcv_data.append([
-                    kline.timestamp,
-                    kline.open,
-                    kline.high,
-                    kline.low,
-                    kline.close,
-                    kline.volume
-                ])
-
-            logger.debug(f"Returning {len(ohlcv_data)} klines for {symbol.binance()} {timeframe} at timestamp {self.current_timestamp}")
-            return ohlcv_data
+            return [
+                [k.timestamp, k.open, k.high, k.low, k.close, k.volume]
+                for k in recent_klines
+            ]

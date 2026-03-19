@@ -89,13 +89,7 @@ def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv", start_timestam
         event_loop.add_task(backtest_task)
 
         logger.info("开始回测...")
-        event_loop.start()
-
-        # 等待回测完成
-        while not event_loop.is_completed:
-            import time
-            time.sleep(0.1)
-
+        event_loop.start()  # 同步阻塞直到完成
         event_loop.stop()
 
         # 8. 获取回测结果
