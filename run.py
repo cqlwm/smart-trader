@@ -56,9 +56,9 @@ def main():
 
     data_event_loop.start()
 
-def test():
-    from template import dogeusdc
-    t = dogeusdc.market_trend_task(main_binance_client)
+# def test():
+#     from template import dogeusdc
+#     t = dogeusdc.market_trend_task(main_binance_client)
 
 if __name__ == '__main__':
     main()
