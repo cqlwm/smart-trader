@@ -314,7 +314,7 @@ class BacktestClient(ExSwapClient):
             self.historical_data[timeframe] = sorted(klines, key=lambda k: k.timestamp)
             logger.info(f"Loaded {len(klines)} klines for timeframe {timeframe}")
 
-    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> List[List[Any]]:
+    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> List[Kline]:
         """返回截至当前回测时间的K线数据"""
         with self.lock:
             if timeframe not in self.historical_data:
@@ -330,7 +330,4 @@ class BacktestClient(ExSwapClient):
 
             recent_klines = current_klines[-limit:] if len(current_klines) >= limit else current_klines
 
-            return [
-                [k.timestamp, k.open, k.high, k.low, k.close, k.volume]
-                for k in recent_klines
-            ]
+            return recent_klines

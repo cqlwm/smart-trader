@@ -8,8 +8,6 @@ import os
 import sys
 from pathlib import Path
 
-from strategy.none_strategy import NoneStrategy
-
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
@@ -21,34 +19,29 @@ from backtest.backtest_event_loop import BacktestEventLoop
 from backtest.analyzer import BacktestAnalyzer
 from task.backtest_task import BacktestTask
 from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig
+from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
+from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
+from config import DATA_PATH
 import log
 
 logger = log.getLogger(__name__)
 
 
-def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv", start_timestamp=None):
-    """
-    运行SignalGridStrategy回测示例
-
-    Args:
-        data_file: 数据文件路径
-        start_timestamp: 回测起始时间戳，如果为None则使用默认索引
-    """
-    # 配置参数
-    symbol = Symbol(base="ETH", quote="USDT")
-    timeframe = "1m"
-
-    # 检查数据文件是否存在
-    if not os.path.exists(data_file):
-        logger.error(f"数据文件不存在: {data_file}")
-        logger.info("请准备CSV格式的历史数据文件，包含列: timestamp,open,high,low,close,volume")
-        return
-
+def run_backtest_example(
+    symbol: Symbol = Symbol(base="ETH", quote="USDT"),
+    timeframe: str = "1m",
+    start_time: str = "2025-10-01",
+    end_time: str = "2025-10-31",
+    data_dir: str = "data",
+    initial_balance: float = 10000.0,
+    strategy_config: SignalGridStrategyConfig | None = None,
+):
     try:
-        # 1. 加载历史数据
+        # 1. 加载历史数据（自动下载并缓存）
         logger.info("加载历史数据...")
         data_loader = HistoricalDataLoader()
-        historical_klines = data_loader.load_csv(data_file, symbol, timeframe)
+        file_path = data_loader.ensure_data(symbol, timeframe, start_time, end_time, data_dir)
+        historical_klines = data_loader.load_csv(file_path, symbol, timeframe)
 
         if not historical_klines:
             logger.error("未加载到历史数据")
@@ -57,15 +50,14 @@ def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv", start_timestam
         logger.info(f"加载了 {len(historical_klines)} 根K线数据")
 
         # 2. 创建回测客户端
-        initial_balance = 10000.0
         backtest_client = BacktestClient(
             initial_balance=initial_balance,
-            maker_fee=0.0002,  # 0.02%
-            taker_fee=0.0004   # 0.04%
+            maker_fee=0.0002,
+            taker_fee=0.0004
         )
 
-        # 4. 创建策略实例
-        strategy = NoneStrategy(Symbol(base='eth', quote='usdc'), '1m', backtest_client)
+        # 3. 创建策略实例
+        strategy = SignalGridStrategy(strategy_config, backtest_client)
 
         # 5. 创建回测任务
         # 准备历史数据字典
@@ -81,7 +73,6 @@ def run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv", start_timestam
         event_loop = BacktestEventLoop(
             historical_klines=historical_klines,
             on_progress_callback=progress_callback,
-            start_timestamp=start_timestamp
         )
         event_loop.set_backtest_client(backtest_client)
 
@@ -199,5 +190,32 @@ def command_line_runner():
         run_backtest_example(args.data_file)
 
 if __name__ == "__main__":
-    # command_line_runner()
-    run_backtest_example(data_file="data/ethusdt_2025_10_1m.csv")
+    symbol = Symbol(base="eth", quote="usdt")
+    timeframe = "15m"
+
+    run_backtest_example(
+        symbol=symbol,
+        timeframe=timeframe,
+        start_time="2026-01-01",
+        end_time="2026-03-19",
+        strategy_config=SignalGridStrategyConfig(
+            symbol=symbol,
+            timeframe=timeframe,
+            position_side=PositionSide.LONG,
+            master_side=OrderSide.BUY,
+            per_order_qty=0.02,
+            grid_spacing_rate=0.1,
+            max_order=24,
+            enable_exit_signal=True,
+            signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
+            exit_signal_take_profit_min_rate=0.15,
+            fixed_rate_take_profit=True,
+            fixed_take_profit_rate=0.15,
+            order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
+            enable_order_stop_loss=True,
+            order_stop_loss_rate=0.02,
+            enable_trailing_stop=True,
+            trailing_stop_rate=0.02,
+            trailing_stop_activation_profit_rate=0.02,
+        ),
+    )

@@ -117,6 +117,35 @@ class HistoricalDataLoader:
         self.data_cache.clear()
         logger.info("Data cache cleared")
 
+    def ensure_data(
+        self,
+        symbol: Symbol,
+        timeframe: str,
+        start_time: Union[str, datetime],
+        end_time: Union[str, datetime],
+        data_dir: str = "data",
+    ) -> str:
+        """确保数据文件存在，若不存在则自动下载并缓存"""
+        if isinstance(start_time, str):
+            start_dt = datetime.fromisoformat(start_time)
+        else:
+            start_dt = start_time
+        if isinstance(end_time, str):
+            end_dt = datetime.fromisoformat(end_time)
+        else:
+            end_dt = end_time
+
+        start_str = start_dt.strftime("%Y%m%d")
+        end_str = end_dt.strftime("%Y%m%d")
+        file_path = f"{data_dir}/{symbol.binance()}_{timeframe}_{start_str}_{end_str}.csv"
+
+        if Path(file_path).exists():
+            logger.info(f"Cache hit: {file_path}")
+            return file_path
+
+        logger.info(f"Cache miss, downloading: {file_path}")
+        return self.download_and_save_historical_data(symbol, timeframe, start_dt, end_dt, file_path)
+
     def download_and_save_historical_data(
         self,
         symbol: Symbol,
