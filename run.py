@@ -1,10 +1,10 @@
 from typing import List
 import log
 import os
-from data_event_loop import BinanceDataEventLoop
 from client.binance_client import BinanceSwapClient
 import dotenv
 
+from event_loop.binance import BinanceDataEventLoop
 from event_loop.handler.kline_handler import StrategyHandler
 
 dotenv.load_dotenv()
@@ -38,11 +38,11 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 def main():
     from template import dogeusdc
 
-    tasks: list[StrategyHandler] = []
+    handlers: list[StrategyHandler] = []
 
-    doge_task = dogeusdc.market_trend_task(main_binance_client)
+    doge_task = dogeusdc.market_trend(main_binance_client)
     if doge_task:
-        tasks.append(doge_task)
+        handlers.append(doge_task)
 
     kline_subscribes: List[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
@@ -51,12 +51,12 @@ def main():
         logger.warning('No kline subscribes found')
         return
 
-    for task in tasks:
+    for task in handlers:
         for timeframe in task.strategy.timeframes:
             sub_key = task.symbol.binance_ws_sub_kline(timeframe)
             if sub_key not in kline_subscribes:
                 kline_subscribes.append(sub_key)
-        data_event_loop.add_task(task)
+        data_event_loop.add_handler(task)
 
     data_event_loop.start()
 

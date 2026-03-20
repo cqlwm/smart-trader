@@ -16,7 +16,7 @@ class DataEventLoop:
         self.handlers: List[Handler] = []
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
-    def add_task(self, task: Handler):
+    def add_handler(self, task: Handler):
         self.handlers.append(task)
 
     def loop(self, data: str):

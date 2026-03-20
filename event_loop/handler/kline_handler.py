@@ -10,12 +10,12 @@ from strategy import GeneralStrategy
 logger = log.getLogger(__name__)
 
 class StrategyHandler(Handler):
-    def __init__(self, symbol: Symbol, strategy: GeneralStrategy):
+    def __init__(self, strategy: GeneralStrategy):
         super().__init__()
-        self.name: str = 'StrategyTask'
-        self.symbol: Symbol = symbol
-        self.timeframes: List[str] = strategy.timeframes
+        self.name: str = 'StrategyHandler'
         self.strategy: GeneralStrategy = strategy
+        self.timeframes = self.strategy.timeframes
+        self.symbols = [s.ccxt() for s in self.strategy.symbols]
 
     def run(self, data: str) -> None:
         data_obj: Dict[str, Any] = json.loads(data)
@@ -28,8 +28,10 @@ class StrategyHandler(Handler):
             match = re.match(r'(\w+)(usdt|usdc|btc)@kline_(\d+\w)', kline_key)
             if not match:
                 raise ValueError(f'Invalid kline key: {kline_key}')
-            kline_obj = Kline(
-                symbol=Symbol(base=match.group(1), quote=match.group(2)),
+            sym = Symbol(base=match.group(1), quote=match.group(2))
+
+            k = Kline(
+                symbol=sym,
                 timeframe=match.group(3),
                 open=float(kline['o']),
                 high=float(kline['h']),
@@ -39,5 +41,6 @@ class StrategyHandler(Handler):
                 timestamp=int(kline['t']),
                 finished=kline.get('x', False)
             )
-            if self.symbol.binance() == kline_obj.symbol.binance() and kline_obj.timeframe in self.timeframes:
-                self.strategy.run(kline_obj)
+
+            if sym.ccxt() in self.symbols and k.timeframe in self.timeframes:
+                self.strategy.run(k)

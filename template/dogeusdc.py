@@ -101,7 +101,7 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyHandler:
     return StrategyHandler(symbol=symbol_, strategy=strategy)
 
 
-def market_trend_task(exchange_client: ExSwapClient) -> StrategyHandler | None:
+def market_trend(exchange_client: ExSwapClient) -> StrategyHandler | None:
     symbols = [
         Symbol(base="btc",  quote="usdc"),
         Symbol(base="eth",  quote="usdc"),

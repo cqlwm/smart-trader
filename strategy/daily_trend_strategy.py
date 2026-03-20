@@ -1,11 +1,8 @@
-import json
 import logging
-import pandas as pd
-from pandas import DataFrame
 from typing import List, Optional
 
-from model import Kline, Symbol, OrderSide, PositionSide, OrderStatus, PlaceOrderBehavior
-from strategy import GeneralStrategy, KlineData, Signal
+from model import Symbol, OrderSide, PositionSide, OrderStatus, PlaceOrderBehavior
+from strategy import GeneralStrategy, Signal
 from pydantic import BaseModel, ConfigDict
 from strategy.signal_grid_strategy import Order, OrderManager, build_order_id
 
@@ -27,7 +24,7 @@ class DailyTrendStrategyConfig(BaseModel):
 
 class DailyTrendStrategy(GeneralStrategy):
     def __init__(self, config: DailyTrendStrategyConfig, ex_client):
-        super().__init__(['1d', config.trade_timeframe])
+        super().__init__([config.trade_symbol] + config.direction_symbols, ['1d', config.trade_timeframe])
         self.config = config
         self._ex_client = ex_client
         self.order_manager = OrderManager(order_file_path=config.order_file_path)
