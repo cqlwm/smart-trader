@@ -1,7 +1,7 @@
 import json
 import log
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from event_loop.base import Handler
 from model import Symbol, Kline
