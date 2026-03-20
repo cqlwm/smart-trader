@@ -47,6 +47,10 @@ def main():
     kline_subscribes: List[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
 
+    if len(kline_subscribes) == 0:
+        logger.warning('No kline subscribes found')
+        return
+
     for task in tasks:
         for timeframe in task.strategy.timeframes:
             sub_key = task.symbol.binance_ws_sub_kline(timeframe)
