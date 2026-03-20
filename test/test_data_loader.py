@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from backtest.data_loader import HistoricalDataLoader
 from model import Symbol
 

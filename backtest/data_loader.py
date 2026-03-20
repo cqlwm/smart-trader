@@ -1,6 +1,6 @@
 import pandas as pd
 import json
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Optional, Union
 from pathlib import Path
 from datetime import datetime, timedelta
 import time
