@@ -31,13 +31,14 @@ logger = log.getLogger(__name__)
 
 
 def run_generic_backtest(
-    data_requirements: List[Tuple[Symbol, str]],
-    strategy_factory: Callable[[BacktestClient], Any],
-    start_time: str,
-    end_time: str,
-    data_dir: str = "data",
-    initial_balance: float = 1000.0,
-    data_offset: timedelta | None = None,
+        data_requirements: List[Tuple[Symbol, str]],
+        strategy_factory: Callable[[BacktestClient], Any],
+        start_time: str,
+        end_time: str,
+        data_dir: str = "data",
+        initial_balance: float = 1000.0,
+        data_offset: timedelta | None = None,
+        start_index: int = 300
 ):
     try:
         logger.info("加载历史数据...")
@@ -88,6 +89,7 @@ def run_generic_backtest(
         event_loop = BacktestEventLoop(
             historical_klines=all_klines,
             on_progress_callback=progress_callback,
+            start_index=start_index
         )
         event_loop.set_backtest_client(backtest_client)
 
@@ -114,9 +116,9 @@ def run_generic_backtest(
         risk = analysis['risk_metrics']
         trade = analysis['trade_metrics']
 
-        print("\n" + "="*50)
+        print("\n" + "=" * 50)
         print("BACKTEST RESULTS")
-        print("="*50)
+        print("=" * 50)
         print(f"Main Symbol: {main_symbol.simple()}")
         print(f"Main Timeframe: {main_tf}")
         print(f"Total Trades: {summary['total_trades']}")
@@ -131,6 +133,7 @@ def run_generic_backtest(
         logger.error(f"回测过程中发生错误: {e}")
         import traceback
         traceback.print_exc()
+
 
 def run_signal_grid_strategy():
     symbol = Symbol(base="eth", quote="usdt")
@@ -166,6 +169,7 @@ def run_signal_grid_strategy():
         end_time=end_time,
     )
 
+
 def run_daily_trend_strategy():
     trade_symbol = Symbol(base="DOGE", quote="USDT")
     direction_symbols = [
@@ -194,6 +198,7 @@ def run_daily_trend_strategy():
         start_time="2026-03-19",
         end_time="2026-03-20",
         data_offset=timedelta(days=1),
+        start_index=0
     )
 
 
@@ -252,7 +257,7 @@ def command_line_runner():
 
     parser = argparse.ArgumentParser(description='运行回测')
     parser.add_argument('--create-sample', action='store_true',
-                       help='创建示例数据文件')
+                        help='创建示例数据文件')
 
     args = parser.parse_args()
 
