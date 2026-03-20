@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from client.ex_client import ExSwapClient
 import log
 from model import OrderSide, PositionSide, Symbol
-from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig
+from strategy.signal_grid_strategy import SignalGridStrategy, SignalGridStrategyConfig
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
 from config import DATA_PATH

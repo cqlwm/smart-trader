@@ -143,7 +143,8 @@ class SymbolInfo(BaseModel):
     max_qty: float
     min_notional: float = 6.0
 
-    def _precision(self, number: float | str):
+    @staticmethod
+    def _precision(number: float | str):
         return Decimal(str(number)).normalize().as_tuple().exponent * -1
     
     def price_precision(self):
@@ -152,7 +153,8 @@ class SymbolInfo(BaseModel):
     def qty_precision(self):
         return self._precision(self.step_size)
 
-    def format_precision(self, value: float | str, precision: float | str):
+    @staticmethod
+    def format_precision(value: float | str, precision: float | str):
         decimal_value = Decimal(str(value))
         format_str = f"{{:.{precision}f}}"
         return float(format_str.format(decimal_value))
@@ -179,7 +181,7 @@ class Kline:
     def to_dict(self) -> dict[str, Any]:
         return {
             'datetime': self.datetime,
-            # 'timestamp': self.timestamp,
+            'timestamp': self.timestamp,
             'open': self.open,
             'high': self.high,
             'low': self.low,

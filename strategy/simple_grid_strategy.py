@@ -6,7 +6,7 @@ from typing import List
 from datetime import datetime
 
 from pydantic import BaseModel
-from strategy import SingleTimeframeStrategy
+from strategy import SimpleStrategy
 from client.ex_client import ExSwapClient, ExClient
 from model import PlaceOrderBehavior, PositionSide, Symbol, OrderSide, OrderStatus
 import log
@@ -199,9 +199,9 @@ class SimpleGridStrategyConfig(BaseModel):
     backup_file: str = ""
 
 
-class SimpleGridStrategy(SingleTimeframeStrategy):
+class SimpleGridStrategy(SimpleStrategy):
     def __init__(self, ex_client: ExSwapClient, config: SimpleGridStrategyConfig, timeframe: str):
-        super().__init__(timeframe)
+        super().__init__(config.symbol, timeframe)
         self.config = config
         self.ex_client = ex_client
         self.grids: List[OrderPair] = []

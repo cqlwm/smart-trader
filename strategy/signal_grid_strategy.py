@@ -3,7 +3,7 @@ import secrets
 import threading
 from typing import Any, List, Callable, Dict
 from client.ex_client import ExSwapClient
-from strategy import SingleTimeframeStrategy
+from strategy import SimpleStrategy
 from model import OrderSide, OrderStatus, PlaceOrderBehavior, PositionSide
 import logging
 from pydantic import BaseModel, ConfigDict
@@ -216,10 +216,10 @@ class SignalGridStrategyConfig(BaseModel):
     trailing_stop_rate: float = 0.02
     trailing_stop_activation_profit_rate: float = 0.01
 
-class SignalGridStrategy(SingleTimeframeStrategy):
+class SignalGridStrategy(SimpleStrategy):
 
     def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient):
-        super().__init__(config.timeframe)
+        super().__init__(config.symbol, config.timeframe)
         self.config = config
         self.ex_client = ex_client
 

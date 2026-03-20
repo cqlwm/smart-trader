@@ -9,38 +9,33 @@ from backtest.backtest_client import BacktestClient
 
 logger = log.getLogger(__name__)
 
-
-class BacktestTask(Task):
+class MultiSymbolBacktestTask(Task):
     """
-    回测任务，使用模拟客户端运行策略
+    支持多个交易对路由到同一个策略的 BacktestTask
     """
-
-    def __init__(self, symbol: Symbol, strategy: GeneralStrategy, backtest_client: BacktestClient,
+    def __init__(self, symbols: List[Symbol], strategy: GeneralStrategy, backtest_client: BacktestClient,
                  historical_data: Optional[Dict[str, List[Kline]]] = None):
         super().__init__()
-        self.name: str = 'BacktestTask'
-        self.symbol: Symbol = symbol
+        self.name: str = 'MultiSymbolBacktestTask'
+        self.symbols: List[Symbol] = symbols
         self.timeframes: List[str] = strategy.timeframes
         self.strategy: GeneralStrategy = strategy
         self.backtest_client: BacktestClient = backtest_client
+        self.symbol_binances = {s.binance() for s in symbols}
 
         # 设置策略的客户端
-        self.strategy.ex_client = backtest_client
+        self.strategy._ex_client = backtest_client
+        if hasattr(self.strategy, 'ex_client'):
+            self.strategy.ex_client = backtest_client
 
-        # 加载历史数据到客户端（用于多时间框架策略的fetch_ohlcv）
+        # 加载历史数据到客户端（用于 fetch_ohlcv）
         if historical_data:
             for timeframe in self.timeframes:
                 if timeframe in historical_data:
                     backtest_client.load_historical_data(timeframe, historical_data[timeframe])
-                    logger.info(f"Loaded {len(historical_data[timeframe])} historical klines for {timeframe} into backtest client")
-                else:
-                    logger.warning(f"No historical data provided for timeframe {timeframe}")
+                    logger.info(f"Loaded {len(historical_data[timeframe])} historical klines for {timeframe}")
 
     def run(self, data: str) -> None:
-        """
-        处理回测数据
-        data是BacktestEventLoop构造的WebSocket格式消息
-        """
         data_obj: Dict[str, Any] = json.loads(data)
 
         kline_key: str = data_obj.get('stream', '')
@@ -64,23 +59,18 @@ class BacktestTask(Task):
                 finished=kline.get('x', False)
             )
 
-            # 检查是否是当前任务关注的交易对和时间框架
-            if self.symbol.binance() == kline_obj.symbol.binance() and kline_obj.timeframe in self.timeframes:
+            if kline_obj.symbol.binance() in self.symbol_binances and kline_obj.timeframe in self.timeframes:
                 try:
                     self.strategy.run(kline_obj)
                 except Exception as e:
                     logger.error(f"Error running strategy for kline {kline_obj.timestamp}: {e}")
-                    # 继续运行，不中断回测
 
     def get_results(self) -> Dict[str, Any]:
-        """
-        获取回测结果
-        """
         final_balance = self.backtest_client.get_final_balance()
         trade_history = self.backtest_client.get_trade_history()
 
         return {
-            'symbol': self.symbol.simple(),
+            'symbol': [str(s.simple()) for s in self.symbols],
             'timeframes': self.timeframes,
             'final_balance': final_balance,
             'trade_history': trade_history,

@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import Mock, patch
-from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig, Order
+from strategy.signal_grid_strategy import SignalGridStrategy, SignalGridStrategyConfig, Order
 from model import Symbol, OrderSide, PlaceOrderBehavior
 from client.ex_client import ExSwapClient
 

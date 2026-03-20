@@ -17,7 +17,7 @@ from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
 from backtest.analyzer import BacktestAnalyzer
 from task.backtest_task import BacktestTask
-from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig
+from strategy.signal_grid_strategy import SignalGridStrategy, SignalGridStrategyConfig
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
 from config import DATA_PATH

@@ -8,13 +8,19 @@ from strategy import GeneralStrategy
 
 logger = log.getLogger(__name__)
 
-class StrategyTask(Task):
-    def __init__(self, symbol: Symbol, strategy: GeneralStrategy):
+class MultiSymbolStrategyTask(Task):
+    """
+    支持多个交易对路由到同一个策略的Task
+    """
+    def __init__(self, symbols: List[Symbol], strategy: GeneralStrategy):
         super().__init__()
-        self.name: str = 'StrategyTask'
-        self.symbol: Symbol = symbol
+        self.name: str = 'MultiSymbolStrategyTask'
+        self.symbols: List[Symbol] = symbols
         self.timeframes: List[str] = strategy.timeframes
         self.strategy: GeneralStrategy = strategy
+
+        # 预先计算以便快速查找
+        self.symbol_binances = {s.binance() for s in symbols}
 
     def run(self, data: str) -> None:
         data_obj: Dict[str, Any] = json.loads(data)
@@ -38,5 +44,7 @@ class StrategyTask(Task):
                 timestamp=int(kline['t']),
                 finished=kline.get('x', False)
             )
-            if self.symbol.binance() == kline_obj.symbol.binance() and kline_obj.timeframe in self.timeframes:
+
+            # 过滤逻辑：如果在允许的 symbol 集合内，且 timeframe 在策略关心的范围内
+            if kline_obj.symbol.binance() in self.symbol_binances and kline_obj.timeframe in self.timeframes:
                 self.strategy.run(kline_obj)
