@@ -190,7 +190,7 @@ class DailyTrendStrategy(GeneralStrategy):
 
         # Calculate dynamic take profit rate based on ATR
         atr_series = talib.ATR(df['high'].values, df['low'].values, df['close'].values, timeperiod=14)
-        current_atr = atr_series[-1]
+        current_atr = float(atr_series[-1])
         atr_rate = current_atr / price
         dynamic_tp_rate = atr_rate * self.config.atr_tp_multiplier
         final_tp_rate = max(self.config.min_tp_rate, min(self.config.max_tp_rate, dynamic_tp_rate))
