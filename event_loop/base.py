@@ -5,8 +5,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 class Handler:
-    def __init__(self):
-        self.name: str
 
     def run(self, data: str):
         pass

@@ -41,7 +41,7 @@ class GeneralStrategy(Strategy):
         self.data_lock = threading.Lock()
 
         for symbol in symbols:
-            sym_binance = symbol.binance()
+            sym_binance = symbol.simple()
             self.kline_data_dict[sym_binance] = {}
             for timeframe in timeframes:
                 self.kline_data_dict[sym_binance][timeframe] = self._create_empty_kline_data(timeframe)
@@ -95,7 +95,7 @@ class GeneralStrategy(Strategy):
     def _initialize_klines_if_needed(self, kline: Kline):
         """Initialize klines with historical data if the DataFrame is empty"""
         timeframe = kline.timeframe
-        symbol_binance = kline.symbol.binance()
+        symbol_binance = kline.symbol.simple()
 
         if symbol_binance not in self.kline_data_dict:
             self.kline_data_dict[symbol_binance] = {}
@@ -111,7 +111,7 @@ class GeneralStrategy(Strategy):
     def _update_klines(self, kline: Kline):
         """Update the last kline and manage the DataFrame"""
         timeframe = kline.timeframe
-        symbol_binance = kline.symbol.binance()
+        symbol_binance = kline.symbol.simple()
 
         if symbol_binance not in self.kline_data_dict:
             self.kline_data_dict[symbol_binance] = {}
@@ -152,7 +152,7 @@ class GeneralStrategy(Strategy):
     def run(self, kline: Kline):
         """处理K线数据（多时间框架多币种版本）"""
         timeframe = kline.timeframe
-        symbol_binance = kline.symbol.binance()
+        symbol_binance = kline.symbol.simple()
 
         if timeframe not in self.timeframes:
             raise ValueError(f"Timeframe {timeframe} not registered in the strategy")
@@ -188,12 +188,12 @@ class SimpleStrategy(GeneralStrategy):
     @property
     def klines_df(self) -> DataFrame:
         """Get the klines DataFrame for the single timeframe and single symbol"""
-        return self.klines(self.timeframe, self.symbol.binance())
+        return self.klines(self.timeframe, self.symbol.simple())
 
     @property
     def latest_kline_obj(self) -> Kline | None:
         """Get the latest Kline for the single timeframe and single symbol"""
-        return self.latest_kline(self.timeframe, self.symbol.binance())
+        return self.latest_kline(self.timeframe, self.symbol.simple())
 
     def _on_kline(self):
         pass
@@ -202,11 +202,11 @@ class SimpleStrategy(GeneralStrategy):
         pass
 
     def on_kline(self, timeframe: str, symbol: str):
-        if timeframe == self.timeframe and symbol == self.symbol.binance():
+        if timeframe == self.timeframe and symbol == self.symbol.simple():
             self._on_kline()
 
     def on_kline_finished(self, timeframe: str, symbol: str):
-        if timeframe == self.timeframe and symbol == self.symbol.binance():
+        if timeframe == self.timeframe and symbol == self.symbol.simple():
             self._on_kline_finished()
 
 class Signal:

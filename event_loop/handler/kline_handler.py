@@ -9,10 +9,9 @@ from strategy import GeneralStrategy
 
 logger = log.getLogger(__name__)
 
-class StrategyHandler(Handler):
+class KlineHandler(Handler):
     def __init__(self, strategy: GeneralStrategy):
         super().__init__()
-        self.name: str = 'StrategyHandler'
         self.strategy: GeneralStrategy = strategy
         self.timeframes = self.strategy.timeframes
         self.symbols = [s.ccxt() for s in self.strategy.symbols]

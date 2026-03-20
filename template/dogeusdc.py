@@ -7,7 +7,7 @@ from strategy.signal_grid_strategy import SignalGridStrategy, SignalGridStrategy
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
 from config import DATA_PATH
-from event_loop.handler.kline_handler import StrategyHandler
+from event_loop.handler.kline_handler import KlineHandler
 
 logger = log.getLogger(__name__)
 
@@ -15,7 +15,7 @@ symbol_=Symbol(base="doge", quote="usdc")
 timeframe_= '5m'
 today_utc = datetime.now(timezone.utc).strftime("%Y%m%d")
 
-def short_sell_position_reverse(exchange_client: ExSwapClient) -> StrategyHandler:
+def short_sell_position_reverse(exchange_client: ExSwapClient) -> KlineHandler:
     config=SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
@@ -34,11 +34,9 @@ def short_sell_position_reverse(exchange_client: ExSwapClient) -> StrategyHandle
         paused_after_stop_loss=False,
         position_reverse=True,
     )
-    strategy = SignalGridStrategy(config, exchange_client)
+    return KlineHandler(SignalGridStrategy(config, exchange_client))
 
-    return StrategyHandler(symbol=symbol_, strategy=strategy)
-
-def long_buy_position_reverse(exchange_client: ExSwapClient) -> StrategyHandler:
+def long_buy_position_reverse(exchange_client: ExSwapClient) -> KlineHandler:
     config=SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
@@ -56,11 +54,9 @@ def long_buy_position_reverse(exchange_client: ExSwapClient) -> StrategyHandler:
         position_reverse=True,
         enable_max_order_stop_loss=True,
     )
-    strategy = SignalGridStrategy(config, exchange_client)
+    return KlineHandler(SignalGridStrategy(config, exchange_client))
 
-    return StrategyHandler(symbol=symbol_, strategy=strategy)
-
-def long_buy(exchange_client: ExSwapClient) -> StrategyHandler:
+def long_buy(exchange_client: ExSwapClient) -> KlineHandler:
     config=SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
@@ -76,11 +72,9 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyHandler:
         fixed_take_profit_rate=0.03,
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol_.simple()}_{timeframe_}_{today_utc}.json',
     )
-    strategy = SignalGridStrategy(config, exchange_client)
+    return KlineHandler(SignalGridStrategy(config, exchange_client))
 
-    return StrategyHandler(symbol=symbol_, strategy=strategy)
-
-def short_sell(exchange_client: ExSwapClient) -> StrategyHandler:
+def short_sell(exchange_client: ExSwapClient) -> KlineHandler:
     config=SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
@@ -96,12 +90,10 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyHandler:
         fixed_take_profit_rate=0.03,
         order_file_path=f'{DATA_PATH}/signal_grid_short_sell_{symbol_.simple()}_{timeframe_}_{today_utc}.json',
     )
-    strategy = SignalGridStrategy(config, exchange_client)
-
-    return StrategyHandler(symbol=symbol_, strategy=strategy)
+    return KlineHandler(SignalGridStrategy(config, exchange_client))
 
 
-def market_trend(exchange_client: ExSwapClient) -> StrategyHandler | None:
+def market_trend(exchange_client: ExSwapClient) -> KlineHandler | None:
     symbols = [
         Symbol(base="btc",  quote="usdc"),
         Symbol(base="eth",  quote="usdc"),
