@@ -1,4 +1,5 @@
 import logging
+import talib
 from typing import List, Optional
 
 from model import Symbol, OrderSide, PositionSide, OrderStatus, PlaceOrderBehavior
@@ -16,7 +17,9 @@ class DailyTrendStrategyConfig(BaseModel):
     direction_symbols: List[Symbol]
     per_order_qty: float
     max_daily_orders: int = 3
-    take_profit_rate: float = 0.03
+    min_tp_rate: float = 0.02
+    max_tp_rate: float = 0.03
+    atr_tp_multiplier: float = 1.5
     stop_loss_rate: float = 0.03
     order_file_path: str
     signal: Signal
@@ -39,11 +42,11 @@ class DailyTrendStrategy(GeneralStrategy):
     def exchange_client(self):
         return self._ex_client
 
-    def on_kline(self, timeframe: str, symbol: str = None):
+    def on_kline(self, timeframe: str, symbol: str):
         if timeframe == self.config.trade_timeframe and symbol == self.config.trade_symbol.binance():
             self._check_close()
 
-    def on_kline_finished(self, timeframe: str, symbol: str = None):
+    def on_kline_finished(self, timeframe: str, symbol: str):
         if timeframe == '1d':
             self._finished_1d_symbols.add(symbol)
 
@@ -174,11 +177,25 @@ class DailyTrendStrategy(GeneralStrategy):
         kline = self.latest_kline(self.config.trade_timeframe, self.config.trade_symbol.binance())
         if not kline: return
 
+        df = self.klines(self.config.trade_timeframe, self.config.trade_symbol.binance())
+        if len(df) < 15:
+            logger.warning("Not enough kline data to calculate ATR")
+            return
+
         order_side = self.current_direction
         position_side = PositionSide.LONG if order_side == OrderSide.BUY else PositionSide.SHORT
 
         order_id = build_order_id(order_side)
         price = kline.close
+
+        # Calculate dynamic take profit rate based on ATR
+        atr_series = talib.ATR(df['high'].values, df['low'].values, df['close'].values, timeperiod=14)
+        current_atr = atr_series.iloc[-1]
+        atr_rate = current_atr / price
+        dynamic_tp_rate = atr_rate * self.config.atr_tp_multiplier
+        final_tp_rate = max(self.config.min_tp_rate, min(self.config.max_tp_rate, dynamic_tp_rate))
+
+        logger.info(f"Dynamic TP Rate calculation: ATR Rate={atr_rate*100:.2f}%, Expected TP Rate={dynamic_tp_rate*100:.2f}%, Final TP Rate={final_tp_rate*100:.2f}%")
 
         logger.info(f"Opening {order_side} position for {self.config.trade_symbol.simple()} at {price}")
 
@@ -198,8 +215,8 @@ class DailyTrendStrategy(GeneralStrategy):
             side=order_side,
             price=price,
             quantity=self.config.per_order_qty,
-            fixed_take_profit_rate=self.config.take_profit_rate,
-            signal_min_take_profit_rate=self.config.take_profit_rate,
+            fixed_take_profit_rate=final_tp_rate,
+            signal_min_take_profit_rate=final_tp_rate,
             status=OrderStatus.OPEN.value,
             enable_stop_loss=True,
             stop_loss_rate=self.config.stop_loss_rate
@@ -228,7 +245,7 @@ class DailyTrendStrategy(GeneralStrategy):
         for order in orders:
             loss_rate = order.profit_and_loss_ratio(current_price)
 
-            hit_tp = loss_rate > 0 and abs(loss_rate) >= self.config.take_profit_rate
+            hit_tp = loss_rate > 0 and abs(loss_rate) >= order.fixed_take_profit_rate
             hit_sl = loss_rate < 0 and abs(loss_rate) >= self.config.stop_loss_rate
 
             if hit_tp or hit_sl:

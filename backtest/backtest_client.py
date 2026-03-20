@@ -309,19 +309,21 @@ class BacktestClient(ExSwapClient):
     def get_final_balance(self) -> float:
         return self._balance
 
-    def load_historical_data(self, timeframe: str, klines: List[Kline]):
+    def load_historical_data(self, symbol: Symbol, timeframe: str, klines: List[Kline]):
         with self.lock:
-            self.historical_data[timeframe] = sorted(klines, key=lambda k: k.timestamp)
-            logger.info(f"Loaded {len(klines)} klines for timeframe {timeframe}")
+            key = f"{symbol.binance()}_{timeframe}"
+            self.historical_data[key] = sorted(klines, key=lambda k: k.timestamp)
+            logger.info(f"Loaded {len(klines)} klines for {symbol.binance()} timeframe {timeframe}")
 
     def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> List[Kline]:
         """返回截至当前回测时间的K线数据"""
         with self.lock:
-            if timeframe not in self.historical_data:
-                logger.warning(f"No historical data available for timeframe {timeframe}")
+            key = f"{symbol.binance()}_{timeframe}"
+            if key not in self.historical_data:
+                logger.warning(f"No historical data available for {symbol.binance()} timeframe {timeframe}")
                 return []
 
-            klines = self.historical_data[timeframe]
+            klines = self.historical_data[key]
             current_klines = [k for k in klines if k.timestamp <= self.current_timestamp]
 
             if not current_klines:

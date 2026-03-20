@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional, Callable
 import log
 
-from data_event_loop import DataEventLoop, Handler
+from event_loop.base import DataEventLoop, Handler
 from model import Kline, Symbol
 from backtest.backtest_client import BacktestClient
 import json
