@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from enum import Enum
 from dataclasses import dataclass
 import builtins
@@ -115,11 +115,16 @@ class Symbol(BaseModel):
     base: str
     quote: str
 
+    @field_validator('base', 'quote', mode='before')
+    @classmethod
+    def to_upper(cls, v: str) -> str:
+        return v.upper()
+
     def ccxt(self):
-        return f'{self.base}/{self.quote}'.upper()
+        return f'{self.base}/{self.quote}'
 
     def binance(self):
-        return f'{self.base}{self.quote}'.upper()
+        return f'{self.base}{self.quote}'
     
     def binance_ws_sub_kline(self, timeframe: str):
         return f'{self.binance().lower()}@kline_{timeframe}'
@@ -238,6 +243,6 @@ class Order:
     def breakeven_price(self):
         return self._profit(self.min_profit_rate)
 
-    def exit_id(self, i: int | None = None):
-        exit_id = self.custom_id.replace(self.side.value, self.side.reversal().value, 1)
-        return exit_id if i is None else f'{exit_id}{i}'
+    # def exit_id(self, i: int | None = None):
+    #     exit_id = self.custom_id.replace(self.side.value, self.side.reversal().value, 1)
+    #     return exit_id if i is None else f'{exit_id}{i}'
