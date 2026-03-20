@@ -78,7 +78,7 @@ class Order(BaseModel):
         return self.price * (1 + rate * rate_base)
 
 class OrderRecorder(BaseModel):
-    '''
+    """
     订单记录器
     @param order_file_path 订单文件路径
     @param orders 当前订单
@@ -86,7 +86,7 @@ class OrderRecorder(BaseModel):
     @param is_reload 程序中通常不会直接设置该值,而是用户在需要重新加载时在本地备份文件中设置True,实现热更新的效果
     @param reload_msg 重新加载消息
     @param total_profit 总利润
-    '''
+    """
     order_file_path: str
     orders: List[Order] = []
     history_orders: List[Order] = []
@@ -106,10 +106,10 @@ class OrderRecorder(BaseModel):
                 f.write(self.model_dump_json())
 
     def check_reload(self, force: bool = False) -> List[Order] | None:
-        '''
+        """
         从本地文件中读取订单，并检查是否需要重新加载
         @param force 强制重新加载
-        '''
+        """
         if self.order_file_path and os.path.exists(self.order_file_path):
             with open(self.order_file_path, 'r') as f:
                 _recorder = OrderRecorder.model_validate_json(f.read())
