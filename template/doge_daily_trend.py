@@ -4,9 +4,9 @@ from strategy.daily_trend_strategy import DailyTrendStrategy, DailyTrendStrategy
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
 from config import DATA_PATH
-from task.multi_symbol_strategy_task import MultiSymbolStrategyTask
+from event_loop.handler.multi_symbol_strategy_task import MultiSymbolStrategyHandler
 
-def doge_daily_trend(exchange_client: ExSwapClient) -> MultiSymbolStrategyTask:
+def doge_daily_trend(exchange_client: ExSwapClient) -> MultiSymbolStrategyHandler:
     trade_symbol = Symbol(base="doge", quote="usdt")
     trade_timeframe = "15m"
     direction_symbols = [
@@ -32,4 +32,4 @@ def doge_daily_trend(exchange_client: ExSwapClient) -> MultiSymbolStrategyTask:
     )
     strategy = DailyTrendStrategy(config, exchange_client)
 
-    return MultiSymbolStrategyTask(symbols=all_symbols, strategy=strategy)
+    return MultiSymbolStrategyHandler(symbols=all_symbols, strategy=strategy)

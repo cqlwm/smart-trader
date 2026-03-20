@@ -1,37 +1,12 @@
-import concurrent.futures
 import json
 from typing import Any, List
 import websocket
 import logging
 import random
 
+from event_loop.base import DataEventLoop
+
 logger = logging.getLogger(__name__)
-
-class Task:
-    def __init__(self):
-        self.name: str
-    
-    def run(self, data: str):
-        pass
-
-
-class DataEventLoop:
-    def __init__(self):
-        self.tasks: List[Task] = []
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
-
-    def add_task(self, task: Task):
-        self.tasks.append(task)
-
-    def loop(self, data: str):
-        for task in self.tasks:
-            self.executor.submit(task.run, data)
-
-    def start(self):
-        pass
-
-    def stop(self):
-        self.executor.shutdown(wait=False)
 
 class BinanceDataEventLoop(DataEventLoop):
     SET_PROPERTY_ID = 1
@@ -46,11 +21,11 @@ class BinanceDataEventLoop(DataEventLoop):
         ws_session = websocket.WebSocketApp(websocket_url,
                                             on_open=self.on_open,
                                             on_message=self.on_message,
-                                            on_error=self.on_error,
+                                            on_error=lambda _, e: logger.error('BinanceEL: %s', e),
                                             on_close=self.on_close,
                                             on_pong=self.on_pong
                                             )
-        ws_session.run_forever(ping_interval=20, ping_timeout=15) # type: ignore[call-arg]
+        ws_session.run_forever(ping_interval=20, ping_timeout=15)
 
     def _subscribe(self, ws: websocket.WebSocket):
         params: dict[str, Any] = {
@@ -63,9 +38,6 @@ class BinanceDataEventLoop(DataEventLoop):
 
     def on_message(self, ws: websocket.WebSocket, message: str):
         self.loop(message)
-
-    def on_error(self, ws: websocket.WebSocket, error: Exception):
-        logger.error('BinanceDataEventLoop Error: %s', error)
 
     def on_close(self, ws: websocket.WebSocket, close_status_code: int | str, close_msg: str):
         logger.warning(f"### BinanceDataEventLoop Closed ### {close_status_code}: {close_msg}")

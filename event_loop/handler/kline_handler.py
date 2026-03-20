@@ -2,25 +2,20 @@ import json
 import log
 import re
 from typing import Any, Dict, List
-from data_event_loop import Task
+
+from event_loop.base import Handler
 from model import Symbol, Kline
 from strategy import GeneralStrategy
 
 logger = log.getLogger(__name__)
 
-class MultiSymbolStrategyTask(Task):
-    """
-    支持多个交易对路由到同一个策略的Task
-    """
-    def __init__(self, symbols: List[Symbol], strategy: GeneralStrategy):
+class StrategyHandler(Handler):
+    def __init__(self, symbol: Symbol, strategy: GeneralStrategy):
         super().__init__()
-        self.name: str = 'MultiSymbolStrategyTask'
-        self.symbols: List[Symbol] = symbols
+        self.name: str = 'StrategyTask'
+        self.symbol: Symbol = symbol
         self.timeframes: List[str] = strategy.timeframes
         self.strategy: GeneralStrategy = strategy
-
-        # 预先计算以便快速查找
-        self.symbol_binances = {s.binance() for s in symbols}
 
     def run(self, data: str) -> None:
         data_obj: Dict[str, Any] = json.loads(data)
@@ -44,7 +39,5 @@ class MultiSymbolStrategyTask(Task):
                 timestamp=int(kline['t']),
                 finished=kline.get('x', False)
             )
-
-            # 过滤逻辑：如果在允许的 symbol 集合内，且 timeframe 在策略关心的范围内
-            if kline_obj.symbol.binance() in self.symbol_binances and kline_obj.timeframe in self.timeframes:
+            if self.symbol.binance() == kline_obj.symbol.binance() and kline_obj.timeframe in self.timeframes:
                 self.strategy.run(kline_obj)

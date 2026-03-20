@@ -17,7 +17,7 @@ from backtest.data_loader import HistoricalDataLoader
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
 from backtest.analyzer import BacktestAnalyzer
-from task.backtest_task import BacktestTask
+from event_loop.handler.backtest_task import BacktestHandler
 from strategy.signal_grid_strategy import SignalGridStrategy, SignalGridStrategyConfig
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
@@ -62,7 +62,7 @@ def run_backtest_example(
         # 5. 创建回测任务
         # 准备历史数据字典
         historical_data = {timeframe: historical_klines}
-        backtest_task = BacktestTask(symbol, strategy, backtest_client, historical_data)
+        backtest_task = BacktestHandler(symbol, strategy, backtest_client, historical_data)
 
         # 6. 创建回测事件循环
         def progress_callback(current, total):

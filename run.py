@@ -5,7 +5,7 @@ from data_event_loop import BinanceDataEventLoop
 from client.binance_client import BinanceSwapClient
 import dotenv
 
-from task.strategy_task import StrategyTask
+from event_loop.handler.kline_handler import StrategyHandler
 
 dotenv.load_dotenv()
 
@@ -38,7 +38,7 @@ main_binance_client: BinanceSwapClient = create_binance_client('main')
 def main():
     from template import dogeusdc
 
-    tasks: list[StrategyTask] = []
+    tasks: list[StrategyHandler] = []
 
     doge_task = dogeusdc.market_trend_task(main_binance_client)
     if doge_task:

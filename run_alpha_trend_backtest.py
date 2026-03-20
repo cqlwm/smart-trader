@@ -9,7 +9,7 @@ from backtest.data_loader import HistoricalDataLoader
 from backtest.backtest_client import BacktestClient
 from backtest.multi_timeframe_backtest_event_loop import MultiTimeframeBacktestEventLoop
 from backtest.analyzer import BacktestAnalyzer
-from task.backtest_task import BacktestTask
+from event_loop.handler.backtest_task import BacktestHandler
 from template.ethusdt import alpha_trend
 import log
 import time
@@ -67,7 +67,7 @@ def run_alpha_trend_backtest(data_files=None, start_timestamp=1759516200000):
             logger.info(f"加载了 {len(klines)} 根{timeframe} K线数据")
 
 
-        backtest_task = BacktestTask(symbol, strategy, backtest_client, historical_data)
+        backtest_task = BacktestHandler(symbol, strategy, backtest_client, historical_data)
 
         # 5. 创建多时间框架回测事件循环
         def progress_callback(current, total):

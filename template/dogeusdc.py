@@ -7,7 +7,7 @@ from strategy.signal_grid_strategy import SignalGridStrategy, SignalGridStrategy
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
 from config import DATA_PATH
-from task.strategy_task import StrategyTask
+from event_loop.handler.kline_handler import StrategyHandler
 
 logger = log.getLogger(__name__)
 
@@ -15,7 +15,7 @@ symbol_=Symbol(base="doge", quote="usdc")
 timeframe_= '5m'
 today_utc = datetime.now(timezone.utc).strftime("%Y%m%d")
 
-def short_sell_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
+def short_sell_position_reverse(exchange_client: ExSwapClient) -> StrategyHandler:
     config=SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
@@ -36,9 +36,9 @@ def short_sell_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
-    return StrategyTask(symbol=symbol_, strategy=strategy)
+    return StrategyHandler(symbol=symbol_, strategy=strategy)
 
-def long_buy_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
+def long_buy_position_reverse(exchange_client: ExSwapClient) -> StrategyHandler:
     config=SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
@@ -58,9 +58,9 @@ def long_buy_position_reverse(exchange_client: ExSwapClient) -> StrategyTask:
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
-    return StrategyTask(symbol=symbol_, strategy=strategy)
+    return StrategyHandler(symbol=symbol_, strategy=strategy)
 
-def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
+def long_buy(exchange_client: ExSwapClient) -> StrategyHandler:
     config=SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
@@ -78,9 +78,9 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
-    return StrategyTask(symbol=symbol_, strategy=strategy)
+    return StrategyHandler(symbol=symbol_, strategy=strategy)
 
-def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
+def short_sell(exchange_client: ExSwapClient) -> StrategyHandler:
     config=SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
@@ -98,10 +98,10 @@ def short_sell(exchange_client: ExSwapClient) -> StrategyTask:
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
-    return StrategyTask(symbol=symbol_, strategy=strategy)
+    return StrategyHandler(symbol=symbol_, strategy=strategy)
 
 
-def market_trend_task(exchange_client: ExSwapClient) -> StrategyTask | None:
+def market_trend_task(exchange_client: ExSwapClient) -> StrategyHandler | None:
     symbols = [
         Symbol(base="btc",  quote="usdc"),
         Symbol(base="eth",  quote="usdc"),

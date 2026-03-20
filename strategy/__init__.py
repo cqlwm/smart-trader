@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 import threading
 
-import numpy as np
 import pandas as pd
 from pandas import DataFrame
 from typing import List, Dict, Optional

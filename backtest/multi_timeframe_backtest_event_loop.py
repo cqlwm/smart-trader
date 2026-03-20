@@ -2,7 +2,7 @@ import time
 from typing import List, Dict, Any, Optional, Callable
 import log
 
-from data_event_loop import Task
+from data_event_loop import Handler
 from model import Kline
 from backtest.backtest_client import BacktestClient
 import json
@@ -33,7 +33,7 @@ class MultiTimeframeBacktestEventLoop:
         self.on_progress_callback = on_progress_callback
 
         # 任务列表
-        self.tasks: List[Task] = []
+        self.tasks: List[Handler] = []
 
         # 为每个时间框架设置起始索引
         self.start_indices = {}
@@ -68,7 +68,7 @@ class MultiTimeframeBacktestEventLoop:
         """设置回测客户端"""
         self.backtest_client = client
 
-    def add_task(self, task: Task):
+    def add_task(self, task: Handler):
         """添加任务"""
         self.tasks.append(task)
 

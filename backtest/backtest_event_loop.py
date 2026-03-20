@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional, Callable
 import log
 
-from data_event_loop import DataEventLoop, Task
+from data_event_loop import DataEventLoop, Handler
 from model import Kline, Symbol
 from backtest.backtest_client import BacktestClient
 import json
@@ -55,7 +55,7 @@ class BacktestEventLoop(DataEventLoop):
 
     def loop(self, data: str):
         """同步执行所有任务，保证时序确定性"""
-        for task in self.tasks:
+        for task in self.handlers:
             task.run(data)
 
     def start(self):
