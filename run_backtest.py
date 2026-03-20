@@ -13,7 +13,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from typing import List, Tuple, Callable, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from model import Symbol, OrderSide, PositionSide
 from backtest.data_loader import HistoricalDataLoader
 from backtest.backtest_client import BacktestClient
@@ -50,7 +50,11 @@ def run_generic_backtest(
         )
 
         start_dt = datetime.fromisoformat(start_time)
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=timezone.utc)
         end_dt = datetime.fromisoformat(end_time)
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=timezone.utc)
         start_timestamp = int(start_dt.timestamp() * 1000)
         end_timestamp = int(end_dt.timestamp() * 1000)
 

@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 from backtest.data_loader import HistoricalDataLoader
@@ -40,7 +40,7 @@ class TestEnsureData:
         start_time = "2026-03-01"
         end_time = "2026-03-19"
         offset = timedelta(days=30)
-        expected_download_start = datetime(2026, 3, 1) - offset
+        expected_download_start = datetime(2026, 1, 30, tzinfo=timezone.utc)
 
         with patch.object(Path, 'exists', return_value=False):
             with patch.object(loader, 'download_and_save_historical_data') as mock_download:

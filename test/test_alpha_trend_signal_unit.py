@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import sys
 import os
 
@@ -13,7 +13,7 @@ from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 
 def create_mock_klines(num_points: int = 100) -> pd.DataFrame:
     """创建模拟K线数据用于测试"""
-    base_time = datetime.now()
+    base_time = datetime.now(timezone.utc)
     data = []
 
     # 生成模拟价格数据

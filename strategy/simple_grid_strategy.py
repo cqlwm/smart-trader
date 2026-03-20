@@ -3,7 +3,7 @@ import threading
 import numpy as np
 import os
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic import BaseModel
 from strategy import SimpleStrategy
@@ -87,7 +87,7 @@ class OrderPair(BaseModel):
     def _place_order(self, client: ExClient, order_type: str, side: OrderSide, price: float):
         """通用下单方法"""
         try:
-            custom_id = f"{order_type}_{int(datetime.now().timestamp())}_{secrets.token_hex(nbytes=1)}"
+            custom_id = f"{order_type}_{int(datetime.now(timezone.utc).timestamp())}_{secrets.token_hex(nbytes=1)}"
             order = client.place_order_v2(
                 custom_id=custom_id,
                 symbol=self.symbol,
@@ -111,7 +111,7 @@ class OrderPair(BaseModel):
         """通用下单方法"""
         try:
             order = client.place_order_v2(
-                custom_id=f"{int(datetime.now().timestamp())}_{secrets.token_hex(nbytes=1)}",
+                custom_id=f"{int(datetime.now(timezone.utc).timestamp())}_{secrets.token_hex(nbytes=1)}",
                 symbol=symbol,
                 order_side=order_side,
                 quantity=quantity,

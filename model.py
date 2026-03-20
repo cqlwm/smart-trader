@@ -182,7 +182,7 @@ class Kline:
         self.close = close
         self.volume = volume
         self.timestamp = timestamp
-        self.datetime = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        self.datetime = str(datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc))
         self.finished = finished
         
     def to_dict(self) -> dict[str, Any]:

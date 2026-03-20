@@ -2,7 +2,7 @@ import pandas as pd
 import json
 from typing import List, Dict, Optional, Union
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 import ccxt
 import log
@@ -129,10 +129,14 @@ class HistoricalDataLoader:
         """确保数据文件存在，若不存在则自动下载并缓存"""
         if isinstance(start_time, str):
             start_dt = datetime.fromisoformat(start_time)
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
         else:
             start_dt = start_time
         if isinstance(end_time, str):
             end_dt = datetime.fromisoformat(end_time)
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=timezone.utc)
         else:
             end_dt = end_time
 

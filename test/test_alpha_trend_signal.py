@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import sys
 import os
 import ccxt
@@ -119,7 +119,7 @@ def test_alpha_trend_signal_basic():
     
     # 保存所有信号数据
     all_signals_df = pd.DataFrame(all_signals)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
     
     # 保存完整数据
     all_signals_file = f'data/alpha_trend_all_signals_{timestamp}.csv'
@@ -225,7 +225,7 @@ def test_alpha_trend_is_entry_is_exit():
     entry_exit_df = pd.DataFrame(entry_exit_data)
     
     # 保存完整的entry/exit数据
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
     entry_exit_file = f'data/alpha_trend_entry_exit_signals_{timestamp}.csv'
     entry_exit_df.to_csv(entry_exit_file, index=False)
     print(f"已保存entry/exit信号数据到: {entry_exit_file}")
