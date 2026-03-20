@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from enum import Enum
 from dataclasses import dataclass
 import builtins
@@ -110,6 +110,8 @@ class PlaceOrderBehavior(Enum):
     NORMAL = 'normal'  # 常规
 
 class Symbol(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     base: str
     quote: str
 

@@ -42,32 +42,30 @@ class DailyTrendStrategy(GeneralStrategy):
     def exchange_client(self):
         return self._ex_client
 
-    def on_kline(self, timeframe: str, symbol: str):
-        if timeframe == self.config.trade_timeframe and symbol == self.config.trade_symbol.binance():
+    def on_kline(self, timeframe: str, symbol: Symbol):
+        if timeframe == self.config.trade_timeframe and symbol == self.config.trade_symbol:
             self._check_close()
 
-    def on_kline_finished(self, timeframe: str, symbol: str):
+    def on_kline_finished(self, timeframe: str, symbol: Symbol):
         if timeframe == '1d':
             self._finished_1d_symbols.add(symbol)
 
-            all_bins = {s.binance() for s in self.config.direction_symbols}
-            if self._finished_1d_symbols.issuperset(all_bins):
+            if self._finished_1d_symbols.issuperset(self.config.direction_symbols):
                 self._on_daily_close()
                 self._finished_1d_symbols.clear()
 
         elif timeframe == self.config.trade_timeframe:
-            if symbol == self.config.trade_symbol.binance():
+            if symbol == self.config.trade_symbol:
                 self._on_trade_kline_finished()
 
     def _ensure_direction_initialized(self):
         if self._direction_initialized:
             return
 
-        all_bins = {s.binance() for s in self.config.direction_symbols}
         # 检查是否所有 direction_symbols 的 1d 数据都已经有了
-        if all_bins.issubset(self.kline_data_dict['1d'].keys()):
-            for sym_bin in all_bins:
-                df = self.klines('1d', sym_bin)
+        if set(self.config.direction_symbols).issubset(self.kline_data_dict.keys()):
+            for sym in self.config.direction_symbols:
+                df = self.klines('1d', sym)
                 if len(df) == 0:
                     return
 
@@ -80,17 +78,16 @@ class DailyTrendStrategy(GeneralStrategy):
         target_count = len(self.config.direction_symbols)
 
         for sym in self.config.direction_symbols:
-            sym_bin = sym.binance()
-            df = self.klines('1d', sym_bin)
+            df = self.klines('1d', sym)
 
             if len(df) == 0 or 'finished' not in df.columns:
-                logger.warning(f"No valid 1d kline found for {sym_bin}")
+                logger.warning(f"No valid 1d kline found for {sym}")
                 return None
 
             # Get only finished klines
             sym_df = df[df['finished'] == True]
             if len(sym_df) == 0:
-                logger.warning(f"No finished 1d kline found for {sym_bin}")
+                logger.warning(f"No finished 1d kline found for {sym}")
                 return None
 
             last_row = sym_df.iloc[-1]
@@ -124,7 +121,7 @@ class DailyTrendStrategy(GeneralStrategy):
         exit_qty = 0
 
         # 必须取 DOGE 的当前价格来挂单
-        kline = self.latest_kline(self.config.trade_timeframe, self.config.trade_symbol.binance())
+        kline = self.latest_kline(self.config.trade_timeframe, self.config.trade_symbol)
         close_price = kline.close if kline else 0.0
 
         for order in orders:
@@ -166,7 +163,7 @@ class DailyTrendStrategy(GeneralStrategy):
         if self.daily_order_count >= self.config.max_daily_orders:
             return
 
-        df = self.klines(self.config.trade_timeframe, self.config.trade_symbol.binance())
+        df = self.klines(self.config.trade_timeframe, self.config.trade_symbol)
         if self.config.signal.is_entry(df):
             self._open_order()
             self.daily_order_count += 1
@@ -174,10 +171,10 @@ class DailyTrendStrategy(GeneralStrategy):
         self._check_close()
 
     def _open_order(self):
-        kline = self.latest_kline(self.config.trade_timeframe, self.config.trade_symbol.binance())
+        kline = self.latest_kline(self.config.trade_timeframe, self.config.trade_symbol)
         if not kline: return
 
-        df = self.klines(self.config.trade_timeframe, self.config.trade_symbol.binance())
+        df = self.klines(self.config.trade_timeframe, self.config.trade_symbol)
         if len(df) < 15:
             logger.warning("Not enough kline data to calculate ATR")
             return
@@ -231,7 +228,7 @@ class DailyTrendStrategy(GeneralStrategy):
         self.order_manager.record_orders(refresh_orders=True)
 
     def _check_close(self):
-        kline = self.latest_kline(self.config.trade_timeframe, self.config.trade_symbol.binance())
+        kline = self.latest_kline(self.config.trade_timeframe, self.config.trade_symbol)
         if not kline: return
 
         current_price = kline.close
