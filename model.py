@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from pydantic import BaseModel, ConfigDict, field_validator
 from enum import Enum
@@ -182,7 +182,7 @@ class Kline:
         self.close = close
         self.volume = volume
         self.timestamp = timestamp
-        self.datetime = datetime.fromtimestamp(timestamp / 1000).strftime('%Y-%m-%d %H:%M:%S')
+        self.datetime = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         self.finished = finished
         
     def to_dict(self) -> dict[str, Any]:

@@ -140,7 +140,8 @@ class BacktestEventLoop(DataEventLoop):
         }
         return json.dumps(ws_data)
 
-    def _get_timeframe_ms(self, timeframe: str) -> int:
+    @staticmethod
+    def _get_timeframe_ms(timeframe: str) -> int:
         if timeframe.endswith('m'):
             return int(timeframe[:-1]) * 60 * 1000
         elif timeframe.endswith('h'):

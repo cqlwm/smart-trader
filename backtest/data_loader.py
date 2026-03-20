@@ -2,7 +2,7 @@ import pandas as pd
 import json
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import ccxt
 import log
@@ -124,6 +124,7 @@ class HistoricalDataLoader:
         start_time: Union[str, datetime],
         end_time: Union[str, datetime],
         data_dir: str = "data",
+        offset: timedelta | None = None,
     ) -> str:
         """确保数据文件存在，若不存在则自动下载并缓存"""
         if isinstance(start_time, str):
@@ -137,14 +138,16 @@ class HistoricalDataLoader:
 
         start_str = start_dt.strftime("%Y%m%d")
         end_str = end_dt.strftime("%Y%m%d")
-        file_path = f"{data_dir}/{symbol.binance()}_{timeframe}_{start_str}_{end_str}.csv"
+        offset_str = f"{int(offset.total_seconds())}s" if offset else "0s"
+        file_path = f"{data_dir}/{symbol.binance()}_{timeframe}_{start_str}_{offset_str}_{end_str}.csv"
 
         if Path(file_path).exists():
             logger.info(f"Cache hit: {file_path}")
             return file_path
 
+        download_start = start_dt - offset if offset else start_dt
         logger.info(f"Cache miss, downloading: {file_path}")
-        return self.download_and_save_historical_data(symbol, timeframe, start_dt, end_dt, file_path)
+        return self.download_and_save_historical_data(symbol, timeframe, download_start, end_dt, file_path)
 
     def download_and_save_historical_data(
         self,

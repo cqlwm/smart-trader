@@ -13,6 +13,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from typing import List, Tuple, Callable, Any
+from datetime import datetime, timedelta
 from model import Symbol, OrderSide, PositionSide
 from backtest.data_loader import HistoricalDataLoader
 from backtest.backtest_client import BacktestClient
@@ -36,6 +37,7 @@ def run_generic_backtest(
     end_time: str,
     data_dir: str = "data",
     initial_balance: float = 1000.0,
+    data_offset: timedelta | None = None,
 ):
     try:
         logger.info("加载历史数据...")
@@ -47,9 +49,16 @@ def run_generic_backtest(
             taker_fee=0.0004
         )
 
+        start_dt = datetime.fromisoformat(start_time)
+        end_dt = datetime.fromisoformat(end_time)
+        start_timestamp = int(start_dt.timestamp() * 1000)
+        end_timestamp = int(end_dt.timestamp() * 1000)
+
         for symbol, timeframe in data_requirements:
-            file_path = data_loader.ensure_data(symbol, timeframe, start_time, end_time, data_dir)
+            file_path = data_loader.ensure_data(symbol, timeframe, start_time, end_time, data_dir, offset=data_offset)
             klines = data_loader.load_csv(file_path, symbol, timeframe)
+            if data_offset:
+                klines = data_loader.filter_by_date_range(klines, start_timestamp, end_timestamp)
             if not klines:
                 logger.error(f"未加载到历史数据: {symbol.binance()} {timeframe}")
                 return
@@ -178,8 +187,9 @@ def run_daily_trend_strategy():
     run_generic_backtest(
         data_requirements=data_requirements,
         strategy_factory=lambda client: DailyTrendStrategy(config, client),
-        start_time="2026-01-01",
-        end_time="2026-03-19",
+        start_time="2026-03-19",
+        end_time="2026-03-20",
+        data_offset=timedelta(days=1),
     )
 
 
