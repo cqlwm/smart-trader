@@ -217,16 +217,8 @@ class Signal:
 
     def is_entry(self, df: DataFrame) -> bool:
         signal = self.run(df)
-        if self.side == OrderSide.BUY:
-            return signal == 1
-        elif self.side == OrderSide.SELL:
-            return signal == -1
-        return False
+        return self.side.to_int() == signal
 
     def is_exit(self, df: DataFrame) -> bool:
         signal = self.run(df)
-        if self.side == OrderSide.BUY:
-            return signal == -1
-        elif self.side == OrderSide.SELL:
-            return signal == 1
-        return False
+        return self.side.to_int() * signal == -1

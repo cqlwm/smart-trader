@@ -9,3 +9,7 @@ data
 data.parquet
 *.log
 backtest_report*.txt
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.venv

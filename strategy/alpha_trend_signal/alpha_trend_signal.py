@@ -20,9 +20,6 @@ _alpha_trend = 'alpha_trend'
 _buy_signal = 'buy_signal'
 _sell_signal = 'sell_signal'
 _signal = 'signal'
-_macd = 'macd'
-_macd_signal = 'macd_signal'
-_macd_hist = 'macd_hist'
 
 def _alpha_trend_indicator(df: DataFrame, atr_multiple: float = 1.0, period: int = 8):
     # 计算技术指标
@@ -65,41 +62,18 @@ def _alpha_trend_indicator(df: DataFrame, atr_multiple: float = 1.0, period: int
 
     return df
 
-def _macd_indicator(df: DataFrame, macd_fast_period: int = 12, macd_slow_period: int = 26, macd_signal_period: int = 9) -> DataFrame:
-    close_values = np.asarray(df[_close].values, dtype=np.float64)
-    macd_values, macd_signal_values, macd_hist_values = ta.MACD(
-        close_values,
-        fastperiod=macd_fast_period,
-        slowperiod=macd_slow_period,
-        signalperiod=macd_signal_period
-    )
-
-    df[_macd] = macd_values
-    df[_macd_signal] = macd_signal_values
-    df[_macd_hist] = macd_hist_values
-    return df
-
 
 class AlphaTrendSignal(Signal):
-    def __init__(self, side: OrderSide, atr_multiple: float = 1.0, period: int = 8, reverse: bool = False,
-                 macd_fast_period: int = 12, macd_slow_period: int = 26, macd_signal_period: int = 9):
+    def __init__(self, side: OrderSide, atr_multiple: float = 1.0, period: int = 8, reverse: bool = False):
         super().__init__(side)
         self.atr_multiple = atr_multiple
         self.period = period
         self.reverse = reverse
-        self.macd_fast_period = macd_fast_period
-        self.macd_slow_period = macd_slow_period
-        self.macd_signal_period = macd_signal_period
 
         self.datetime: str | None = None
         self.current_signal: int = 0
         self.current_kline_status: int = 0
         self.current_alpha_trend: float = 0.0
-        self.current_macd: float = 0.0
-        self.current_macd_signal: float = 0.0
-        self.current_macd_hist: float = 0.0
-        self.previous_macd: float = 0.0
-        self.previous_macd_signal: float = 0.0
 
     def _compute_signal(self, df: DataFrame, first_run: bool = False) -> int:
         if len(df) < self.period + 2:
@@ -125,32 +99,6 @@ class AlphaTrendSignal(Signal):
             return signal
         else:
             return 0
-    
-    def _macd_signal(self, df: DataFrame):
-        if len(df) < max(self.macd_fast_period, self.macd_slow_period, self.macd_signal_period) + 2:
-            return
-        
-        self.previous_macd = self.current_macd
-        self.previous_macd_signal = self.current_macd_signal
-        self.current_macd = df[_macd].iloc[-1] if len(df[_macd]) > 0 and pd.notna(df[_macd].iloc[-1]) else 0
-        self.current_macd_signal = df[_macd_signal].iloc[-1] if len(df[_macd_signal]) > 0 and pd.notna(df[_macd_signal].iloc[-1]) else 0
-        self.current_macd_hist = df[_macd_hist].iloc[-1] if len(df[_macd_hist]) > 0 and pd.notna(df[_macd_hist].iloc[-1]) else 0
-
-    def golden_cross(self) -> bool:
-        """Check if MACD line crosses above the signal line (bullish crossover)"""
-        if self.previous_macd == 0 or self.previous_macd_signal == 0:
-            return False
-        
-        return (self.previous_macd < self.previous_macd_signal and
-                self.current_macd > self.current_macd_signal)
-
-    def dead_cross(self) -> bool:
-        """Check if MACD line crosses below the signal line (bearish crossover)"""
-        if self.previous_macd == 0 or self.previous_macd_signal == 0:
-            return False
-        
-        return (self.previous_macd > self.previous_macd_signal and
-                self.current_macd < self.current_macd_signal)
 
     # 真实信号
     def true_signal(self, klines: DataFrame) -> int:
@@ -162,9 +110,6 @@ class AlphaTrendSignal(Signal):
         df = _alpha_trend_indicator(klines, self.atr_multiple, self.period)        
         self.current_kline_status = self._compute_signal(df, self.datetime is None)
         self.current_alpha_trend = df[_alpha_trend].iloc[-1] if len(df[_alpha_trend]) > 0 else 0
-
-        df = _macd_indicator(df, self.macd_fast_period, self.macd_slow_period, self.macd_signal_period)
-        self._macd_signal(df)
 
         self.datetime = last_time
 
