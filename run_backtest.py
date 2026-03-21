@@ -5,12 +5,6 @@
 """
 
 import os
-import sys
-from pathlib import Path
-
-# 添加项目根目录到Python路径
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
 
 from typing import List, Tuple, Callable, Any
 from datetime import datetime, timedelta, timezone
@@ -136,30 +130,33 @@ def run_generic_backtest(
 
 
 def run_signal_grid_strategy():
-    symbol = Symbol(base="eth", quote="usdt")
-    timeframe = "5m"
-    start_time = "2026-03-01"
-    end_time = "2026-03-19"
+    symbol = Symbol(base="doge", quote="usdt")
+    timeframe = "1m"
+    start_time = "2025-07-01"
+    end_time = "2025-10-01"
 
     config = SignalGridStrategyConfig(
         symbol=symbol,
         timeframe=timeframe,
         position_side=PositionSide.LONG,
         master_side=OrderSide.BUY,
-        per_order_qty=0.02,
-        grid_spacing_rate=0.1,
-        max_order=24,
+        per_order_qty=100,
+        grid_spacing_rate=0.001,
+        max_order=20,
         enable_exit_signal=True,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
-        exit_signal_take_profit_min_rate=0.15,
+        exit_signal_take_profit_min_rate=0.005,
         fixed_rate_take_profit=True,
-        fixed_take_profit_rate=0.15,
+        fixed_take_profit_rate=0.01,
         order_file_path=f'{DATA_PATH}/signal_grid_long_buy_{symbol.simple()}_{timeframe}.json',
-        enable_order_stop_loss=True,
-        order_stop_loss_rate=0.02,
-        enable_trailing_stop=True,
-        trailing_stop_rate=0.02,
-        trailing_stop_activation_profit_rate=0.02,
+        # enable_order_stop_loss=False,
+        # order_stop_loss_rate=0.02,
+        # enable_trailing_stop=True,
+        # trailing_stop_rate=0.02,
+        # trailing_stop_activation_profit_rate=0.02,
+        enable_max_order_stop_loss=True,
+        paused_after_stop_loss=False,
+        position_reverse=True,
     )
 
     run_generic_backtest(
@@ -268,4 +265,4 @@ def command_line_runner():
 
 
 if __name__ == "__main__":
-    run_daily_trend_strategy()
+    run_signal_grid_strategy()

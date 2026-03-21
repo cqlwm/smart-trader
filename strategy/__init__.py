@@ -36,6 +36,7 @@ class GeneralStrategy(Strategy):
         # kline_data_dict mappings: Symbol -> timeframe -> KlineData
         self.kline_data_dict: Dict[Symbol, Dict[str, KlineData]] = {}
         self.init_kline_nums = 300
+        self.max_kline_nums = 2000
         self.on_kline_finished_lock = threading.Lock()
         self.on_kline_lock = threading.Lock()
         self.data_lock = threading.Lock()
@@ -129,8 +130,13 @@ class GeneralStrategy(Strategy):
             df.loc[df.index[-1]] = pd.Series(kline_dict, index=df.columns)
         else:
             # Append new row
-            new_df = pd.concat([df, DataFrame([kline_dict])], ignore_index=True)
-            self.kline_data_dict[symbol][timeframe].klines = new_df
+            df = pd.concat([df, DataFrame([kline_dict])], ignore_index=True)
+
+        if len(df) >= self.max_kline_nums:
+            keep_nums = self.max_kline_nums // 2
+            df = df.iloc[-keep_nums:].reset_index(drop=True)
+
+        self.kline_data_dict[symbol][timeframe].klines = df
 
     def _call_on_kline(self, timeframe: str, symbol: Symbol):
         """Safely call the on_kline method with locking"""
