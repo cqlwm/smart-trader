@@ -30,7 +30,13 @@ class DailyTrendStrategy(GeneralStrategy):
         super().__init__([config.trade_symbol] + config.direction_symbols, ['1d', config.trade_timeframe])
         self.config = config
         self._ex_client = ex_client
-        self.order_manager = OrderManager(order_file_path=config.order_file_path)
+        self.strategy_id = "daily_trend_strategy"
+        
+        self.order_manager = OrderManager(
+            strategy_id=self.strategy_id,
+            symbol="MULTI",
+            repository=None
+        )
         self.order_manager.load_orders(True)
 
         self.current_direction: OrderSide | None = None

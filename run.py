@@ -35,36 +35,15 @@ def create_binance_client(client_type: str) -> BinanceSwapClient:
 # main binance client
 main_binance_client: BinanceSwapClient = create_binance_client('main')
 
+import uvicorn
+import sys
+
 def main():
-    from template import dogeusdc
-
-    handlers: list[KlineHandler] = []
-
-    doge_task = dogeusdc.market_trend(main_binance_client)
-    if doge_task:
-        handlers.append(doge_task)
-
-    kline_subscribes: List[str] = []
-    data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
-
-    if len(kline_subscribes) == 0:
-        logger.warning('No kline subscribes found')
-        return
-
-    for handler in handlers:
-        for symbol in handler.strategy.symbols:
-            for timeframe in handler.strategy.timeframes:
-                k = symbol.binance_ws_sub_kline(timeframe)
-                if k not in kline_subscribes:
-                    kline_subscribes.append(k)
-
-        data_event_loop.add_handler(handler)
-
-    data_event_loop.start()
-
-# def test():
-#     from template import dogeusdc
-#     t = dogeusdc.market_trend_task(main_binance_client)
+    if "--no-api" in sys.argv:
+        from bot_manager import bot_manager
+        bot_manager.start_bot()
+    else:
+        uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=False)
 
 if __name__ == '__main__':
     main()

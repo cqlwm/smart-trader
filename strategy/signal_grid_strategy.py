@@ -10,6 +10,9 @@ from pydantic import BaseModel, ConfigDict
 from model import Symbol
 from strategy import Signal
 
+from persistence.repository import StrategyRepository
+from persistence.sqlite_repo import SQLiteStrategyRepository
+
 logger = logging.getLogger(__name__)
 
 def build_order_id(side: OrderSide):
@@ -33,6 +36,54 @@ class Order(BaseModel):
     enable_trailing_stop: bool = False
     trailing_stop_activation_profit_rate: float = 0.0
     current_stop_price: float | None = None
+
+    def to_db_dict(self, symbol: str) -> dict:
+        """Convert Order to dictionary for database insertion."""
+        return {
+            'id': self.entry_id,
+            'symbol': symbol,
+            'position_side': "LONG" if self.side == OrderSide.BUY else "SHORT",  # Simplified assumption
+            'order_side': self.side.value,
+            'entry_price': self.price,
+            'exit_price': self.exit_price,
+            'quantity': self.quantity,
+            'entry_order_id': self.entry_id,
+            'exit_order_id': self.exit_id,
+            'status': self.status or "pending",
+            'extra_data': {
+                'fixed_take_profit_rate': self.fixed_take_profit_rate,
+                'signal_min_take_profit_rate': self.signal_min_take_profit_rate,
+                'stop_loss_rate': self.stop_loss_rate,
+                'enable_stop_loss': self.enable_stop_loss,
+                'trailing_stop_rate': self.trailing_stop_rate,
+                'enable_trailing_stop': self.enable_trailing_stop,
+                'trailing_stop_activation_profit_rate': self.trailing_stop_activation_profit_rate,
+                'current_stop_price': self.current_stop_price
+            }
+        }
+
+    @classmethod
+    def from_db_dict(cls, data: dict) -> 'Order':
+        """Create Order from database dictionary."""
+        extra = data.get('extra_data', {})
+        
+        return cls(
+            entry_id=data['entry_order_id'],
+            side=OrderSide(data['order_side']),
+            price=data['entry_price'],
+            quantity=data['quantity'],
+            fixed_take_profit_rate=extra.get('fixed_take_profit_rate', 0.0),
+            signal_min_take_profit_rate=extra.get('signal_min_take_profit_rate', 0.0),
+            exit_price=data.get('exit_price'),
+            status=data.get('status'),
+            exit_id=data.get('exit_order_id'),
+            stop_loss_rate=extra.get('stop_loss_rate', 0.0),
+            enable_stop_loss=extra.get('enable_stop_loss', False),
+            trailing_stop_rate=extra.get('trailing_stop_rate', 0.0),
+            enable_trailing_stop=extra.get('enable_trailing_stop', False),
+            trailing_stop_activation_profit_rate=extra.get('trailing_stop_activation_profit_rate', 0.0),
+            current_stop_price=extra.get('current_stop_price')
+        )
 
     def __hash__(self):
         return hash(self.entry_id)
@@ -121,10 +172,12 @@ class OrderRecorder(BaseModel):
 class OrderManager:
     """线程安全的订单管理器"""
 
-    def __init__(self, order_file_path: str):
+    def __init__(self, strategy_id: str, symbol: str, repository: StrategyRepository | None = None):
         self._orders: Dict[str, Order] = {}
         self._lock = threading.RLock()
-        self._order_recorder = OrderRecorder(order_file_path=order_file_path)
+        self.strategy_id = strategy_id
+        self.symbol = symbol
+        self._repository = repository or SQLiteStrategyRepository()
 
     @property
     def orders(self) -> List[Order]:
@@ -146,20 +199,24 @@ class OrderManager:
             return False
 
     def load_orders(self, force: bool = False) -> bool:
-        """从文件加载订单"""
+        """从数据库加载订单"""
         with self._lock:
-            orders = self._order_recorder.check_reload(force=force)
-            if orders is None:
+            try:
+                db_orders = self._repository.load_active_orders(self.strategy_id)
+                if not db_orders:
+                    return False
+                for order_dict in db_orders:
+                    self.add_order(Order.from_db_dict(order_dict))
+                return True
+            except Exception as e:
+                logger.error(f"Failed to load orders from database for {self.strategy_id}: {e}")
                 return False
-            for order in orders:
-                self.add_order(order)
-            return True
 
     def record_orders(self, closed_orders: List[Order] | None = None, refresh_orders: bool = False) -> None:
         """
-        记录订单到文件, 如果closed_orders为空, 则只记录当前订单
+        记录订单到数据库, 如果closed_orders为空, 则只记录当前订单
         @param closed_orders 已经关闭订单
-        @param refresh_orders 刷新到文件
+        @param refresh_orders 刷新到数据库
         """
         if closed_orders is None:
             closed_orders = []
@@ -167,7 +224,40 @@ class OrderManager:
         with self._lock:
             for order in closed_orders:
                 self._remove_order(order.entry_id)
-            self._order_recorder.record(self.orders, closed_orders, refresh_orders)
+                
+            refresh_orders = refresh_orders or bool(closed_orders)
+            
+            # Save closed orders to history
+            for order in closed_orders:
+                try:
+                    profit = 0.0
+                    if order.exit_price and order.price:
+                        # calculate actual profit amount
+                        # Profit = (exit - entry) * qty for LONG, reversed for SHORT
+                        direction = 1 if order.side == OrderSide.BUY else -1
+                        profit = (order.exit_price - order.price) * order.quantity * direction
+                        
+                    self._repository.append_trade_history(
+                        strategy_id=self.strategy_id,
+                        trade_record={
+                            'symbol': self.symbol,
+                            'entry_order_id': order.entry_id,
+                            'exit_order_id': order.exit_id,
+                            'entry_price': order.price,
+                            'exit_price': order.exit_price or 0.0,
+                            'quantity': order.quantity,
+                            'profit': profit
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to record trade history for {order.entry_id}: {e}")
+
+            if refresh_orders:
+                try:
+                    db_orders = [o.to_db_dict(self.symbol) for o in self.orders]
+                    self._repository.save_active_orders(self.strategy_id, db_orders)
+                except Exception as e:
+                    logger.error(f"Failed to save active orders for {self.strategy_id}: {e}")
 
 class SignalGridStrategyConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -218,12 +308,27 @@ class SignalGridStrategyConfig(BaseModel):
 
 class SignalGridStrategy(SimpleStrategy):
 
-    def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient):
+    def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient, repository: StrategyRepository | None = None):
         super().__init__(config.symbol, config.timeframe)
         self.config = config
         self.ex_client = ex_client
+        self.strategy_id = f"signal_grid_{self.config.symbol.simple()}_{self.config.position_side.value}_{self.config.master_side.value}"
+        
+        self._repository = repository or SQLiteStrategyRepository()
+        
+        # 保存策略实例
+        self._repository.save_strategy_instance(
+            strategy_id=self.strategy_id,
+            strategy_type="signal_grid",
+            symbol=self.config.symbol.simple(),
+            config_data=self.config.model_dump_json()
+        )
 
-        self.order_manager = OrderManager(order_file_path=self.config.order_file_path)
+        self.order_manager = OrderManager(
+            strategy_id=self.strategy_id, 
+            symbol=self.config.symbol.simple(), 
+            repository=self._repository
+        )
         self.order_manager.load_orders(True)
 
         self.on_stop_loss_order_all: Callable[[], None] = lambda: None

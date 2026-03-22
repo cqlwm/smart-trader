@@ -12,6 +12,8 @@ from model import PlaceOrderBehavior, PositionSide, Symbol, OrderSide, OrderStat
 import log
 from config import DATA_PATH
 import builtins
+from persistence.repository import StrategyRepository
+from persistence.sqlite_repo import SQLiteStrategyRepository
 
 logger = log.getLogger(__name__)
 
@@ -27,6 +29,55 @@ class OrderPair(BaseModel):
     exit_order_id: str = ""
     entry_filled: bool = False
     exit_filled: bool = False
+
+    def to_db_dict(self) -> dict:
+        """Convert OrderPair to dictionary for database insertion."""
+        # UUID or entry_order_id as primary key id
+        order_id = self.entry_order_id if self.entry_order_id else f"temp_{secrets.token_hex(8)}"
+        
+        # Calculate status
+        status = "pending"
+        if self.is_complete():
+            status = "completed"
+        elif self.entry_filled:
+            status = "entry_filled"
+            
+        return {
+            'id': order_id,
+            'symbol': self.symbol.simple(),
+            'position_side': self.position_side.value,
+            'order_side': self.entry_side.value,
+            'entry_price': self.entry_price,
+            'exit_price': self.exit_price,
+            'quantity': self.quantity,
+            'entry_order_id': self.entry_order_id,
+            'exit_order_id': self.exit_order_id,
+            'status': status,
+            'extra_data': {
+                'total_profit': self.total_profit,
+                'entry_filled': self.entry_filled,
+                'exit_filled': self.exit_filled
+            }
+        }
+
+    @classmethod
+    def from_db_dict(cls, data: dict, symbol_obj: Symbol) -> 'OrderPair':
+        """Create OrderPair from database dictionary."""
+        extra = data.get('extra_data', {})
+        
+        return cls(
+            position_side=PositionSide(data['position_side']),
+            entry_side=OrderSide(data['order_side']),
+            symbol=symbol_obj,
+            entry_price=data['entry_price'],
+            exit_price=data['exit_price'],
+            quantity=data['quantity'],
+            entry_order_id=data.get('entry_order_id', ""),
+            exit_order_id=data.get('exit_order_id', ""),
+            entry_filled=extra.get('entry_filled', False),
+            exit_filled=extra.get('exit_filled', False),
+            total_profit=extra.get('total_profit', 0.0)
+        )
 
     def calculate_profit(self) -> float:
         """计算套利盈利"""
@@ -200,12 +251,23 @@ class SimpleGridStrategyConfig(BaseModel):
 
 
 class SimpleGridStrategy(SimpleStrategy):
-    def __init__(self, ex_client: ExSwapClient, config: SimpleGridStrategyConfig, timeframe: str):
+    def __init__(self, ex_client: ExSwapClient, config: SimpleGridStrategyConfig, timeframe: str, repository: StrategyRepository | None = None):
         super().__init__(config.symbol, timeframe)
         self.config = config
         self.ex_client = ex_client
         self.grids: List[OrderPair] = []
         self.lock = threading.Lock()
+        self.strategy_id = f"simple_grid_{self.config.symbol.simple()}_{self.config.position_side.value}_{self.config.master_order_side.value}"
+        self._repository = repository or SQLiteStrategyRepository()
+        
+        # 保存策略实例
+        self._repository.save_strategy_instance(
+            strategy_id=self.strategy_id,
+            strategy_type="simple_grid",
+            symbol=self.config.symbol.simple(),
+            config_data=self.config.model_dump_json()
+        )
+        
         if self.config.backup_file:
             self.backup_file = self.config.backup_file
         else:
@@ -213,30 +275,24 @@ class SimpleGridStrategy(SimpleStrategy):
         self.load_state()
 
     def load_state(self):
-        """从备份文件加载状态"""
+        """从数据库加载状态"""
         try:
-            if not os.path.exists(self.backup_file):
-                return
-            with open(self.backup_file, 'r') as f:
-                json_str = f.read()
-                data = OrderPairListModel.model_validate_json(json_str)
-                self.grids = data.items
-                logger.info(f"从备份文件加载 {len(self.grids)} 个{self.config.symbol.binance()}网格")
-        except FileNotFoundError:
-            logger.info(f"备份文件 {self.backup_file} 不存在，初始化空状态")
+            db_orders = self._repository.load_active_orders(self.strategy_id)
+            if db_orders:
+                self.grids = [OrderPair.from_db_dict(d, self.config.symbol) for d in db_orders]
+                logger.info(f"从数据库加载 {len(self.grids)} 个{self.config.symbol.binance()}网格")
+            else:
+                logger.info(f"数据库中没有 {self.strategy_id} 的状态，初始化空状态")
         except Exception as e:
-            logger.error(f"加载备份文件 {self.backup_file} 失败: {e}")
+            logger.error(f"从数据库加载状态失败 {self.strategy_id}: {e}")
 
     def save_state(self):
-        """将当前状态保存到备份文件"""
+        """将当前状态保存到数据库"""
         try:
-            with open(self.backup_file, 'w') as f:
-                data = OrderPairListModel(items=self.grids)
-                json_str = data.model_dump_json(indent=2)
-                f.write(json_str)
-                # logger.info(f"保存 {len(self.grids)} 个网格到备份文件 {self.backup_file}")
+            db_orders = [grid.to_db_dict() for grid in self.grids]
+            self._repository.save_active_orders(self.strategy_id, db_orders)
         except Exception as e:
-            logger.error(f"保存备份文件 {self.backup_file} 失败: {e}")
+            logger.error(f"保存状态到数据库失败 {self.strategy_id}: {e}")
 
     def _calculate_grid_prices(self) -> List[float]:
         """计算网格价格"""
@@ -356,6 +412,23 @@ class SimpleGridStrategy(SimpleStrategy):
         for index in active_indices:
             grid = self.grids[index]
             if grid.is_complete():
+                # 记录到历史表
+                try:
+                    self._repository.append_trade_history(
+                        strategy_id=self.strategy_id,
+                        trade_record={
+                            'symbol': grid.symbol.value,
+                            'entry_order_id': grid.entry_order_id,
+                            'exit_order_id': grid.exit_order_id,
+                            'entry_price': grid.entry_price,
+                            'exit_price': grid.exit_price,
+                            'quantity': grid.quantity,
+                            'profit': grid.calculate_profit()
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"记录交易历史失败: {e}")
+                    
                 grid.reset()
                 has_complete_grid = True
             grid.run(self.ex_client)
