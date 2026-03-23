@@ -106,24 +106,22 @@ def get_positions(exchange: ccxt.binance, symbol: str) -> tuple[PositionData | N
         logger.error(f"交易所异常，无法获取仓位数据: {e}")
         raise
 
-def execute_strategy(exchange: ccxt.binance, symbol: str) -> None:
+def execute_strategy(exchange: ccxt.binance, symbol: str, amount: int = 1):
     """执行核心交易策略。"""
     try:
         trend, close_price = get_yesterday_trend(exchange, symbol)
         long_pos, short_pos = get_positions(exchange, symbol)
-        
-        amount = 1  # 每次操作 1 张合约
-        
+                
         if trend == "DOWN":
             # 昨天下跌
             if short_pos and float(short_pos.get("unrealizedPnl", 0.0)) > 0:
-                logger.info(f"昨天下跌，空头仓位处于盈利状态，执行平空 1 张合约 (限价: {close_price})。")
+                logger.info(f"昨天下跌，空头仓位处于盈利状态，执行平空 {amount} 张合约 (限价: {close_price})。")
                 exchange.create_order(
                     symbol, "limit", "buy", amount, price=close_price,
                     params={"positionSide": "SHORT"}
                 )
             else:
-                logger.info(f"昨天下跌，空头未盈利或无空头仓位，执行开多 1 张合约 (限价: {close_price})。")
+                logger.info(f"昨天下跌，空头未盈利或无空头仓位，执行开多 {amount} 张合约 (限价: {close_price})。")
                 exchange.create_order(
                     symbol, "limit", "buy", amount, price=close_price,
                     params={"positionSide": "LONG"}
@@ -132,13 +130,13 @@ def execute_strategy(exchange: ccxt.binance, symbol: str) -> None:
         elif trend == "UP":
             # 昨天上涨
             if long_pos and float(long_pos.get("unrealizedPnl", 0.0)) > 0:
-                logger.info(f"昨天上涨，多头仓位处于盈利状态，执行平多 1 张合约 (限价: {close_price})。")
+                logger.info(f"昨天上涨，多头仓位处于盈利状态，执行平多 {amount} 张合约 (限价: {close_price})。")
                 exchange.create_order(
                     symbol, "limit", "sell", amount, price=close_price,
                     params={"positionSide": "LONG"}
                 )
             else:
-                logger.info(f"昨天上涨，多头未盈利或无多头仓位，执行开空 1 张合约 (限价: {close_price})。")
+                logger.info(f"昨天上涨，多头未盈利或无多头仓位，执行开空 {amount} 张合约 (限价: {close_price})。")
                 exchange.create_order(
                     symbol, "limit", "sell", amount, price=close_price,
                     params={"positionSide": "SHORT"}
@@ -155,7 +153,7 @@ def main() -> None:
     logger.info(f"开始执行币安币本位合约策略，交易标的: {symbol}")
     
     exchange = init_exchange()
-    execute_strategy(exchange, symbol)
+    execute_strategy(exchange, symbol, amount=1)
     
     logger.info("策略执行完毕。")
 
