@@ -6,16 +6,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import system, account, strategy
 from bot_manager import bot_manager
-from api.schemas.common import BaseResponse
 import log
 
 logger = log.getLogger(__name__)
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     # Startup
     logger.info("Starting up FastAPI application...")
-    app.state.bot_manager = bot_manager
+    _app.state.bot_manager = bot_manager
     bot_manager.start_in_background()
     yield
     # Shutdown
