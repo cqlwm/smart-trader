@@ -1,7 +1,7 @@
 import threading
 import os
 import logging
-from typing import Any, Literal
+from typing import Literal
 
 from client.binance_client import BinanceSwapClient
 from event_loop.binance import BinanceDataEventLoop

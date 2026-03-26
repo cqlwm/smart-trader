@@ -1,7 +1,6 @@
 import secrets
 import threading
 import numpy as np
-import os
 from typing import List
 from datetime import datetime, timezone
 
@@ -419,7 +418,7 @@ class SimpleGridStrategy(SimpleStrategy):
                     self._repository.append_trade_history(
                         strategy_id=self.strategy_id,
                         trade_record={
-                            'symbol': grid.symbol.value,
+                            'symbol': grid.symbol.ccxt(),
                             'entry_order_id': grid.entry_order_id,
                             'exit_order_id': grid.exit_order_id,
                             'entry_price': grid.entry_price,
