@@ -17,6 +17,8 @@ class Strategy(ABC):
         pass
     def on_kline_finished(self, timeframe: str, symbol: Symbol):
         pass
+    def on_schedule(self, event: object) -> None:
+        pass
     @abstractmethod
     def run(self, kline: Kline):
         pass

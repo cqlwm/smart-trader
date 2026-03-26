@@ -12,6 +12,7 @@ from strategy import Signal
 
 from persistence.repository import StrategyRepository
 from persistence.sqlite_repo import SQLiteStrategyRepository
+from strategy.registry import register_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -306,6 +307,7 @@ class SignalGridStrategyConfig(BaseModel):
     trailing_stop_rate: float = 0.02
     trailing_stop_activation_profit_rate: float = 0.01
 
+@register_strategy("signal_grid")
 class SignalGridStrategy(SimpleStrategy):
 
     def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient, repository: StrategyRepository | None = None):

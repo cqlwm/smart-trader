@@ -5,21 +5,23 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import system, account, strategy
-from bot_manager import bot_manager
-import log
+from bot_manager import BotManager
+from strategy.instance_manager import StrategyInstanceManager
+import logging
 
-logger = log.getLogger(__name__)
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Startup
     logger.info("Starting up FastAPI application...")
-    _app.state.bot_manager = bot_manager
-    bot_manager.start_in_background()
+    bot_mgr = BotManager()
+    _app.state.bot_manager = bot_mgr
+    _app.state.instance_manager = bot_mgr.instance_manager
+    bot_mgr.start_in_background()
     yield
-    # Shutdown
     logger.info("Shutting down FastAPI application...")
-    bot_manager.stop()
+    bot_mgr.stop()
 
 app = FastAPI(
     title="Smart-Trader API",
@@ -44,7 +46,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global exception: {exc}", exc_info=True)
+    logger.error("Global exception: %s", exc, exc_info=True)
     return JSONResponse(
         status_code=500,
         content={"code": 500, "message": "Internal Server Error", "data": str(exc)},

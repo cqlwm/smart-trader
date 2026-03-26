@@ -36,19 +36,18 @@ def setup_overrides():
     yield
     app.dependency_overrides = {}
 
-def test_get_strategies(monkeypatch):
+def test_get_strategies_status(monkeypatch):
     from api import dependencies
     monkeypatch.setattr(dependencies, "API_KEY", "test_key")
-    
-    response = client.get("/api/v1/strategies", headers={"X-API-Key": "test_key"})
+
+    response = client.get("/api/v1/strategies/status", headers={"X-API-Key": "test_key"})
     assert response.status_code == 200
     data = response.json()
     assert data["code"] == 0
     assert data["data"]["is_running"] is True
     assert len(data["data"]["strategies"]) == 1
-    
+
     strategy = data["data"]["strategies"][0]
     assert strategy["name"] == "MockStrategy"
     assert strategy["symbols"] == ["BTCUSDT"]
     assert strategy["timeframes"] == ["1h", "4h"]
-

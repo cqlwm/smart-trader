@@ -6,6 +6,7 @@ from model import Symbol, OrderSide, PositionSide, OrderStatus, PlaceOrderBehavi
 from strategy import GeneralStrategy, Signal
 from pydantic import BaseModel, ConfigDict
 from strategy.signal_grid_strategy import Order, OrderManager, build_order_id
+from strategy.registry import register_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class DailyTrendStrategyConfig(BaseModel):
     signal: Signal
 
 
+@register_strategy("daily_trend")
 class DailyTrendStrategy(GeneralStrategy):
     def __init__(self, config: DailyTrendStrategyConfig, ex_client):
         super().__init__([config.trade_symbol] + config.direction_symbols, ['1d', config.trade_timeframe])

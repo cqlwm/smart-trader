@@ -1,32 +1,21 @@
-from typing import List, Optional, Callable
-import log
+import logging
+from typing import Callable
 
 from event_loop.base import DataEventLoop
+from event_loop.event import KlineEvent
 from model import Kline
 from backtest.backtest_client import BacktestClient
-import json
 
-logger = log.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class BacktestEventLoop(DataEventLoop):
-    """
-    回测事件循环，从历史数据重放K线（同步模式）
-    """
+    """回测事件循环，从历史数据重放K线（同步模式）"""
 
-    def __init__(self, historical_klines: List[Kline],
-                 on_progress_callback: Optional[Callable[[int, int], None]] = None,
-                 start_timestamp: Optional[int] = None,
-                 start_index: Optional[int] = None):
-        """
-        初始化回测事件循环
-
-        Args:
-            historical_klines: 历史K线数据列表（已按时间排序）
-            on_progress_callback: 进度回调函数，参数为(当前索引, 总数)
-            start_timestamp: 回测起始时间戳（优先使用）
-            start_index: 回测起始索引（向后兼容，默认300条预热数据）
-        """
+    def __init__(self, historical_klines: list[Kline],
+                 on_progress_callback: Callable[[int, int], None] | None = None,
+                 start_timestamp: int | None = None,
+                 start_index: int | None = None) -> None:
         super().__init__()
         self.historical_klines = historical_klines
         self.on_progress_callback = on_progress_callback
@@ -41,47 +30,45 @@ class BacktestEventLoop(DataEventLoop):
         elif start_index is not None:
             self.start_index = max(0, min(start_index, len(historical_klines) - 1))
         else:
-            # 默认跳过前300根作为策略预热数据
             self.start_index = 300
 
         self.current_index = self.start_index
         self.is_running = False
-        self.backtest_client: Optional[BacktestClient] = None
+        self.backtest_client: BacktestClient | None = None
 
-        logger.info(f"BacktestEventLoop initialized with {len(historical_klines)} klines, start_index: {self.start_index}")
+        logger.info("BacktestEventLoop initialized with %d klines, start_index: %d",
+                     len(historical_klines), self.start_index)
 
-    def set_backtest_client(self, client: BacktestClient):
+    def set_backtest_client(self, client: BacktestClient) -> None:
         self.backtest_client = client
 
-    def loop(self, data: str):
+    def loop(self, event: KlineEvent) -> None:  # type: ignore[override]
         """同步执行所有任务，保证时序确定性"""
-        for task in self.handlers:
-            task.run(data)
+        for handler in self.handlers:
+            handler.run(event)
 
-    def start(self):
+    def start(self) -> None:
         """开始回测（同步执行，阻塞直到完成）"""
         if self.is_running:
             logger.warning("Backtest already running")
             return
 
         if not self.historical_klines:
-            logger.error("No historical data available")
+            logger.warning("No historical data available")
             return
 
         self.is_running = True
         self.current_index = self.start_index
 
-        logger.info(f"Backtest started from index {self.start_index}")
+        logger.info("Backtest started from index %d", self.start_index)
         self._run_backtest_sync()
 
-    def stop(self):
-        """停止回测"""
+    def stop(self) -> None:
         self.is_running = False
         super().stop()
         logger.info("Backtest stopped")
 
-    def _run_backtest_sync(self):
-        """同步运行回测的主循环"""
+    def _run_backtest_sync(self) -> None:
         while self.is_running and self.current_index < len(self.historical_klines):
             self._process_next_kline()
 
@@ -91,7 +78,7 @@ class BacktestEventLoop(DataEventLoop):
         self.is_running = False
         logger.info("Backtest completed")
 
-    def _process_next_kline(self):
+    def _process_next_kline(self) -> None:
         if self.current_index >= len(self.historical_klines):
             return
 
@@ -101,56 +88,13 @@ class BacktestEventLoop(DataEventLoop):
             self.backtest_client.update_current_price(kline.symbol, kline.close)
             self.backtest_client.update_current_timestamp(kline.timestamp)
 
-        message_data = self._kline_to_ws_message(kline)
-        self.loop(message_data)
+        kline_event = KlineEvent(timestamp=kline.timestamp, kline=kline)
+        self.loop(kline_event)
 
-        # 策略执行完后检查限价挂单是否触及成交
         if self.backtest_client:
             self.backtest_client.check_pending_orders(kline)
 
         self.current_index += 1
-
-    def _kline_to_ws_message(self, kline: Kline) -> str:
-        ws_data = {
-            "stream": kline.symbol.binance_ws_sub_kline(kline.timeframe),
-            "data": {
-                "e": "kline",
-                "E": kline.timestamp,
-                "s": kline.symbol.binance(),
-                "k": {
-                    "t": kline.timestamp,
-                    "T": kline.timestamp + self._get_timeframe_ms(kline.timeframe),
-                    "s": kline.symbol.binance(),
-                    "i": kline.timeframe,
-                    "f": 100,
-                    "L": 200,
-                    "o": str(kline.open),
-                    "c": str(kline.close),
-                    "h": str(kline.high),
-                    "l": str(kline.low),
-                    "v": str(kline.volume),
-                    "n": 100,
-                    "x": kline.finished,
-                    "q": str(kline.volume * kline.close),
-                    "V": str(kline.volume),
-                    "Q": str(kline.volume * kline.close),
-                    "B": "0"
-                }
-            }
-        }
-        return json.dumps(ws_data)
-
-    @staticmethod
-    def _get_timeframe_ms(timeframe: str) -> int:
-        if timeframe.endswith('m'):
-            return int(timeframe[:-1]) * 60 * 1000
-        elif timeframe.endswith('h'):
-            return int(timeframe[:-1]) * 60 * 60 * 1000
-        elif timeframe.endswith('d'):
-            return int(timeframe[:-1]) * 24 * 60 * 60 * 1000
-        elif timeframe.endswith('w'):
-            return int(timeframe[:-1]) * 7 * 24 * 60 * 60 * 1000
-        return 60 * 1000
 
     @property
     def progress(self) -> float:
@@ -163,7 +107,7 @@ class BacktestEventLoop(DataEventLoop):
         return min(1.0, max(0.0, current_backtest_index / total_backtest_klines))
 
     @property
-    def current_kline(self) -> Optional[Kline]:
+    def current_kline(self) -> Kline | None:
         if 0 <= self.current_index - 1 < len(self.historical_klines):
             return self.historical_klines[self.current_index - 1]
         return None

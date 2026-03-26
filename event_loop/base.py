@@ -1,28 +1,31 @@
 import concurrent.futures
-from typing import List
 import logging
+
+from event_loop.event import Event
 
 logger = logging.getLogger(__name__)
 
+
 class Handler:
 
-    def run(self, data: str):
+    def run(self, event: Event) -> None:
         pass
+
 
 class DataEventLoop:
-    def __init__(self):
-        self.handlers: List[Handler] = []
+    def __init__(self) -> None:
+        self.handlers: list[Handler] = []
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
-    def add_handler(self, task: Handler):
-        self.handlers.append(task)
+    def add_handler(self, handler: Handler) -> None:
+        self.handlers.append(handler)
 
-    def loop(self, data: str):
+    def loop(self, event: Event) -> None:
         for handler in self.handlers:
-            self.executor.submit(handler.run, data)
+            self.executor.submit(handler.run, event)
 
-    def start(self):
+    def start(self) -> None:
         pass
 
-    def stop(self):
+    def stop(self) -> None:
         self.executor.shutdown(wait=False)

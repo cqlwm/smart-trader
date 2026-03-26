@@ -14,6 +14,7 @@ from config import DATA_PATH
 import builtins
 from persistence.repository import StrategyRepository
 from persistence.sqlite_repo import SQLiteStrategyRepository
+from strategy.registry import register_strategy
 
 logger = log.getLogger(__name__)
 
@@ -250,6 +251,7 @@ class SimpleGridStrategyConfig(BaseModel):
     backup_file: str = ""
 
 
+@register_strategy("simple_grid")
 class SimpleGridStrategy(SimpleStrategy):
     def __init__(self, ex_client: ExSwapClient, config: SimpleGridStrategyConfig, timeframe: str, repository: StrategyRepository | None = None):
         super().__init__(config.symbol, timeframe)
