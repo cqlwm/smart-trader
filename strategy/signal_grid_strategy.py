@@ -2,7 +2,7 @@ import os
 import secrets
 import threading
 from typing import Any, List, Callable, Dict
-from client.ex_client import ExSwapClient
+from client.ex_client import ExSwapClient, ExClient
 from strategy import SimpleStrategy
 from model import OrderSide, OrderStatus, PlaceOrderBehavior, PositionSide
 import logging
@@ -337,7 +337,7 @@ class SignalGridStrategy(SimpleStrategy):
         self.close_position: bool = False
         self.is_running: bool = True
 
-    def exchange_client(self) -> ExSwapClient:
+    def exchange_client(self) -> ExClient:
         return self.ex_client
 
     def place_order(self, order_id: str, side: OrderSide, qty: float, price: float, first_price: float | None = None):

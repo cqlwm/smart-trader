@@ -46,6 +46,7 @@ dependencies = [
     "orjson>=3.10.6",
     "packaging>=24.1",
     "pandas>=2.2.2",
+    "pandas-stubs~=2.3.2",
     "pillow>=10.4.0",
     "pyarrow>=21.0.0",
     "pycares>=4.4.0",
