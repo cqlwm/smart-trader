@@ -6,7 +6,7 @@ from client.ex_client import ExSwapClient, ExClient
 from strategy import SimpleStrategy
 from model import OrderSide, OrderStatus, PlaceOrderBehavior, PositionSide
 import logging
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
 from model import Symbol
 from strategy import Signal
 
@@ -293,6 +293,12 @@ class SignalGridStrategyConfig(BaseModel):
     place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER_OPEN  # 下单行为
 
     order_file_path: str = 'data/grids_strategy_v2.json'
+
+    @field_serializer("signal")
+    def serialize_signal(self, signal, _info):
+        if signal is None:
+            return None
+        return signal.__class__.__name__
     
     position_reverse: bool = False  # 是否反向持仓
     # 达到最大订单数全部止损
