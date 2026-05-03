@@ -2,16 +2,15 @@ import time
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 
-from model import Symbol, SymbolInfo, Kline
+from model import Symbol, SymbolInfo, Kline, Order, OrderSide, PositionSide
+from persistence.order_repository import OrderRepository
 from ccxt.base.exchange import Exchange
-
-from model import OrderSide
-
 
 
 class ExClient(ABC):
     exchange_name: str
     exchange: Exchange
+    order_repo: OrderRepository
 
     def symbol_info(self, symbol: Symbol) -> SymbolInfo:
         raise NotImplementedError()
@@ -21,14 +20,25 @@ class ExClient(ABC):
         pass
 
     @abstractmethod
-    def cancel(self, custom_id: str, symbol: Symbol) -> Dict[str, Any]:
+    def cancel(self, custom_id: str, symbol: Symbol) -> Order | None:
         pass
 
     @abstractmethod
-    def query_order(self, custom_id: str, symbol: Symbol) -> Dict[str, Any]:
+    def query_order(self, custom_id: str, symbol: Symbol) -> Order | None:
         pass
 
-    def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price: Optional[float] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def place_order_v2(
+        self,
+        strategy_id: str,
+        custom_id: str,
+        symbol: Symbol,
+        order_side: OrderSide,
+        quantity: float,
+        price: Optional[float] = None,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        **kwargs: Any,
+    ) -> Optional[Order]:
         """
         kwargs:
             position_side

@@ -1,10 +1,16 @@
+import time
+
 import ccxt
+from typing import Any, Optional
 
 from client.ex_client import ExSwapClient, ExSpotClient
+from model import Order, OrderSide, PositionSide, OrderStatus, Symbol
+from persistence.order_repository import InMemoryOrderRepository, OrderRepository
 
 
 class BybitSwapClient(ExSwapClient):
-    def __init__(self, _api_key, _api_secret, test):
+    def __init__(self, _api_key, _api_secret, test, order_repo: OrderRepository | None = None):
+        self.order_repo = order_repo or InMemoryOrderRepository()
         self.client = ccxt.bybit({
             'apiKey': _api_key,
             'secret': _api_secret,
@@ -16,18 +22,31 @@ class BybitSwapClient(ExSwapClient):
         balance = self.client.fetch_balance(params={'accountType': 'UNIFIED'})
         return balance[coin.upper()]['free']
 
-    def cancel(self, custom_id, symbol):
+    def cancel(self, custom_id, symbol: Symbol) -> Order | None:
         raise NotImplementedError()
-        # return self.client.cancel_order(custom_id, symbol)
 
-    def query_order(self, custom_id, symbol):
+    def query_order(self, custom_id, symbol: Symbol) -> Order | None:
         raise NotImplementedError()
-        # return self.client.fetch_order(custom_id, symbol)
 
-    def place_order(self, custom_id, symbol, order_side, position_side, quantity, price=None):
-        if position_side == 'long':
+    def place_order_v2(
+        self,
+        strategy_id: str,
+        custom_id: str,
+        symbol: Symbol,
+        order_side: OrderSide,
+        quantity: float,
+        price: Optional[float] = None,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        **kwargs: Any,
+    ) -> Optional[Order]:
+        position_side = kwargs.get('position_side', PositionSide.LONG)
+        if isinstance(position_side, str):
+            position_side = PositionSide(position_side)
+
+        if position_side.value == 'long':
             position_idx = 1
-        elif position_side == 'short':
+        elif position_side.value == 'short':
             position_idx = 2
         else:
             raise NotImplementedError
@@ -38,33 +57,39 @@ class BybitSwapClient(ExSwapClient):
             'orderLinkId': custom_id,
             'marketUnit': 'baseCoin'
         }
-        order = self.client.create_order(
-            symbol=symbol,
+        raw_order = self.client.create_order(
+            symbol=symbol.ccxt(),
             type='limit' if price else 'market',
-            side=order_side,
+            side=order_side.value,
             amount=quantity,
             price=price,
             params=params
         )
+        now = int(time.time() * 1000)
+        order_type = 'limit' if price else 'market'
+        order = Order(
+            order_id=raw_order.get('clientOrderId', custom_id),
+            strategy_id=strategy_id,
+            symbol=symbol,
+            side=order_side,
+            position_side=position_side,
+            order_type=order_type,
+            quantity=quantity,
+            price=price,
+            status=OrderStatus.OPEN,
+            created_at=now,
+            updated_at=now,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+        )
+        self.order_repo.save(order)
         return order
 
     def close_position(self, symbol, position_side, auto_cancel=True):
         raise NotImplementedError()
-        # position = self.positions(symbol)
-        # if position and position['positionSide'] == position_side:
-        #     order_side = 'sell' if position_side == 'long' else 'buy'
-        #     quantity = position['contracts']
-        #     self.place_order(None, symbol, order_side, 'close', quantity)
-        #     if auto_cancel:
-        #         self.client.cancel_all_orders(symbol)
-        # return True
 
     def positions(self, symbol=None):
         raise NotImplementedError()
-        # positions = self.client.private_get_position_list()['result']
-        # if symbol:
-        #     return next((pos for pos in positions if pos['symbol'] == symbol), None)
-        # return positions
 
 
 class BybitSpotClient(ExSpotClient):
@@ -83,7 +108,6 @@ class BybitSpotClient(ExSpotClient):
     def cancel(self, custom_id, symbol):
         return self.client.cancel_order('', symbol, params={'category': "spot", 'orderLinkId': custom_id})
 
-    # status=open,closed
     def query_order(self, custom_id, symbol: str):
         order_info = self.client.private_get_v5_order_realtime({
             'category': "spot",

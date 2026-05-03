@@ -10,6 +10,7 @@ from backtest.data_loader import HistoricalDataLoader
 from backtest.result import BacktestResult
 from event_loop.handler.kline_handler import KlineHandler
 from model import Kline
+from persistence.order_repository import InMemoryOrderRepository
 from strategy.registry import StrategyRegistry
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class BacktestRunner:
     def run(self) -> BacktestResult:
         data_loader = HistoricalDataLoader()
         client = BacktestClient(
+            order_repo=InMemoryOrderRepository(),
             initial_balance=self.config.initial_balance,
             maker_fee=self.config.maker_fee,
             taker_fee=self.config.taker_fee,

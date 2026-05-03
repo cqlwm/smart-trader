@@ -18,6 +18,7 @@ from strategy.signal_grid_strategy import SignalGridStrategy, SignalGridStrategy
 from strategy.daily_trend_strategy import DailyTrendStrategy, DailyTrendStrategyConfig
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
+from persistence.order_repository import InMemoryOrderRepository
 from config import DATA_PATH
 import log
 
@@ -39,6 +40,7 @@ def run_generic_backtest(
         data_loader = HistoricalDataLoader()
         all_klines = []
         backtest_client = BacktestClient(
+            order_repo=InMemoryOrderRepository(),
             initial_balance=initial_balance,
             maker_fee=0.0002,
             taker_fee=0.0004

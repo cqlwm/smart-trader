@@ -1,4 +1,3 @@
-import os
 import secrets
 import threading
 from typing import Any, List, Callable, Dict
@@ -19,7 +18,9 @@ logger = logging.getLogger(__name__)
 def build_order_id(side: OrderSide):
     return f'{side.value}{secrets.token_hex(nbytes=5)}'
 
-class Order(BaseModel):
+
+class OrderExtension(BaseModel):
+    """Mutable order extension data that lives alongside the immutable Order."""
     entry_id: str
     side: OrderSide
     price: float
@@ -30,7 +31,6 @@ class Order(BaseModel):
     status: str | None = None
     exit_id: str | None = None
 
-    # Stop loss fields
     stop_loss_rate: float = 0.0
     enable_stop_loss: bool = False
     trailing_stop_rate: float = 0.0
@@ -39,11 +39,10 @@ class Order(BaseModel):
     current_stop_price: float | None = None
 
     def to_db_dict(self, symbol: str) -> dict:
-        """Convert Order to dictionary for database insertion."""
         return {
             'id': self.entry_id,
             'symbol': symbol,
-            'position_side': "LONG" if self.side == OrderSide.BUY else "SHORT",  # Simplified assumption
+            'position_side': "LONG" if self.side == OrderSide.BUY else "SHORT",
             'order_side': self.side.value,
             'entry_price': self.price,
             'exit_price': self.exit_price,
@@ -64,10 +63,9 @@ class Order(BaseModel):
         }
 
     @classmethod
-    def from_db_dict(cls, data: dict) -> 'Order':
-        """Create Order from database dictionary."""
+    def from_db_dict(cls, data: dict) -> 'OrderExtension':
         extra = data.get('extra_data', {})
-        
+
         return cls(
             entry_id=data['entry_order_id'],
             side=OrderSide(data['order_side']),
@@ -90,20 +88,11 @@ class Order(BaseModel):
         return hash(self.entry_id)
 
     def __eq__(self, other: Any):
-        if isinstance(other, Order):
+        if isinstance(other, OrderExtension):
             return self.entry_id == other.entry_id
         return False
 
     def profit_level(self, current_price: float) -> int:
-        """
-        计算订单的盈利级别
-        @param current_price 当前价格
-        @return 表示盈利级别
-            -1亏损中
-            0盈利无法覆盖手续费
-            1盈利中
-            2达到止盈标准
-        """
         compare_fun = self.side.compare_fun()
 
         if compare_fun(current_price, self._profit(self.fixed_take_profit_rate)):
@@ -115,7 +104,6 @@ class Order(BaseModel):
 
         return -1
 
-    # 盈亏率
     def profit_and_loss_ratio(self, current_price: float) -> float:
         loss_rate = float("{:.6f}".format(abs(current_price - self.price) / self.price))
         if self.profit_level(current_price) < 0:
@@ -129,140 +117,94 @@ class Order(BaseModel):
             rate_base = -1
         return self.price * (1 + rate * rate_base)
 
-class OrderRecorder(BaseModel):
-    """
-    订单记录器
-    @param order_file_path 订单文件路径
-    @param orders 当前订单
-    @param history_orders 历史订单
-    @param is_reload 程序中通常不会直接设置该值,而是用户在需要重新加载时在本地备份文件中设置True,实现热更新的效果
-    @param reload_msg 重新加载消息
-    @param total_profit 总利润
-    """
-    order_file_path: str
-    orders: List[Order] = []
-    history_orders: List[Order] = []
-    is_reload: bool = False
 
-    def record(self, latest_orders: List[Order], closed_orders: List[Order], refresh_orders: bool = False):
-
-        self.orders = latest_orders
-        refresh_orders = refresh_orders or len(latest_orders) != len(self.orders)
-
-        if closed_orders:
-            self.history_orders += closed_orders
-            refresh_orders = True
-
-        if refresh_orders and self.order_file_path:
-            with open(self.order_file_path, 'w') as f:
-                f.write(self.model_dump_json())
-
-    def check_reload(self, force: bool = False) -> List[Order] | None:
-        """
-        从本地文件中读取订单，并检查是否需要重新加载
-        @param force 强制重新加载
-        """
-        if self.order_file_path and os.path.exists(self.order_file_path):
-            with open(self.order_file_path, 'r') as f:
-                _recorder = OrderRecorder.model_validate_json(f.read())
-                if _recorder.is_reload or force:
-                    logger.info(f"Reload orders from {self.order_file_path}, force={force}")
-                    return _recorder.orders
-        return None
-
-class OrderManager:
-    """线程安全的订单管理器"""
+class OrderExtensionManager:
+    """线程安全的订单扩展数据管理器"""
 
     def __init__(self, strategy_id: str, symbol: str, repository: StrategyRepository | None = None):
-        self._orders: Dict[str, Order] = {}
+        self._extensions: Dict[str, OrderExtension] = {}
         self._lock = threading.RLock()
         self.strategy_id = strategy_id
         self.symbol = symbol
         self._repository = repository or SQLiteStrategyRepository()
 
     @property
-    def orders(self) -> List[Order]:
-        """获取订单列表的线程安全副本"""
+    def extensions(self) -> List[OrderExtension]:
         with self._lock:
-            return list(self._orders.values())
+            return list(self._extensions.values())
 
-    def add_order(self, order: Order) -> None:
-        """添加订单"""
+    def add(self, ext: OrderExtension) -> None:
         with self._lock:
-            self._orders[order.entry_id] = order
+            self._extensions[ext.entry_id] = ext
 
-    def _remove_order(self, custom_id: str) -> bool:
-        """根据custom_id移除订单"""
+    def get(self, entry_id: str) -> OrderExtension | None:
         with self._lock:
-            if custom_id in self._orders:
-                del self._orders[custom_id]
+            return self._extensions.get(entry_id)
+
+    def _remove(self, custom_id: str) -> bool:
+        with self._lock:
+            if custom_id in self._extensions:
+                del self._extensions[custom_id]
                 return True
             return False
 
     def load_orders(self, force: bool = False) -> bool:
-        """从数据库加载订单"""
         with self._lock:
             try:
                 db_orders = self._repository.load_active_orders(self.strategy_id)
                 if not db_orders:
                     return False
                 for order_dict in db_orders:
-                    self.add_order(Order.from_db_dict(order_dict))
+                    ext = OrderExtension.from_db_dict(order_dict)
+                    self.add(ext)
                 return True
             except Exception as e:
                 logger.error(f"Failed to load orders from database for {self.strategy_id}: {e}")
                 return False
 
-    def record_orders(self, closed_orders: List[Order] | None = None, refresh_orders: bool = False) -> None:
-        """
-        记录订单到数据库, 如果closed_orders为空, 则只记录当前订单
-        @param closed_orders 已经关闭订单
-        @param refresh_orders 刷新到数据库
-        """
-        if closed_orders is None:
-            closed_orders = []
-            
+    def record_orders(self, closed_extensions: List[OrderExtension] | None = None, refresh_orders: bool = False) -> None:
+        if closed_extensions is None:
+            closed_extensions = []
+
         with self._lock:
-            for order in closed_orders:
-                self._remove_order(order.entry_id)
-                
-            refresh_orders = refresh_orders or bool(closed_orders)
-            
-            # Save closed orders to history
-            for order in closed_orders:
+            for ext in closed_extensions:
+                self._remove(ext.entry_id)
+
+            refresh_orders = refresh_orders or bool(closed_extensions)
+
+            for ext in closed_extensions:
                 try:
                     profit = 0.0
-                    if order.exit_price and order.price:
-                        # calculate actual profit amount
-                        # Profit = (exit - entry) * qty for LONG, reversed for SHORT
-                        direction = 1 if order.side == OrderSide.BUY else -1
-                        profit = (order.exit_price - order.price) * order.quantity * direction
-                        
+                    if ext.exit_price and ext.price:
+                        direction = 1 if ext.side == OrderSide.BUY else -1
+                        profit = (ext.exit_price - ext.price) * ext.quantity * direction
+
                     self._repository.append_trade_history(
                         strategy_id=self.strategy_id,
                         trade_record={
                             'symbol': self.symbol,
-                            'entry_order_id': order.entry_id,
-                            'exit_order_id': order.exit_id,
-                            'entry_price': order.price,
-                            'exit_price': order.exit_price or 0.0,
-                            'quantity': order.quantity,
+                            'entry_order_id': ext.entry_id,
+                            'exit_order_id': ext.exit_id,
+                            'entry_price': ext.price,
+                            'exit_price': ext.exit_price or 0.0,
+                            'quantity': ext.quantity,
                             'profit': profit
                         }
                     )
                 except Exception as e:
-                    logger.error(f"Failed to record trade history for {order.entry_id}: {e}")
+                    logger.error(f"Failed to record trade history for {ext.entry_id}: {e}")
 
             if refresh_orders:
                 try:
-                    db_orders = [o.to_db_dict(self.symbol) for o in self.orders]
+                    db_orders = [e.to_db_dict(self.symbol) for e in self.extensions]
                     self._repository.save_active_orders(self.strategy_id, db_orders)
                 except Exception as e:
                     logger.error(f"Failed to save active orders for {self.strategy_id}: {e}")
 
+
 class SignalGridStrategyConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    
+
     symbol: Symbol
     timeframe: str
     position_side: PositionSide = PositionSide.LONG
@@ -275,22 +217,16 @@ class SignalGridStrategyConfig(BaseModel):
 
     signal: Signal | None = None
 
-    # 启用退出信号
     enable_exit_signal: bool = True
-    # 退出信号最小止盈率
     exit_signal_take_profit_min_rate: float = 0.002
 
-    # 固定比例止盈
     fixed_rate_take_profit: bool = False
-    # 当fixed_rate_take_profit为True时, 是否使用限价单止盈
-    # 开启会在入场订单完成之后创建止盈订单(默认情况下只有K线的收盘价达到止盈标准时才会触发止盈)
     take_profit_use_limit_order: bool = False
-    # 固定比例止盈率
     fixed_take_profit_rate: float = 0.006
 
     close_position_ratio: float = 1.0
 
-    place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER_OPEN  # 下单行为
+    place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER_OPEN
 
     order_file_path: str = 'data/grids_strategy_v2.json'
 
@@ -299,16 +235,12 @@ class SignalGridStrategyConfig(BaseModel):
         if signal is None:
             return None
         return signal.__class__.__name__
-    
-    position_reverse: bool = False  # 是否反向持仓
-    # 达到最大订单数全部止损
+
+    position_reverse: bool = False
     enable_max_order_stop_loss: bool = False
-    # 止损后暂停策略
     paused_after_stop_loss: bool = True
-    # 单笔订单止损
     enable_order_stop_loss: bool = False
     order_stop_loss_rate: float = 0.05
-    # 跟踪止损
     enable_trailing_stop: bool = False
     trailing_stop_rate: float = 0.02
     trailing_stop_activation_profit_rate: float = 0.01
@@ -321,10 +253,10 @@ class SignalGridStrategy(SimpleStrategy):
         self.config = config
         self.ex_client = ex_client
         self.strategy_id = f"signal_grid_{self.config.symbol.simple()}_{self.config.position_side.value}_{self.config.master_side.value}"
-        
+        self.order_repo = ex_client.order_repo
+
         self._repository = repository or SQLiteStrategyRepository()
-        
-        # 保存策略实例
+
         self._repository.save_strategy_instance(
             strategy_id=self.strategy_id,
             strategy_type="signal_grid",
@@ -332,12 +264,12 @@ class SignalGridStrategy(SimpleStrategy):
             config_data=self.config.model_dump_json()
         )
 
-        self.order_manager = OrderManager(
-            strategy_id=self.strategy_id, 
-            symbol=self.config.symbol.simple(), 
+        self.ext_manager = OrderExtensionManager(
+            strategy_id=self.strategy_id,
+            symbol=self.config.symbol.simple(),
             repository=self._repository
         )
-        self.order_manager.load_orders(True)
+        self.ext_manager.load_orders(True)
 
         self.on_stop_loss_order_all: Callable[[], None] = lambda: None
         self.close_position: bool = False
@@ -354,41 +286,40 @@ class SignalGridStrategy(SimpleStrategy):
             position_side = self.config.position_side
 
         return self.ex_client.place_order_v2(
-            custom_id=order_id, 
-            symbol=self.config.symbol, 
-            order_side=side, 
-            quantity=qty, 
-            price=price, # place_order_behavior == NORMAL 价格才会生效
+            strategy_id=self.strategy_id,
+            custom_id=order_id,
+            symbol=self.config.symbol,
+            order_side=side,
+            quantity=qty,
+            price=price,
             position_side=position_side,
-            place_order_behavior=self.config.place_order_behavior, 
+            place_order_behavior=self.config.place_order_behavior,
             first_price=first_price
         )
 
     def _check_max_order_stop_loss(self) -> bool:
-        if self.config.enable_max_order_stop_loss and self.config.max_order - len(self.order_manager.orders) <= 1:
+        if self.config.enable_max_order_stop_loss and self.config.max_order - len(self.ext_manager.extensions) <= 1:
             return True
         return False
 
     def check_open_order(self) -> bool:
-        # 检查订单是否到达上限
-        if len(self.order_manager.orders) >= self.config.max_order:
+        if len(self.ext_manager.extensions) >= self.config.max_order:
             return False
 
-        # 检查是否有入场信号
         if self.config.signal:
             if not self.config.signal.is_entry(self.klines_df):
                 return False
 
-        # 检查当前价格是否在可交易的价格区间
         if self.latest_kline_obj is None:
             return False
-        
+
         close_price = self.latest_kline_obj.close
         if close_price < self.config.lowest_price or close_price > self.config.highest_price:
             return False
 
-        if self.order_manager.orders:
-            recent_price_order = self.config.master_side.extremum_fun()(self.order_manager.orders, key=lambda order: order.price)
+        extensions = self.ext_manager.extensions
+        if extensions:
+            recent_price_order = self.config.master_side.extremum_fun()(extensions, key=lambda ext: ext.price)
         else:
             recent_price_order = None
 
@@ -396,20 +327,18 @@ class SignalGridStrategy(SimpleStrategy):
             if self._check_max_order_stop_loss():
                 return False
             order_id = build_order_id(self.config.master_side)
-            # Initialize stop loss settings
             stop_loss_rate = self.config.order_stop_loss_rate if self.config.enable_order_stop_loss else 0.0
             trailing_stop_rate = self.config.trailing_stop_rate if self.config.enable_trailing_stop else 0.0
             trailing_activation_rate = self.config.trailing_stop_activation_profit_rate if self.config.enable_trailing_stop else 0.0
 
-            # Calculate initial stop price
             current_stop_price = None
             if self.config.enable_order_stop_loss or self.config.enable_trailing_stop:
                 if self.config.master_side == OrderSide.BUY:
                     current_stop_price = close_price * (1 - stop_loss_rate)
-                else:  # SELL
+                else:
                     current_stop_price = close_price * (1 + stop_loss_rate)
 
-            order = Order(
+            ext = OrderExtension(
                 entry_id=order_id,
                 side=self.config.master_side,
                 price=close_price,
@@ -425,67 +354,62 @@ class SignalGridStrategy(SimpleStrategy):
                 current_stop_price=current_stop_price
             )
 
-            
             if self.config.per_order_qty == 0:
-                order.status = OrderStatus.CLOSED.value
+                ext.status = OrderStatus.CLOSED.value
             else:
                 entry_order_result = self.place_order(order_id, self.config.master_side, self.config.per_order_qty, close_price, first_price=close_price)
-                if entry_order_result and entry_order_result.get('clientOrderId'):
-                    # 入场订单ID可能因为追单行为而改变,所以使用返回的订单ID
-                    order.entry_id = entry_order_result['clientOrderId']
-                    order.price = entry_order_result['price']
-                    order.status = entry_order_result['status']
-            self.order_manager.add_order(order)
+                if entry_order_result:
+                    ext.entry_id = entry_order_result.order_id
+                    ext.price = entry_order_result.price or close_price
+                    ext.status = entry_order_result.status.value
+            self.ext_manager.add(ext)
             return True
         return False
 
-    def check_close_order(self) -> List[Order]:
+    def check_close_order(self) -> List[OrderExtension]:
         if self.latest_kline_obj is None:
             return []
-        
-        current_orders = self.order_manager.orders
+
+        current_extensions = self.ext_manager.extensions
         exit_signal = self.config.enable_exit_signal and self.config.signal and self.config.signal.is_exit(self.klines_df)
 
-        remove_orders: List[Order] = []
-        exit_orders: List[Order] = []
+        remove_extensions: List[OrderExtension] = []
+        exit_extensions: List[OrderExtension] = []
         exit_qty = 0
         stop_loss_order_all = self._check_max_order_stop_loss() or self.close_position
-        for order in current_orders:
-            profit_level = order.profit_level(self.latest_kline_obj.close)
+        for ext in current_extensions:
+            profit_level = ext.profit_level(self.latest_kline_obj.close)
 
-            # 检查止损条件
             stop_loss_triggered = False
-            if order.enable_stop_loss and order.current_stop_price is not None:
-                if order.side == OrderSide.BUY:
-                    stop_loss_triggered = self.latest_kline_obj.close <= order.current_stop_price
-                else:  # SELL
-                    stop_loss_triggered = self.latest_kline_obj.close >= order.current_stop_price
+            if ext.enable_stop_loss and ext.current_stop_price is not None:
+                if ext.side == OrderSide.BUY:
+                    stop_loss_triggered = self.latest_kline_obj.close <= ext.current_stop_price
+                else:
+                    stop_loss_triggered = self.latest_kline_obj.close >= ext.current_stop_price
 
             if stop_loss_order_all or (profit_level == 2 and self.config.fixed_rate_take_profit) or (profit_level == 1 and exit_signal) or stop_loss_triggered:
-                if OrderStatus.is_open(order.status):
-                    entry_order_query_result = self.ex_client.query_order(order.entry_id, self.config.symbol)
-                    order.status = OrderStatus.EXPIRED.value if entry_order_query_result is None else entry_order_query_result['status']
-                    if not OrderStatus.is_closed(order.status):
-                        remove_orders.append(order)
-                        if OrderStatus.is_open(order.status):
-                            self.ex_client.cancel(order.entry_id, self.config.symbol)
+                if OrderStatus.is_open(ext.status):
+                    entry_order_query_result = self.ex_client.query_order(ext.entry_id, self.config.symbol)
+                    ext.status = OrderStatus.EXPIRED.value if entry_order_query_result is None else entry_order_query_result.status.value
+                    if not OrderStatus.is_closed(ext.status):
+                        remove_extensions.append(ext)
+                        if OrderStatus.is_open(ext.status):
+                            self.ex_client.cancel(ext.entry_id, self.config.symbol)
                         continue
 
-                if order.exit_id and order.exit_price:
-                    exit_order_query_result = self.ex_client.query_order(order.exit_id, self.config.symbol)
+                if ext.exit_id and ext.exit_price:
+                    exit_order_query_result = self.ex_client.query_order(ext.exit_id, self.config.symbol)
                     if exit_order_query_result:
-                        exit_status = exit_order_query_result['status']
+                        exit_status = exit_order_query_result.status.value
                         if OrderStatus.is_closed(exit_status):
-                            remove_orders.append(order)
+                            remove_extensions.append(ext)
                             continue
                         elif OrderStatus.is_open(exit_status):
-                            self.ex_client.cancel(order.exit_id, self.config.symbol)
-                        else:
-                            pass
+                            self.ex_client.cancel(ext.exit_id, self.config.symbol)
 
-                exit_qty += order.quantity
-                order.exit_price = self.latest_kline_obj.close
-                exit_orders.append(order)
+                exit_qty += ext.quantity
+                ext.exit_price = self.latest_kline_obj.close
+                exit_extensions.append(ext)
 
         if exit_qty > 0:
             exit_order_side = self.config.master_side.reversal()
@@ -493,9 +417,9 @@ class SignalGridStrategy(SimpleStrategy):
             actual_exit_qty = exit_qty * self.config.close_position_ratio
             execute_exit_order_result = self.place_order(exit_order_id, exit_order_side, actual_exit_qty, self.latest_kline_obj.close)
             if execute_exit_order_result:
-                for order in exit_orders:
-                    order.exit_id = execute_exit_order_result['clientOrderId']
-                    order.exit_price = execute_exit_order_result['price']
+                for ext in exit_extensions:
+                    ext.exit_id = execute_exit_order_result.order_id
+                    ext.exit_price = execute_exit_order_result.price or ext.exit_price
 
         if self.close_position:
             self.close_position = False
@@ -505,77 +429,70 @@ class SignalGridStrategy(SimpleStrategy):
             if self.config.paused_after_stop_loss:
                 self.is_running = False
 
-        return exit_orders + remove_orders
+        return exit_extensions + remove_extensions
 
     def _on_kline_finished(self):
         if not self.is_running or self.latest_kline_obj is None:
             return
 
-        # 检查是否需要重新加载订单
-        refresh = self.order_manager.load_orders()
+        refresh = self.ext_manager.load_orders()
 
-        # 更新跟踪止损
         extremum_price = self.latest_kline_obj.high if self.config.master_side == OrderSide.BUY else self.latest_kline_obj.low
-        current_orders = self.order_manager.orders
-        for order in current_orders:
-            if not order.enable_trailing_stop or order.current_stop_price is None:
+        current_extensions = self.ext_manager.extensions
+        for ext in current_extensions:
+            if not ext.enable_trailing_stop or ext.current_stop_price is None:
                 continue
 
-            # 检查是否达到激活盈利条件
-            activation_price = order.price * (1 + order.trailing_stop_activation_profit_rate * order.side.to_int())
-            if order.side.compare_fun(and_eq=True)(extremum_price, activation_price):
-                new_stop_price = extremum_price * (1 - order.trailing_stop_rate * order.side.to_int())
-                order.current_stop_price = order.side.reversal().extremum_fun()(order.current_stop_price, new_stop_price)
+            activation_price = ext.price * (1 + ext.trailing_stop_activation_profit_rate * ext.side.to_int())
+            if ext.side.compare_fun(and_eq=True)(extremum_price, activation_price):
+                new_stop_price = extremum_price * (1 - ext.trailing_stop_rate * ext.side.to_int())
+                ext.current_stop_price = ext.side.reversal().extremum_fun()(ext.current_stop_price, new_stop_price)
                 refresh = True
 
         if not self.check_open_order():
-            closed_orders = self.check_close_order()
+            closed_extensions = self.check_close_order()
         else:
-            closed_orders = []
+            closed_extensions = []
             refresh = True
 
-        self.order_manager.record_orders(closed_orders, refresh)
+        self.ext_manager.record_orders(closed_extensions, refresh)
 
     def _on_kline(self):
         if self.latest_kline_obj is None:
             return
-        
-        orders_to_process = self.order_manager.orders
+
+        extensions_to_process = self.ext_manager.extensions
         refresh_orders = False
 
-        # 检查是否需要触发实时止盈订单
-        closed_orders = []
+        closed_extensions = []
         if self.config.fixed_rate_take_profit and self.config.take_profit_use_limit_order:
-            for order in orders_to_process:
-                if order.quantity == 0:
+            for ext in extensions_to_process:
+                if ext.quantity == 0:
                     continue
-                
-                if order.exit_id and order.exit_price:
-                    # 检查退出是否成交
-                    if self.latest_kline_obj.low <= order.exit_price <= self.latest_kline_obj.high:
-                        exit_order_query_result = self.ex_client.query_order(order.exit_id, self.config.symbol)
+
+                if ext.exit_id and ext.exit_price:
+                    if self.latest_kline_obj.low <= ext.exit_price <= self.latest_kline_obj.high:
+                        exit_order_query_result = self.ex_client.query_order(ext.exit_id, self.config.symbol)
                         if exit_order_query_result:
-                            exit_status = exit_order_query_result['status']
+                            exit_status = exit_order_query_result.status.value
                             if OrderStatus.is_closed(exit_status):
-                                closed_orders.append(order)
+                                closed_extensions.append(ext)
                 else:
-                    # 检查进入订单是否成交
-                    if OrderStatus.is_open(order.status):
-                        entry_order_query_result = self.ex_client.query_order(order.entry_id, self.config.symbol)
+                    if OrderStatus.is_open(ext.status):
+                        entry_order_query_result = self.ex_client.query_order(ext.entry_id, self.config.symbol)
                         if entry_order_query_result:
-                            order.status = entry_order_query_result['status']
-                    
-                    # 如果进入订单成交，触发实时止盈订单
-                    if OrderStatus.is_closed(order.status):
+                            ext.status = entry_order_query_result.status.value
+
+                    if OrderStatus.is_closed(ext.status):
                         exit_order_side = self.config.master_side.reversal()
                         exit_order_id = build_order_id(exit_order_side)
-                        exit_price = order.price * (1 + self.config.master_side.to_int() * self.config.fixed_take_profit_rate)
-                        exit_qty = order.quantity * self.config.close_position_ratio
+                        exit_price = ext.price * (1 + self.config.master_side.to_int() * self.config.fixed_take_profit_rate)
+                        exit_qty = ext.quantity * self.config.close_position_ratio
 
                         exit_order_result = self.place_order(exit_order_id, exit_order_side, exit_qty, exit_price, first_price=exit_price)
-                        if exit_order_result and exit_order_result.get('clientOrderId'):
-                            order.exit_id = exit_order_result['clientOrderId']
-                            order.exit_price = exit_price
+                        if exit_order_result:
+                            ext.exit_id = exit_order_result.order_id
+                            ext.exit_price = exit_price
                             refresh_orders = True
 
-            self.order_manager.record_orders(closed_orders, refresh_orders=refresh_orders)
+            self.ext_manager.record_orders(closed_extensions, refresh_orders=refresh_orders)

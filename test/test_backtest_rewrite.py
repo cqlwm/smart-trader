@@ -7,6 +7,7 @@ from backtest.result import BacktestResult
 from backtest.runner import BacktestRunner
 from backtest.backtest_client import BacktestClient
 from backtest.analyzer import BacktestAnalyzer
+from persistence.order_repository import InMemoryOrderRepository
 
 
 SYMBOL = Symbol(base='ETH', quote='USDT')
@@ -84,27 +85,27 @@ class TestBacktestResult:
 class TestBacktestClientCleanup:
     def test_no_threading_lock(self) -> None:
         """Verify threading.RLock was removed from BacktestClient."""
-        client = BacktestClient(initial_balance=10000.0)
+        client = BacktestClient(order_repo=InMemoryOrderRepository(), initial_balance=10000.0)
         assert not hasattr(client, 'lock')
 
     def test_update_current_price_no_lock(self) -> None:
-        client = BacktestClient()
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
         client.update_current_price(SYMBOL, 2000.0)
         assert client.get_current_price(SYMBOL) == 2000.0
 
     def test_update_current_timestamp_no_lock(self) -> None:
-        client = BacktestClient()
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
         client.update_current_timestamp(TS_BASE)
         assert client.current_timestamp == TS_BASE
 
     def test_load_historical_data_no_lock(self) -> None:
-        client = BacktestClient()
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
         klines = _make_klines(5)
         client.load_historical_data(SYMBOL, '1m', klines)
         assert len(client.historical_data[f"{SYMBOL.binance()}_1m"]) == 5
 
     def test_fetch_ohlcv_no_lock(self) -> None:
-        client = BacktestClient()
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
         klines = _make_klines(10)
         client.load_historical_data(SYMBOL, '1m', klines)
         client.update_current_timestamp(TS_BASE + 5 * 60_000)

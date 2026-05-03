@@ -11,6 +11,7 @@ from backtest.multi_timeframe_backtest_event_loop import MultiTimeframeBacktestE
 from backtest.analyzer import BacktestAnalyzer
 from event_loop.handler.backtest_task import BacktestHandler
 from template.ethusdt import alpha_trend
+from persistence.order_repository import InMemoryOrderRepository
 import log
 import time
 
@@ -49,9 +50,10 @@ def run_alpha_trend_backtest(data_files=None, start_timestamp=1759516200000):
         
         initial_balance = 10000.0
         backtest_client = BacktestClient(
+            order_repo=InMemoryOrderRepository(),
             initial_balance=initial_balance,
-            maker_fee=0.0005,  # 0.05%
-            taker_fee=0.0005   # 0.05%
+            maker_fee=0.0005,
+            taker_fee=0.0005
         )
         strategy_task = alpha_trend(backtest_client)
         strategy = strategy_task.strategy

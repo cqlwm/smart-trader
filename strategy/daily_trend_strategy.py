@@ -5,7 +5,7 @@ from typing import List, Optional
 from model import Symbol, OrderSide, PositionSide, OrderStatus, PlaceOrderBehavior
 from strategy import GeneralStrategy, Signal
 from pydantic import BaseModel, ConfigDict
-from strategy.signal_grid_strategy import Order, OrderManager, build_order_id
+from strategy.signal_grid_strategy import OrderExtension, OrderExtensionManager, build_order_id
 from strategy.registry import register_strategy
 
 logger = logging.getLogger(__name__)
@@ -33,13 +33,14 @@ class DailyTrendStrategy(GeneralStrategy):
         self.config = config
         self._ex_client = ex_client
         self.strategy_id = "daily_trend_strategy"
-        
-        self.order_manager = OrderManager(
+        self.order_repo = ex_client.order_repo
+
+        self.ext_manager = OrderExtensionManager(
             strategy_id=self.strategy_id,
             symbol="MULTI",
             repository=None
         )
-        self.order_manager.load_orders(True)
+        self.ext_manager.load_orders(True)
 
         self.current_direction: OrderSide | None = None
         self.daily_order_count: int = 0
@@ -70,7 +71,6 @@ class DailyTrendStrategy(GeneralStrategy):
         if self._direction_initialized:
             return
 
-        # 检查是否所有 direction_symbols 的 1d 数据都已经有了
         if set(self.config.direction_symbols).issubset(self.kline_data_dict.keys()):
             for sym in self.config.direction_symbols:
                 df = self.klines('1d', sym)
@@ -92,7 +92,6 @@ class DailyTrendStrategy(GeneralStrategy):
                 logger.warning(f"No valid 1d kline found for {sym}")
                 return None
 
-            # Get only finished klines
             sym_df = df[df['finished'] == True]
             if len(sym_df) == 0:
                 logger.warning(f"No finished 1d kline found for {sym}")
@@ -119,33 +118,33 @@ class DailyTrendStrategy(GeneralStrategy):
         logger.info(f"Daily Close. New direction: {self.current_direction}. Order count reset to 0.")
 
     def _force_close_all(self):
-        orders = self.order_manager.orders
-        if not orders:
+        extensions = self.ext_manager.extensions
+        if not extensions:
             return
 
-        logger.info(f"Daily Close UTC0: Force closing all {len(orders)} open positions for {self.config.trade_symbol.simple()}.")
+        logger.info(f"Daily Close UTC0: Force closing all {len(extensions)} open positions for {self.config.trade_symbol.simple()}.")
 
-        remove_orders = []
+        remove_extensions = []
         exit_qty = 0
 
-        # 必须取 DOGE 的当前价格来挂单
         kline = self.latest_kline(self.config.trade_timeframe, self.config.trade_symbol)
         close_price = kline.close if kline else 0.0
 
-        for order in orders:
-            if OrderStatus.is_open(order.status):
-                self._ex_client.cancel(order.entry_id, self.config.trade_symbol)
-            exit_qty += order.quantity
-            remove_orders.append(order)
+        for ext in extensions:
+            if OrderStatus.is_open(ext.status):
+                self._ex_client.cancel(ext.entry_id, self.config.trade_symbol)
+            exit_qty += ext.quantity
+            remove_extensions.append(ext)
 
         if exit_qty > 0 and close_price > 0:
-            first_order = remove_orders[0]
-            exit_order_side = first_order.side.reversal()
-            position_side = PositionSide.LONG if first_order.side == OrderSide.BUY else PositionSide.SHORT
+            first_ext = remove_extensions[0]
+            exit_order_side = first_ext.side.reversal()
+            position_side = PositionSide.LONG if first_ext.side == OrderSide.BUY else PositionSide.SHORT
 
             exit_id = build_order_id(exit_order_side)
 
             res = self._ex_client.place_order_v2(
+                strategy_id=self.strategy_id,
                 custom_id=exit_id,
                 symbol=self.config.trade_symbol,
                 order_side=exit_order_side,
@@ -155,11 +154,11 @@ class DailyTrendStrategy(GeneralStrategy):
                 place_order_behavior=PlaceOrderBehavior.CHASER_OPEN
             )
             if res:
-                for o in remove_orders:
-                    o.exit_id = res.get('clientOrderId', exit_id)
-                    o.exit_price = res.get('price', close_price)
+                for ext in remove_extensions:
+                    ext.exit_id = res.order_id
+                    ext.exit_price = res.price or close_price
 
-        self.order_manager.record_orders(closed_orders=remove_orders, refresh_orders=True)
+        self.ext_manager.record_orders(closed_extensions=remove_extensions, refresh_orders=True)
 
     def _on_trade_kline_finished(self):
         self._ensure_direction_initialized()
@@ -196,7 +195,6 @@ class DailyTrendStrategy(GeneralStrategy):
         order_id = build_order_id(order_side)
         price = kline.close
 
-        # Calculate dynamic take profit rate based on ATR
         atr_series = talib.ATR(df['high'].values, df['low'].values, df['close'].values, timeperiod=14)
         current_atr = float(atr_series[-1])
         atr_rate = current_atr / price
@@ -208,6 +206,7 @@ class DailyTrendStrategy(GeneralStrategy):
         logger.info(f"Opening {order_side} position for {self.config.trade_symbol.simple()} at {price}")
 
         res = self._ex_client.place_order_v2(
+            strategy_id=self.strategy_id,
             custom_id=order_id,
             symbol=self.config.trade_symbol,
             order_side=order_side,
@@ -218,7 +217,7 @@ class DailyTrendStrategy(GeneralStrategy):
             first_price=price
         )
 
-        order = Order(
+        ext = OrderExtension(
             entry_id=order_id,
             side=order_side,
             price=price,
@@ -230,48 +229,49 @@ class DailyTrendStrategy(GeneralStrategy):
             stop_loss_rate=self.config.stop_loss_rate
         )
 
-        if res and res.get('clientOrderId'):
-            order.entry_id = res['clientOrderId']
-            order.price = res.get('price', price)
-            order.status = res.get('status', OrderStatus.OPEN.value)
+        if res:
+            ext.entry_id = res.order_id
+            ext.price = res.price or price
+            ext.status = res.status.value
 
-        self.order_manager.add_order(order)
-        self.order_manager.record_orders(refresh_orders=True)
+        self.ext_manager.add(ext)
+        self.ext_manager.record_orders(refresh_orders=True)
 
     def _check_close(self):
         kline = self.latest_kline(self.config.trade_timeframe, self.config.trade_symbol)
         if not kline: return
 
         current_price = kline.close
-        orders = self.order_manager.orders
-        if not orders:
+        extensions = self.ext_manager.extensions
+        if not extensions:
             return
 
-        remove_orders = []
+        remove_extensions = []
         exit_qty = 0
 
-        for order in orders:
-            loss_rate = order.profit_and_loss_ratio(current_price)
+        for ext in extensions:
+            loss_rate = ext.profit_and_loss_ratio(current_price)
 
-            hit_tp = loss_rate > 0 and abs(loss_rate) >= order.fixed_take_profit_rate
+            hit_tp = loss_rate > 0 and abs(loss_rate) >= ext.fixed_take_profit_rate
             hit_sl = loss_rate < 0 and abs(loss_rate) >= self.config.stop_loss_rate
 
             if hit_tp or hit_sl:
-                logger.info(f"Closing position {order.entry_id}. PnL: {loss_rate*100:.2f}%")
-                if OrderStatus.is_open(order.status):
-                    self._ex_client.cancel(order.entry_id, self.config.trade_symbol)
+                logger.info(f"Closing position {ext.entry_id}. PnL: {loss_rate*100:.2f}%")
+                if OrderStatus.is_open(ext.status):
+                    self._ex_client.cancel(ext.entry_id, self.config.trade_symbol)
 
-                exit_qty += order.quantity
-                order.exit_price = current_price
-                remove_orders.append(order)
+                exit_qty += ext.quantity
+                ext.exit_price = current_price
+                remove_extensions.append(ext)
 
         if exit_qty > 0:
-            first_order = remove_orders[0]
-            exit_order_side = first_order.side.reversal()
-            position_side = PositionSide.LONG if first_order.side == OrderSide.BUY else PositionSide.SHORT
+            first_ext = remove_extensions[0]
+            exit_order_side = first_ext.side.reversal()
+            position_side = PositionSide.LONG if first_ext.side == OrderSide.BUY else PositionSide.SHORT
 
             exit_id = build_order_id(exit_order_side)
             res = self._ex_client.place_order_v2(
+                strategy_id=self.strategy_id,
                 custom_id=exit_id,
                 symbol=self.config.trade_symbol,
                 order_side=exit_order_side,
@@ -282,8 +282,8 @@ class DailyTrendStrategy(GeneralStrategy):
                 first_price=current_price
             )
             if res:
-                for o in remove_orders:
-                    o.exit_id = res.get('clientOrderId', exit_id)
-                    o.exit_price = res.get('price', current_price)
+                for ext in remove_extensions:
+                    ext.exit_id = res.order_id
+                    ext.exit_price = res.price or current_price
 
-            self.order_manager.record_orders(closed_orders=remove_orders, refresh_orders=True)
+            self.ext_manager.record_orders(closed_extensions=remove_extensions, refresh_orders=True)

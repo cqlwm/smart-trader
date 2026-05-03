@@ -42,6 +42,8 @@ class SMCIntradayStrategy(GeneralStrategy):
         self.ex_client = ex_client
         self._strategy_config = SimpleIntradayConfig(**config)
         self._smc_strategy = SimpleIntradayStrategy(self._strategy_config)
+        self.strategy_id: str = f"smc_intraday_{symbols[0].simple() if symbols else 'unknown'}"
+        self.order_repo = ex_client.order_repo
         self._last_action: str = "WAIT"
 
     def exchange_client(self):
@@ -115,6 +117,7 @@ class SMCIntradayStrategy(GeneralStrategy):
 
         side = OrderSide.BUY if signal.action == "LONG" else OrderSide.SELL
         self.ex_client.place_order_v2(
+            strategy_id=self.strategy_id,
             custom_id=_build_order_id(side),
             symbol=symbol,
             order_side=side,

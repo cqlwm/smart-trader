@@ -3,49 +3,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from client.ex_client import ExSwapClient
-from model import Symbol, SymbolInfo, OrderSide, PositionSide, OrderStatus, Kline
+from model import Symbol, SymbolInfo, Order, OrderSide, PositionSide, OrderStatus, Kline
+from persistence.order_repository import OrderRepository
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class BacktestOrder:
-    custom_id: str
-    symbol: Symbol
-    side: OrderSide
-    quantity: float
-    price: float | None
-    order_type: str
-    position_side: PositionSide
-    status: OrderStatus
-    timestamp: int
-    filled_quantity: float = 0.0
-    filled_price: float = 0.0
-    fee: float = 0.0
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            'id': self.custom_id,
-            'clientOrderId': self.custom_id,
-            'symbol': self.symbol.binance(),
-            'side': self.side.value,
-            'position_side': self.position_side.value,
-            'type': self.order_type,
-            'price': self.price,
-            'amount': self.quantity,
-            'filled': self.filled_quantity,
-            'filled_quantity': self.filled_quantity,
-            'remaining': self.quantity - self.filled_quantity,
-            'filled_price': self.filled_price,
-            'cost': self.filled_price * self.filled_quantity if self.filled_price else 0,
-            'status': self.status.value,
-            'timestamp': self.timestamp,
-            'fee': self.fee
-        }
-
-
-@dataclass
-class BacktestPosition:
+class _Position:
     symbol: Symbol
     side: PositionSide
     quantity: float
@@ -56,11 +21,17 @@ class BacktestPosition:
 class BacktestClient(ExSwapClient):
     """回测客户端，模拟交易操作（同步执行，无需锁）"""
 
-    def __init__(self, initial_balance: float = 10000.0, maker_fee: float = 0.0002,
-                 taker_fee: float = 0.0004,
-                 symbol_infos: dict[str, SymbolInfo] | None = None) -> None:
+    def __init__(
+        self,
+        order_repo: OrderRepository,
+        initial_balance: float = 10000.0,
+        maker_fee: float = 0.0002,
+        taker_fee: float = 0.0004,
+        symbol_infos: dict[str, SymbolInfo] | None = None,
+    ) -> None:
         self.exchange_name = 'backtest'
         self.exchange = None  # type: ignore
+        self.order_repo = order_repo
 
         self._balance = initial_balance
         self.maker_fee = maker_fee
@@ -68,9 +39,7 @@ class BacktestClient(ExSwapClient):
 
         self._symbol_infos: dict[str, SymbolInfo] = symbol_infos or {}
 
-        self.orders: dict[str, BacktestOrder] = {}
-        self._positions: dict[str, BacktestPosition] = {}
-        self.order_history: list[BacktestOrder] = []
+        self._positions: dict[str, _Position] = {}
 
         self.current_prices: dict[str, float] = {}
 
@@ -86,13 +55,15 @@ class BacktestClient(ExSwapClient):
         self.current_timestamp = timestamp
 
     def check_pending_orders(self, kline: Kline) -> None:
-        pending = [o for o in self.orders.values() if o.status == OrderStatus.OPEN
-                   and o.order_type == 'limit' and o.symbol.binance() == kline.symbol.binance()]
+        open_orders = self.order_repo.find_open_orders()
+        pending = [o for o in open_orders
+                   if o.order_type == 'limit'
+                   and o.symbol.binance() == kline.symbol.binance()]
         for order in pending:
             triggered = False
-            if order.side == OrderSide.BUY and kline.low <= order.price:
+            if order.side == OrderSide.BUY and kline.low <= (order.price or 0):
                 triggered = True
-            elif order.side == OrderSide.SELL and kline.high >= order.price:
+            elif order.side == OrderSide.SELL and kline.high >= (order.price or 0):
                 triggered = True
 
             if triggered:
@@ -131,23 +102,30 @@ class BacktestClient(ExSwapClient):
             return self._balance
         return 0.0
 
-    def cancel(self, custom_id: str, symbol: Symbol) -> dict[str, Any]:
-        if custom_id in self.orders:
-            order = self.orders[custom_id]
-            if order.status == OrderStatus.OPEN:
-                order.status = OrderStatus.CANCELED
-                logger.debug("Order %s canceled", custom_id)
-            return order.to_dict()
-        raise ValueError(f"Order {custom_id} not found")
+    def cancel(self, custom_id: str, symbol: Symbol) -> Order | None:
+        order = self.order_repo.find_by_id(custom_id)
+        if order and OrderStatus.is_open(order.status):
+            updated = order.with_status(OrderStatus.CANCELED, updated_at=self.current_timestamp)
+            self.order_repo.save(updated)
+            logger.debug("Order %s canceled", custom_id)
+            return updated
+        return order
 
-    def query_order(self, custom_id: str, symbol: Symbol) -> dict[str, Any]:
-        if custom_id in self.orders:
-            return self.orders[custom_id].to_dict()
-        raise ValueError(f"Order {custom_id} not found")
+    def query_order(self, custom_id: str, symbol: Symbol) -> Order | None:
+        return self.order_repo.find_by_id(custom_id)
 
-    def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide,
-                      quantity: float, price: float | None = None,
-                      **kwargs: Any) -> dict[str, Any] | None:
+    def place_order_v2(
+        self,
+        strategy_id: str,
+        custom_id: str,
+        symbol: Symbol,
+        order_side: OrderSide,
+        quantity: float,
+        price: float | None = None,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+        **kwargs: Any,
+    ) -> Order | None:
         position_side = kwargs.get('position_side', PositionSide.LONG)
         if isinstance(position_side, str):
             position_side = PositionSide(position_side)
@@ -162,45 +140,53 @@ class BacktestClient(ExSwapClient):
             logger.warning("No current price for %s, skipping order", symbol.binance())
             return None
 
-        order = BacktestOrder(
-            custom_id=custom_id,
+        order = Order(
+            order_id=custom_id,
+            strategy_id=strategy_id,
             symbol=symbol,
             side=order_side,
+            position_side=position_side,
+            order_type=order_type,
             quantity=quantity,
             price=price,
-            order_type=order_type,
-            position_side=position_side,
             status=OrderStatus.OPEN,
-            timestamp=self.current_timestamp,
+            created_at=self.current_timestamp,
+            updated_at=self.current_timestamp,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
         )
 
-        self.orders[custom_id] = order
+        self.order_repo.save(order)
 
         if order_type == 'market':
             self._fill_order(order, fill_price=current_price)
 
-        return order.to_dict()
+        return order
 
-    def _fill_order(self, order: BacktestOrder, fill_price: float | None = None) -> None:
+    def _fill_order(self, order: Order, fill_price: float | None = None) -> None:
         if order.order_type == 'market':
-            order.filled_price = fill_price or self.get_current_price(order.symbol)
+            actual_fill_price = fill_price or self.get_current_price(order.symbol)
             fee_rate = self.taker_fee
         else:
-            order.filled_price = order.price  # type: ignore[assignment]
+            actual_fill_price = order.price or self.get_current_price(order.symbol)
             fee_rate = self.maker_fee
 
-        order.filled_quantity = order.quantity
-        order.status = OrderStatus.CLOSED
-        order.fee = order.filled_price * order.filled_quantity * fee_rate
+        fee = actual_fill_price * order.quantity * fee_rate
+        filled = order.with_status(
+            OrderStatus.CLOSED,
+            updated_at=self.current_timestamp,
+            filled_quantity=order.quantity,
+            filled_price=actual_fill_price,
+            fee=fee,
+        )
+        self.order_repo.save(filled)
 
-        self._update_balance_and_position(order)
-        self.order_history.append(order)
+        self._update_balance_and_position(filled)
 
-        logger.info("Order %s filled: %s @ %s, total orders: %d",
-                    order.custom_id, order.filled_quantity, order.filled_price,
-                    len(self.order_history))
+        logger.info("Order %s filled: %s @ %s",
+                    filled.order_id, filled.filled_quantity, filled.filled_price)
 
-    def _update_balance_and_position(self, order: BacktestOrder) -> None:
+    def _update_balance_and_position(self, order: Order) -> None:
         pos_key = f"{order.symbol.binance()}_{order.position_side.value}"
         is_open = (
             (order.position_side == PositionSide.LONG and order.side == OrderSide.BUY) or
@@ -218,11 +204,11 @@ class BacktestClient(ExSwapClient):
                 pos.entry_price = total_cost / total_quantity
                 pos.quantity = total_quantity
             else:
-                self._positions[pos_key] = BacktestPosition(
+                self._positions[pos_key] = _Position(
                     symbol=order.symbol,
                     side=order.position_side,
                     quantity=order.filled_quantity,
-                    entry_price=order.filled_price
+                    entry_price=order.filled_price,
                 )
         else:
             revenue = order.filled_price * order.filled_quantity - order.fee
@@ -243,24 +229,26 @@ class BacktestClient(ExSwapClient):
             pos = self._positions[pos_key]
             side = OrderSide.SELL if position_side == 'long' else OrderSide.BUY
             current_price = self.get_current_price(pos.symbol)
+            fee = current_price * pos.quantity * self.taker_fee
 
-            order = BacktestOrder(
-                custom_id=f"close_{self.current_timestamp}",
+            order = Order(
+                order_id=f"close_{self.current_timestamp}",
+                strategy_id="",
                 symbol=pos.symbol,
                 side=side,
+                position_side=PositionSide(position_side),
+                order_type='market',
                 quantity=pos.quantity,
                 price=current_price,
-                order_type='market',
-                position_side=PositionSide(position_side),
                 status=OrderStatus.CLOSED,
-                timestamp=self.current_timestamp,
+                created_at=self.current_timestamp,
+                updated_at=self.current_timestamp,
                 filled_quantity=pos.quantity,
                 filled_price=current_price,
-                fee=current_price * pos.quantity * self.taker_fee
+                fee=fee,
             )
-
+            self.order_repo.save(order)
             self._update_balance_and_position(order)
-            self.order_history.append(order)
             if pos_key in self._positions:
                 del self._positions[pos_key]
 
@@ -278,7 +266,10 @@ class BacktestClient(ExSwapClient):
         return result
 
     def get_trade_history(self) -> list[dict[str, Any]]:
-        return [order.to_dict() for order in self.order_history]
+        all_orders = []
+        for order in self.order_repo.find_history():
+            all_orders.append(self._order_to_dict(order))
+        return all_orders
 
     def get_final_balance(self) -> float:
         return self._balance
@@ -303,3 +294,24 @@ class BacktestClient(ExSwapClient):
             return []
 
         return current_klines[-limit:] if len(current_klines) >= limit else current_klines
+
+    @staticmethod
+    def _order_to_dict(order: Order) -> dict[str, Any]:
+        return {
+            'id': order.order_id,
+            'clientOrderId': order.order_id,
+            'symbol': order.symbol.binance(),
+            'side': order.side.value,
+            'position_side': order.position_side.value,
+            'type': order.order_type,
+            'price': order.price,
+            'amount': order.quantity,
+            'filled': order.filled_quantity,
+            'filled_quantity': order.filled_quantity,
+            'remaining': order.quantity - order.filled_quantity,
+            'filled_price': order.filled_price,
+            'cost': order.filled_price * order.filled_quantity if order.filled_price else 0,
+            'status': order.status.value,
+            'timestamp': order.created_at,
+            'fee': order.fee,
+        }

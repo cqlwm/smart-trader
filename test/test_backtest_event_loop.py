@@ -5,6 +5,7 @@ from event_loop.event import KlineEvent
 from event_loop.handler.kline_handler import KlineHandler
 from backtest.backtest_event_loop import BacktestEventLoop
 from backtest.backtest_client import BacktestClient
+from persistence.order_repository import InMemoryOrderRepository
 from strategy import GeneralStrategy
 from client.ex_client import ExClient
 
@@ -82,7 +83,7 @@ class TestBacktestEventLoopIntegration:
         klines = _make_klines(5)
         strategy = CollectorStrategy(symbols=[SYMBOL], timeframes=['1m'])
         handler = KlineHandler(strategy)
-        client = BacktestClient(initial_balance=10_000.0)
+        client = BacktestClient(order_repo=InMemoryOrderRepository(), initial_balance=10_000.0)
 
         event_loop = BacktestEventLoop(
             historical_klines=klines,

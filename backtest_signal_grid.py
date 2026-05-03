@@ -20,6 +20,7 @@ from event_loop.handler.backtest_task import BacktestHandler
 from strategy.signal_grid_strategy import SignalGridStrategy, SignalGridStrategyConfig
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
+from persistence.order_repository import InMemoryOrderRepository
 from config import DATA_PATH
 import log
 
@@ -54,9 +55,10 @@ def run_signal_grid_backtest(data_file="data/ethusdt_2025_10_1m.csv"):
         # 2. 创建回测客户端
         initial_balance = 10000.0
         backtest_client = BacktestClient(
+            order_repo=InMemoryOrderRepository(),
             initial_balance=initial_balance,
-            maker_fee=0.0002,  # 0.02%
-            taker_fee=0.0004   # 0.04%
+            maker_fee=0.0002,
+            taker_fee=0.0004
         )
 
         # 3. 创建策略配置 (使用与template/ethusdt.py相同的配置)

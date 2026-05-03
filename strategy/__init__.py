@@ -6,13 +6,17 @@ from pandas import DataFrame
 from typing import List, Dict, Optional
 
 from client.ex_client import ExClient
-from model import Kline, OrderSide, Symbol
+from model import Kline, Order, OrderSide, OrderStatus, Symbol
+from persistence.order_repository import OrderRepository
 import log
 from pydantic import BaseModel
 
 logger = log.getLogger(__name__)
 
 class Strategy(ABC):
+    strategy_id: str
+    order_repo: OrderRepository
+
     def on_kline(self, timeframe: str, symbol: Symbol):
         pass
     def on_kline_finished(self, timeframe: str, symbol: Symbol):
@@ -43,6 +47,9 @@ class GeneralStrategy(Strategy):
         self.on_kline_lock = threading.Lock()
         self.data_lock = threading.Lock()
 
+        self.strategy_id: str = ""
+        self.order_repo: OrderRepository | None = None
+
         for symbol in symbols:
             self.kline_data_dict[symbol] = {}
             for timeframe in timeframes:
@@ -60,6 +67,26 @@ class GeneralStrategy(Strategy):
             'finished': pd.Series(dtype='boolean')
         })
         return KlineData(timeframe=timeframe, klines=empty_df, latest_kline=None)
+
+    def has_open_orders(self, symbol: Symbol | None = None) -> bool:
+        if self.order_repo is None:
+            return False
+        return len(self.get_open_orders(symbol)) > 0
+
+    def get_open_orders(self, symbol: Symbol | None = None) -> list[Order]:
+        if self.order_repo is None:
+            return []
+        return self.order_repo.find_by_symbol(self.strategy_id, symbol) if symbol else self.order_repo.find_open_orders(self.strategy_id)
+
+    def get_active_orders(self, symbol: Symbol | None = None) -> list[Order]:
+        if self.order_repo is None:
+            return []
+        return self.order_repo.find_by_symbol(self.strategy_id, symbol) if symbol else self.order_repo.find_active_orders(self.strategy_id)
+
+    def get_trade_history(self, since: int = 0) -> list[Order]:
+        if self.order_repo is None:
+            return []
+        return self.order_repo.find_history(self.strategy_id, since)
 
     def exchange_client(self) -> ExClient:
         raise NotImplementedError()

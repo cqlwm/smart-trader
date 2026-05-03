@@ -8,7 +8,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from persistence.sqlite_repo import SQLiteStrategyRepository
 from strategy.simple_grid_strategy import OrderPairListModel, OrderPair
-from strategy.signal_grid_strategy import OrderRecorder, Order
+from strategy.signal_grid_strategy import OrderExtensionManager, OrderExtension
+from model import OrderSide
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -51,53 +52,81 @@ def migrate_simple_grid_backups(data_dir: str, repo: SQLiteStrategyRepository):
             logger.warning(f"Could not parse strategy parameters from filename: {filename}")
 
 def migrate_signal_grid_backups(data_dir: str, repo: SQLiteStrategyRepository):
-    """Migrate SignalGridStrategy backup JSON files."""
+    """Migrate SignalGridStrategy backup JSON files.
+
+    Note: The old OrderRecorder/Order classes have been replaced by
+    OrderExtensionManager/OrderExtension. This migration reads the old
+    JSON format (which stored OrderRecorder data) and converts it to
+    the new database format.
+    """
     file_path = os.path.join(data_dir, "grids_strategy_v2.json")
     if not os.path.exists(file_path):
         logger.info(f"No signal grid backup found at {file_path}")
         return
-        
+
     try:
+        import json
         with open(file_path, 'r') as f:
-            content = f.read()
-            data = OrderRecorder.model_validate_json(content)
-            
-        # Since the JSON doesn't contain symbol/strategy_id natively, we use a generic one
-        # or we might need to deduce it if possible. Let's use a placeholder symbol.
+            raw = json.load(f)
+
         symbol = "UNKNOWN"
         strategy_id = f"signal_grid_migrated"
-        
+
         repo.save_strategy_instance(
             strategy_id=strategy_id,
             strategy_type="signal_grid",
             symbol=symbol,
             config_data="{}"
         )
-        
-        db_orders = [o.to_db_dict(symbol) for o in data.orders]
+
+        old_orders = raw.get('orders', [])
+        db_orders = []
+        for o in old_orders:
+            ext = OrderExtension(
+                entry_id=o.get('entry_id', ''),
+                side=OrderSide(o.get('side', 'buy')),
+                price=o.get('price', 0.0),
+                quantity=o.get('quantity', 0.0),
+                fixed_take_profit_rate=o.get('fixed_take_profit_rate', 0.0),
+                signal_min_take_profit_rate=o.get('signal_min_take_profit_rate', 0.0),
+                exit_price=o.get('exit_price'),
+                status=o.get('status'),
+                exit_id=o.get('exit_id'),
+                stop_loss_rate=o.get('stop_loss_rate', 0.0),
+                enable_stop_loss=o.get('enable_stop_loss', False),
+                trailing_stop_rate=o.get('trailing_stop_rate', 0.0),
+                enable_trailing_stop=o.get('enable_trailing_stop', False),
+                trailing_stop_activation_profit_rate=o.get('trailing_stop_activation_profit_rate', 0.0),
+                current_stop_price=o.get('current_stop_price'),
+            )
+            db_orders.append(ext.to_db_dict(symbol))
+
         repo.save_active_orders(strategy_id, db_orders)
-        
+
         # history orders
-        for o in data.history_orders:
-            direction = 1 if o.side.value == "BUY" else -1
+        old_history = raw.get('history_orders', [])
+        for o in old_history:
+            direction = 1 if o.get('side', 'buy') == "buy" else -1
             profit = 0.0
-            if o.exit_price and o.price:
-                profit = (o.exit_price - o.price) * o.quantity * direction
-                
+            exit_price = o.get('exit_price')
+            price = o.get('price', 0.0)
+            if exit_price and price:
+                profit = (exit_price - price) * o.get('quantity', 0.0) * direction
+
             repo.append_trade_history(
                 strategy_id=strategy_id,
                 trade_record={
                     'symbol': symbol,
-                    'entry_order_id': o.entry_id,
-                    'exit_order_id': o.exit_id,
-                    'entry_price': o.price,
-                    'exit_price': o.exit_price or 0.0,
-                    'quantity': o.quantity,
+                    'entry_order_id': o.get('entry_id', ''),
+                    'exit_order_id': o.get('exit_id', ''),
+                    'entry_price': price,
+                    'exit_price': exit_price or 0.0,
+                    'quantity': o.get('quantity', 0.0),
                     'profit': profit
                 }
             )
-            
-        logger.info(f"Successfully migrated {file_path} ({len(db_orders)} active, {len(data.history_orders)} history)")
+
+        logger.info(f"Successfully migrated {file_path} ({len(db_orders)} active, {len(old_history)} history)")
     except Exception as e:
         logger.error(f"Failed to migrate {file_path}: {e}")
 

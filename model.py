@@ -197,52 +197,52 @@ class Kline:
             'finished': self.finished
         }
 
-@dataclass
+@dataclass(frozen=True)
 class Order:
-    # ID规则 side + 10random + [i]
-    custom_id: str
+    order_id: str
+    strategy_id: str
+    symbol: Symbol
     side: OrderSide
-    price: float
+    position_side: PositionSide
+    order_type: str
     quantity: float
-    take_profit_rate: float
-    min_profit_rate: float = 0.002
+    price: float | None
+    status: OrderStatus
+    created_at: int
+    updated_at: int
+    filled_quantity: float = 0.0
+    filled_price: float = 0.0
+    fee: float = 0.0
+    stop_loss: float | None = None
+    take_profit: float | None = None
 
-    def total_value(self):
-        return self.price * self.quantity
+    def with_status(self, status: OrderStatus, updated_at: int, **overrides: Any) -> 'Order':
+        updates: dict[str, Any] = {'status': status, 'updated_at': updated_at, **overrides}
+        return Order(**{**self.__dict__, **updates})
 
-    # profit_level：表示盈利级别，值为 0损失手续费，-1不可盈利，1可盈利，2达到止盈标准
-    def profit_level(self, current_price) -> int:
-        compare_fun = builtins.float.__gt__
-        if self.side == OrderSide.SELL:
-            compare_fun = builtins.float.__lt__
-
-        if compare_fun(current_price, self.take_profit_price()):
+    def profit_level(self, current_price: float) -> int:
+        if self.take_profit is not None and self.side.compare_fun()(current_price, self.take_profit):
             return 2
-        elif compare_fun(current_price, self.breakeven_price()):
+        breakeven = self.breakeven_price()
+        if breakeven is not None and self.side.compare_fun()(current_price, breakeven):
             return 1
-        elif compare_fun(current_price, self.price):
+        if self.side.compare_fun()(current_price, self.filled_price if self.filled_price else self.price or 0):
             return 0
-
         return -1
 
-    def loss_rate(self, current_price):
+    def profit_and_loss_ratio(self, current_price: float) -> float:
+        entry = self.filled_price if self.filled_price else self.price or 0
+        if entry == 0:
+            return 0.0
+        ratio = abs(current_price - entry) / entry
         if self.profit_level(current_price) < 0:
-            return float("{:.4f}".format(abs(current_price - self.price) / self.price))
-        else:
-            return 0
+            return -ratio
+        return ratio
 
-    def _profit(self, rate):
-        rate_base = 1
-        if self.side == OrderSide.SELL:
-            rate_base = -1
-        return self.price * (1 + rate * rate_base)
-
-    def take_profit_price(self):
-        return self._profit(self.take_profit_rate)
-
-    def breakeven_price(self):
-        return self._profit(self.min_profit_rate)
-
-    # def exit_id(self, i: int | None = None):
-    #     exit_id = self.custom_id.replace(self.side.value, self.side.reversal().value, 1)
-    #     return exit_id if i is None else f'{exit_id}{i}'
+    def breakeven_price(self) -> float | None:
+        entry = self.filled_price if self.filled_price else self.price
+        if entry is None or entry == 0:
+            return None
+        min_profit_rate = 0.002
+        rate_base = 1 if self.side == OrderSide.BUY else -1
+        return entry * (1 + min_profit_rate * rate_base)
