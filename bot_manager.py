@@ -40,6 +40,7 @@ class BotManager:
 
     def start_bot(self) -> None:
         from template import dogeusdc
+        from template import btcusdc_smc
 
         client = self._ensure_binance_client()
         handlers: list[KlineHandler] = []
@@ -47,6 +48,10 @@ class BotManager:
         doge_handler = dogeusdc.market_trend(client)
         if doge_handler:
             handlers.append(doge_handler)
+
+        smc_handler = btcusdc_smc.smc_intraday(client)
+        if smc_handler:
+            handlers.append(smc_handler)
 
         kline_subscribes: list[str] = []
         self.data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
