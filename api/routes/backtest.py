@@ -1,0 +1,137 @@
+import logging
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from api.dependencies import verify_api_key
+from api.schemas.common import BaseResponse
+from api.schemas.backtest import (
+    BacktestRequest,
+    BacktestResultResponse,
+    BacktestSummaryResponse,
+    BacktestRiskMetricsResponse,
+    BacktestTradeMetricsResponse,
+    EquityPointResponse,
+    CompletedTradeResponse,
+)
+from api.schemas.strategy_schemas import StrategyTypeInfo
+from backtest.config import BacktestConfig
+from backtest.runner import BacktestRunner
+from model import Symbol
+from strategy.registry import StrategyRegistry
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v1/backtest", dependencies=[Depends(verify_api_key)])
+
+
+def _parse_symbol(symbol_str: str) -> Symbol:
+    parts = symbol_str.replace(":USDT", "").split("/")
+    if len(parts) != 2:
+        raise ValueError(f"Invalid symbol format: {symbol_str}. Expected 'BASE/QUOTE' or 'BASE/QUOTE:USDT'")
+    return Symbol(base=parts[0], quote=parts[1])
+
+
+def _to_result_response(result: Any) -> BacktestResultResponse:
+    analysis = result.analysis
+    summary = analysis.get("summary", {})
+    risk = analysis.get("risk_metrics", {})
+    trade_metrics = analysis.get("trade_metrics", {})
+    equity_curve = analysis.get("equity_curve", [])
+
+    summary_resp = BacktestSummaryResponse(
+        total_trades=summary.get("total_trades", 0),
+        total_return=summary.get("total_return", 0.0),
+        total_return_pct=summary.get("total_return_pct", 0.0),
+        annualized_return=summary.get("annualized_return", 0.0),
+        annualized_return_pct=summary.get("annualized_return_pct", 0.0),
+        total_fees=summary.get("total_fees", 0.0),
+        net_return=summary.get("net_return", 0.0),
+    )
+
+    risk_resp = BacktestRiskMetricsResponse(
+        volatility=risk.get("volatility", 0.0),
+        max_drawdown=risk.get("max_drawdown", 0.0),
+        max_drawdown_pct=risk.get("max_drawdown_pct", 0.0),
+        sharpe_ratio=risk.get("sharpe_ratio", 0.0),
+    )
+
+    trade_resp = BacktestTradeMetricsResponse(
+        win_rate=trade_metrics.get("win_rate", 0.0),
+        win_rate_pct=trade_metrics.get("win_rate_pct", 0.0),
+        profit_factor=trade_metrics.get("profit_factor", 0.0),
+        avg_trade_return=trade_metrics.get("avg_trade_return", 0.0),
+        best_trade=trade_metrics.get("best_trade", 0.0),
+        worst_trade=trade_metrics.get("worst_trade", 0.0),
+    )
+
+    equity_resp = [
+        EquityPointResponse(
+            timestamp=int(p.get("timestamp", 0)),
+            equity=p.get("equity", 0.0),
+            return_=p.get("return", 0.0),
+        )
+        for p in equity_curve
+    ]
+
+    completed_trades = []
+    trade_history = result.trade_history
+    for trade in trade_history:
+        completed_trades.append(CompletedTradeResponse(
+            symbol=trade.get("symbol", ""),
+            position_side=trade.get("position_side", ""),
+            entry_price=trade.get("entry_price", 0.0),
+            exit_price=trade.get("exit_price", 0.0),
+            quantity=trade.get("quantity", 0.0),
+            pnl=trade.get("pnl", 0.0),
+            total_fees=trade.get("total_fees", 0.0),
+            net_pnl=trade.get("net_pnl", 0.0),
+            entry_time=str(trade.get("entry_time", "")),
+            exit_time=str(trade.get("exit_time", "")),
+        ))
+
+    return BacktestResultResponse(
+        summary=summary_resp,
+        risk_metrics=risk_resp,
+        trade_metrics=trade_resp,
+        equity_curve=equity_resp,
+        completed_trades=completed_trades,
+    )
+
+
+@router.post("/run", response_model=BaseResponse[BacktestResultResponse])
+async def run_backtest(request: BacktestRequest):
+    try:
+        symbol = _parse_symbol(request.symbol)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        StrategyRegistry.get(request.strategy_type)
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"Unknown strategy type: {request.strategy_type}")
+
+    config = BacktestConfig(
+        strategy_type=request.strategy_type,
+        strategy_config=request.strategy_config,
+        symbol=symbol,
+        timeframe=request.timeframe,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        initial_balance=request.initial_balance,
+    )
+
+    try:
+        runner = BacktestRunner(config)
+        result = runner.run()
+    except Exception as e:
+        logger.error("Backtest failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Backtest execution failed: {str(e)}")
+
+    return BaseResponse(data=_to_result_response(result))
+
+
+@router.get("/strategies", response_model=BaseResponse[list[StrategyTypeInfo]])
+async def list_backtest_strategies():
+    types = StrategyRegistry.list_types()
+    return BaseResponse(data=[StrategyTypeInfo(name=t) for t in types])
