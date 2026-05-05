@@ -228,8 +228,6 @@ class SignalGridStrategyConfig(BaseModel):
 
     place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER_OPEN
 
-    order_file_path: str = 'data/grids_strategy_v2.json'
-
     @field_serializer("signal")
     def serialize_signal(self, signal, _info):
         if signal is None:

@@ -22,7 +22,6 @@ class DailyTrendStrategyConfig(BaseModel):
     max_tp_rate: float = 0.03
     atr_tp_multiplier: float = 1.5
     stop_loss_rate: float = 0.03
-    order_file_path: str
     signal: Signal
 
 

@@ -9,7 +9,6 @@ from strategy import SimpleStrategy
 from client.ex_client import ExSwapClient, ExClient
 from model import PlaceOrderBehavior, PositionSide, Symbol, OrderSide, OrderStatus
 import log
-from config import DATA_PATH
 import builtins
 from persistence.repository import StrategyRepository
 from persistence.sqlite_repo import SQLiteStrategyRepository
@@ -222,7 +221,6 @@ class SimpleGridStrategyConfig(BaseModel):
     master_order_side: OrderSide = OrderSide.BUY
     delay_pending_order: bool = False
     initial_quota: float = 0
-    backup_file: str = ""
 
 
 @register_strategy("simple_grid", SimpleGridStrategyConfig)
@@ -244,10 +242,6 @@ class SimpleGridStrategy(SimpleStrategy):
             config_data=self.config.model_dump_json()
         )
 
-        if self.config.backup_file:
-            self.backup_file = self.config.backup_file
-        else:
-            self.backup_file = f"{DATA_PATH}/backup_{self.config.symbol.simple()}_{self.config.position_side.value}_{self.config.master_order_side.value}.json"
         self.load_state()
 
     def load_state(self):
