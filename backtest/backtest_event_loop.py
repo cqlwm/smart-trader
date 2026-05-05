@@ -3,7 +3,7 @@ from typing import Callable
 
 from event_loop.base import DataEventLoop
 from event_loop.event import KlineEvent
-from model import Kline
+from model import Kline, Symbol
 from backtest.backtest_client import BacktestClient
 
 logger = logging.getLogger(__name__)
@@ -12,32 +12,30 @@ logger = logging.getLogger(__name__)
 class BacktestEventLoop(DataEventLoop):
     """回测事件循环，从历史数据重放K线（同步模式）"""
 
-    def __init__(self, historical_klines: list[Kline],
+    def __init__(self,
                  on_progress_callback: Callable[[int, int], None] | None = None,
                  start_timestamp: int | None = None,
                  start_index: int | None = None) -> None:
         super().__init__()
-        self.historical_klines = historical_klines
+        self._subscriptions: list[tuple[Symbol, str]] = []
         self.on_progress_callback = on_progress_callback
-
-        if start_timestamp is not None:
-            self.start_index = 0
-            for i, kline in enumerate(historical_klines):
-                if kline.timestamp >= start_timestamp:
-                    self.start_index = i
-                    break
-            self.start_index = max(0, min(self.start_index, len(historical_klines) - 1))
-        elif start_index is not None:
-            self.start_index = max(0, min(start_index, len(historical_klines) - 1))
-        else:
-            self.start_index = 300
-
-        self.current_index = self.start_index
+        self.start_index = 0
+        self.current_index = 0
         self.is_running = False
         self.backtest_client: BacktestClient | None = None
+        self.historical_klines: list[Kline] = []
 
-        logger.info("BacktestEventLoop initialized with %d klines, start_index: %d",
-                     len(historical_klines), self.start_index)
+        if start_timestamp is not None:
+            self._start_timestamp = start_timestamp
+        else:
+            self._start_timestamp = None
+
+        self._start_index_override = start_index
+
+    def subscribe(self, symbols: list[Symbol], timeframes: list[str]) -> None:
+        for symbol in symbols:
+            for tf in timeframes:
+                self._subscriptions.append((symbol, tf))
 
     def set_backtest_client(self, client: BacktestClient) -> None:
         self.backtest_client = client
@@ -53,20 +51,48 @@ class BacktestEventLoop(DataEventLoop):
             logger.warning("Backtest already running")
             return
 
+        self.historical_klines = self._load_subscribed_klines()
+
         if not self.historical_klines:
             logger.warning("No historical data available")
             return
 
+        self._resolve_start_index()
+
         self.is_running = True
         self.current_index = self.start_index
 
-        logger.info("Backtest started from index %d", self.start_index)
+        logger.info("Backtest started from index %d (%d klines loaded)",
+                     self.start_index, len(self.historical_klines))
         self._run_backtest_sync()
 
     def stop(self) -> None:
         self.is_running = False
         super().stop()
         logger.info("Backtest stopped")
+
+    def _load_subscribed_klines(self) -> list[Kline]:
+        if not self.backtest_client:
+            return []
+        collected: list[Kline] = []
+        for symbol, tf in self._subscriptions:
+            key = f"{symbol.binance()}_{tf}"
+            if key in self.backtest_client._kline_cache:
+                collected.extend(self.backtest_client._kline_cache[key])
+        return sorted(collected, key=lambda k: k.timestamp)
+
+    def _resolve_start_index(self) -> None:
+        if self._start_index_override is not None:
+            self.start_index = max(0, min(self._start_index_override, len(self.historical_klines) - 1))
+        elif self._start_timestamp is not None:
+            self.start_index = 0
+            for i, kline in enumerate(self.historical_klines):
+                if kline.timestamp >= self._start_timestamp:
+                    self.start_index = i
+                    break
+            self.start_index = max(0, min(self.start_index, len(self.historical_klines) - 1))
+        else:
+            self.start_index = min(300, len(self.historical_klines) - 1)
 
     def _run_backtest_sync(self) -> None:
         while self.is_running and self.current_index < len(self.historical_klines):

@@ -16,17 +16,13 @@ class BacktestRunner:
     def __init__(self, config: BacktestConfig) -> None:
         self._config = config
         self._backtest_client = self._create_backtest_client()
-        all_klines = self._backtest_client.get_all_klines()
-
-        if not all_klines:
-            raise ValueError("No historical data loaded for backtest")
 
         self._event_loop = BacktestEventLoop(
-            historical_klines=all_klines,
             on_progress_callback=self._progress_callback,
             start_index=config.start_index,
         )
         self._event_loop.set_backtest_client(self._backtest_client)
+        self._event_loop.subscribe(symbols=[config.symbol], timeframes=[config.timeframe])
 
         self._bot_manager = BotManager(
             ex_client=self._backtest_client,

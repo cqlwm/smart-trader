@@ -30,6 +30,58 @@ def _make_klines(count: int) -> list[Kline]:
     ]
 
 
+class TestBacktestEventLoopSubscribe:
+    def test_subscribe_records_pairs(self) -> None:
+        el = BacktestEventLoop(start_index=0)
+        el.subscribe(symbols=[SYMBOL], timeframes=['1m', '5m'])
+        assert (SYMBOL, '1m') in el._subscriptions
+        assert (SYMBOL, '5m') in el._subscriptions
+
+    def test_load_subscribed_klines_from_client(self) -> None:
+        klines = _make_klines(5)
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
+        client._store_klines(SYMBOL, '1m', klines)
+
+        el = BacktestEventLoop(start_index=0)
+        el.set_backtest_client(client)
+        el.subscribe(symbols=[SYMBOL], timeframes=['1m'])
+
+        loaded = el._load_subscribed_klines()
+        assert len(loaded) == 5
+
+    def test_load_subscribed_klines_skips_unsubscribed(self) -> None:
+        klines_1m = _make_klines(5)
+        klines_5m = _make_klines(3)
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
+        client._store_klines(SYMBOL, '1m', klines_1m)
+        client._store_klines(SYMBOL, '5m', klines_5m)
+
+        el = BacktestEventLoop(start_index=0)
+        el.set_backtest_client(client)
+        el.subscribe(symbols=[SYMBOL], timeframes=['1m'])
+
+        loaded = el._load_subscribed_klines()
+        assert len(loaded) == 5  # only 1m klines
+
+    def test_load_subscribed_klines_empty_without_client(self) -> None:
+        el = BacktestEventLoop(start_index=0)
+        el.subscribe(symbols=[SYMBOL], timeframes=['1m'])
+        assert el._load_subscribed_klines() == []
+
+    def test_start_loads_klines_from_subscriptions(self) -> None:
+        klines = _make_klines(5)
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
+        client._store_klines(SYMBOL, '1m', klines)
+
+        el = BacktestEventLoop(start_index=0)
+        el.set_backtest_client(client)
+        el.subscribe(symbols=[SYMBOL], timeframes=['1m'])
+        el.start()
+
+        assert len(el.historical_klines) == 5
+        assert el.is_completed
+
+
 class TestBacktestRunnerInit:
     def test_creates_backtest_client(self) -> None:
         klines = _make_klines(10)
@@ -50,7 +102,7 @@ class TestBacktestRunnerInit:
 
         assert isinstance(runner._backtest_client, BacktestClient)
 
-    def test_creates_backtest_event_loop(self) -> None:
+    def test_creates_backtest_event_loop_with_subscribe(self) -> None:
         klines = _make_klines(10)
         config = BacktestConfig(
             symbol=SYMBOL,
@@ -70,6 +122,7 @@ class TestBacktestRunnerInit:
 
         assert isinstance(runner._event_loop, BacktestEventLoop)
         assert runner._event_loop.backtest_client is runner._backtest_client
+        assert (SYMBOL, '1m') in runner._event_loop._subscriptions
 
     def test_creates_bot_manager(self) -> None:
         klines = _make_klines(10)

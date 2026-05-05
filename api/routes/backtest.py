@@ -217,19 +217,16 @@ async def run_backtest(request: BacktestRequest):
             extra_timeframes=extra_timeframes,
         )
 
-        all_klines = client.get_all_klines()
-        if not all_klines:
-            raise HTTPException(status_code=500, detail="No historical data loaded")
-
         strategy = strategy_factory(client)
         handler = KlineHandler(strategy)
         start_ts = _parse_start_timestamp(request.start_date)
 
+        all_timeframes = [request.timeframe] + list(extra_timeframes)
         event_loop = BacktestEventLoop(
-            historical_klines=all_klines,
             start_timestamp=start_ts,
         )
         event_loop.set_backtest_client(client)
+        event_loop.subscribe(symbols=[symbol], timeframes=all_timeframes)
         event_loop.add_handler(handler)
         event_loop.start()
         event_loop.stop()
