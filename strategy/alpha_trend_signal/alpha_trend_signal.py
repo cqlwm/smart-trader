@@ -5,6 +5,7 @@ from pandas import DataFrame
 
 from model import OrderSide
 from strategy import Signal
+from strategy.signal_registry import register_signal
 
 _datetime = 'datetime'
 _high = 'high'
@@ -63,6 +64,7 @@ def _alpha_trend_indicator(df: DataFrame, atr_multiple: float = 1.0, period: int
     return df
 
 
+@register_signal("alpha_trend")
 class AlphaTrendSignal(Signal):
     def __init__(self, side: OrderSide, atr_multiple: float = 1.0, period: int = 8, reverse: bool = False):
         super().__init__(side)

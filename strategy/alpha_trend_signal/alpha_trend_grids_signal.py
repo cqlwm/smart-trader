@@ -2,6 +2,7 @@ import pandas as pd
 from pandas import DataFrame
 
 from strategy import Signal
+from strategy.signal_registry import register_signal
 from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 
 _close = 'close'
@@ -12,6 +13,7 @@ _alpha_trend = 'alpha_trend'
 _long_trend = 1
 _short_trend = -1
 
+@register_signal("alpha_trend_grids")
 class AlphaTrendGridsSignal(Signal):
     """
     高频率(High Frequency)
