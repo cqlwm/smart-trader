@@ -2,7 +2,6 @@ import secrets
 import logging
 import pandas as pd
 from datetime import datetime, timezone
-from typing import List
 
 from model import OrderSide, Symbol
 from smc.config import SMCConfig
@@ -33,16 +32,18 @@ class SMCIntradayStrategy(GeneralStrategy):
 
     def __init__(
         self,
-        symbols: List[Symbol],
-        timeframes: List[str],
+        config: SimpleIntradayConfig,
         ex_client: ExSwapClient,
-        config: dict,
     ):
-        super().__init__(symbols=symbols, timeframes=timeframes)
+        symbol = Symbol(
+            base=config.symbol.split("/")[0],
+            quote=config.symbol.split("/")[1].split(":")[0],
+        )
+        super().__init__(symbols=[symbol], timeframes=list(config.timeframes))
         self.ex_client = ex_client
-        self._strategy_config = SimpleIntradayConfig(**config)
+        self._strategy_config = config
         self._smc_strategy = SimpleIntradayStrategy(self._strategy_config)
-        self.strategy_id: str = f"smc_intraday_{symbols[0].simple() if symbols else 'unknown'}"
+        self.strategy_id: str = f"smc_intraday_{symbol.simple()}"
         self.order_repo = ex_client.order_repo
         self._last_action: str = "WAIT"
 
