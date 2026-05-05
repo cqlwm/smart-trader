@@ -1,10 +1,12 @@
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from client.ex_client import ExSwapClient
 from model import Symbol, SymbolInfo, Order, OrderSide, PositionSide, OrderStatus, Kline
 from persistence.order_repository import OrderRepository
+from backtest.kline_data_store import KlineDataStore
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,13 @@ class BacktestClient(ExSwapClient):
         maker_fee: float = 0.0002,
         taker_fee: float = 0.0004,
         symbol_infos: dict[str, SymbolInfo] | None = None,
+        data_store: KlineDataStore | None = None,
+        symbol: Symbol | None = None,
+        timeframe: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        extra_timeframes: tuple[str, ...] = (),
+        data_dir: str = "data",
     ) -> None:
         self.exchange_name = 'backtest'
         self.exchange = None  # type: ignore
@@ -43,10 +52,56 @@ class BacktestClient(ExSwapClient):
 
         self.current_prices: dict[str, float] = {}
 
-        self.historical_data: dict[str, list[Kline]] = {}
+        self._kline_cache: dict[str, list[Kline]] = {}
         self.current_timestamp: int = 0
 
+        if data_store and symbol and timeframe and start_date and end_date:
+            self._load_data_from_store(data_store, symbol, timeframe, start_date, end_date, extra_timeframes, data_dir)
+
         logger.info("BacktestClient initialized with balance: %s", initial_balance)
+
+    def _load_data_from_store(
+        self,
+        data_store: KlineDataStore,
+        symbol: Symbol,
+        timeframe: str,
+        start_date: str,
+        end_date: str,
+        extra_timeframes: tuple[str, ...] = (),
+        data_dir: str = "data",
+    ) -> None:
+        file_path = data_store.ensure_data(symbol, timeframe, start_date, end_date, data_dir)
+        klines = data_store.load_csv(file_path, symbol, timeframe)
+        if klines:
+            self._store_klines(symbol, timeframe, klines)
+            logger.info("Auto-loaded %d klines for %s %s", len(klines), symbol.binance(), timeframe)
+
+        for tf in extra_timeframes:
+            tf_offset = self._extra_tf_offset(tf)
+            tf_path = data_store.ensure_data(symbol, tf, start_date, end_date, data_dir, offset=tf_offset)
+            tf_klines = data_store.load_csv(tf_path, symbol, tf)
+            if tf_klines:
+                self._store_klines(symbol, tf, tf_klines)
+                logger.info("Auto-loaded %d klines for %s %s", len(tf_klines), symbol.binance(), tf)
+
+    def _store_klines(self, symbol: Symbol, timeframe: str, klines: list[Kline]) -> None:
+        key = f"{symbol.binance()}_{timeframe}"
+        self._kline_cache[key] = sorted(klines, key=lambda k: k.timestamp)
+
+    @staticmethod
+    def _extra_tf_offset(timeframe: str) -> timedelta | None:
+        tf_minutes = {"1w": 10080, "1d": 1440, "4h": 240, "1h": 60}
+        minutes = tf_minutes.get(timeframe, 0)
+        if minutes == 0:
+            return None
+        return timedelta(minutes=minutes * 100)
+
+    def get_all_klines(self) -> list[Kline]:
+        """Get all klines for the primary timeframe, sorted by timestamp."""
+        all_klines: list[Kline] = []
+        for klines in self._kline_cache.values():
+            all_klines.extend(klines)
+        return sorted(all_klines, key=lambda k: k.timestamp)
 
     def update_current_price(self, symbol: Symbol, price: float) -> None:
         self.current_prices[symbol.binance()] = price
@@ -274,19 +329,13 @@ class BacktestClient(ExSwapClient):
     def get_final_balance(self) -> float:
         return self._balance
 
-    def load_historical_data(self, symbol: Symbol, timeframe: str, klines: list[Kline]) -> None:
-        key = f"{symbol.binance()}_{timeframe}"
-        self.historical_data[key] = sorted(klines, key=lambda k: k.timestamp)
-        logger.info("Loaded %d klines for %s timeframe %s", len(klines), symbol.binance(), timeframe)
-
     def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100,
                     start_time: int | None = None, end_time: int | None = None) -> list[Kline]:
         key = f"{symbol.binance()}_{timeframe}"
-        if key not in self.historical_data:
-            logger.warning("No historical data available for %s timeframe %s", symbol.binance(), timeframe)
+        if key not in self._kline_cache:
             return []
 
-        klines = self.historical_data[key]
+        klines = self._kline_cache[key]
 
         if start_time is not None or end_time is not None:
             klines = [k for k in klines

@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch, MagicMock
 from typing import Any
 
 from model import Symbol, Kline
@@ -7,6 +8,7 @@ from backtest.result import BacktestResult
 from backtest.runner import BacktestRunner
 from backtest.backtest_client import BacktestClient
 from backtest.analyzer import BacktestAnalyzer
+from backtest.kline_data_store import KlineDataStore
 from persistence.order_repository import InMemoryOrderRepository
 
 
@@ -29,6 +31,14 @@ def _make_klines(count: int) -> list[Kline]:
         )
         for i in range(count)
     ]
+
+
+def _client_with_data(kline_count: int = 10) -> BacktestClient:
+    """Create a BacktestClient with pre-loaded kline data for testing."""
+    client = BacktestClient(order_repo=InMemoryOrderRepository(), initial_balance=10_000.0)
+    klines = _make_klines(kline_count)
+    client._store_klines(SYMBOL, '1m', klines)
+    return client
 
 
 class TestBacktestConfig:
@@ -98,16 +108,14 @@ class TestBacktestClientCleanup:
         client.update_current_timestamp(TS_BASE)
         assert client.current_timestamp == TS_BASE
 
-    def test_load_historical_data_no_lock(self) -> None:
+    def test_store_klines_no_lock(self) -> None:
         client = BacktestClient(order_repo=InMemoryOrderRepository())
         klines = _make_klines(5)
-        client.load_historical_data(SYMBOL, '1m', klines)
-        assert len(client.historical_data[f"{SYMBOL.binance()}_1m"]) == 5
+        client._store_klines(SYMBOL, '1m', klines)
+        assert len(client._kline_cache[f"{SYMBOL.binance()}_1m"]) == 5
 
     def test_fetch_ohlcv_no_lock(self) -> None:
-        client = BacktestClient(order_repo=InMemoryOrderRepository())
-        klines = _make_klines(10)
-        client.load_historical_data(SYMBOL, '1m', klines)
+        client = _client_with_data(10)
         client.update_current_timestamp(TS_BASE + 5 * 60_000)
         result = client.fetch_ohlcv(SYMBOL, '1m', limit=3)
         assert len(result) == 3
@@ -133,9 +141,7 @@ class TestBacktestAnalyzer:
 
 class TestFetchOhlcvTimeParams:
     def test_fetch_ohlcv_with_start_time(self) -> None:
-        client = BacktestClient(order_repo=InMemoryOrderRepository())
-        klines = _make_klines(10)
-        client.load_historical_data(SYMBOL, '1m', klines)
+        client = _client_with_data(10)
 
         start_ts = TS_BASE + 3 * 60_000
         result = client.fetch_ohlcv(SYMBOL, '1m', start_time=start_ts)
@@ -143,9 +149,7 @@ class TestFetchOhlcvTimeParams:
         assert result[0].timestamp == start_ts
 
     def test_fetch_ohlcv_with_end_time(self) -> None:
-        client = BacktestClient(order_repo=InMemoryOrderRepository())
-        klines = _make_klines(10)
-        client.load_historical_data(SYMBOL, '1m', klines)
+        client = _client_with_data(10)
 
         end_ts = TS_BASE + 5 * 60_000
         result = client.fetch_ohlcv(SYMBOL, '1m', end_time=end_ts)
@@ -153,9 +157,7 @@ class TestFetchOhlcvTimeParams:
         assert result[-1].timestamp == end_ts
 
     def test_fetch_ohlcv_with_time_range(self) -> None:
-        client = BacktestClient(order_repo=InMemoryOrderRepository())
-        klines = _make_klines(10)
-        client.load_historical_data(SYMBOL, '1m', klines)
+        client = _client_with_data(10)
 
         start_ts = TS_BASE + 2 * 60_000
         end_ts = TS_BASE + 7 * 60_000
@@ -165,9 +167,7 @@ class TestFetchOhlcvTimeParams:
         assert result[-1].timestamp == end_ts
 
     def test_fetch_ohlcv_time_range_with_limit(self) -> None:
-        client = BacktestClient(order_repo=InMemoryOrderRepository())
-        klines = _make_klines(10)
-        client.load_historical_data(SYMBOL, '1m', klines)
+        client = _client_with_data(10)
 
         start_ts = TS_BASE + 2 * 60_000
         end_ts = TS_BASE + 7 * 60_000
@@ -176,11 +176,75 @@ class TestFetchOhlcvTimeParams:
         assert result[0].timestamp == TS_BASE + 5 * 60_000
 
     def test_fetch_ohlcv_no_time_params_unchanged(self) -> None:
-        client = BacktestClient(order_repo=InMemoryOrderRepository())
-        klines = _make_klines(10)
-        client.load_historical_data(SYMBOL, '1m', klines)
+        client = _client_with_data(10)
         client.update_current_timestamp(TS_BASE + 5 * 60_000)
 
         result = client.fetch_ohlcv(SYMBOL, '1m', limit=3)
         assert len(result) == 3
         assert result[-1].timestamp == TS_BASE + 5 * 60_000
+
+
+class TestBacktestClientAutoLoad:
+    def test_auto_load_data_from_store(self) -> None:
+        klines = _make_klines(10)
+        store = KlineDataStore()
+
+        with patch.object(store, 'ensure_data', return_value="data/ETHUSDT_1m_20250101_0s_20250201.csv"):
+            with patch.object(store, 'load_csv', return_value=klines):
+                client = BacktestClient(
+                    order_repo=InMemoryOrderRepository(),
+                    data_store=store,
+                    symbol=SYMBOL,
+                    timeframe='1m',
+                    start_date='2025-01-01',
+                    end_date='2025-02-01',
+                )
+
+        client.update_current_timestamp(TS_BASE + 5 * 60_000)
+        result = client.fetch_ohlcv(SYMBOL, '1m', limit=3)
+        assert len(result) == 3
+        assert result[-1].timestamp == TS_BASE + 5 * 60_000
+
+    def test_auto_load_with_extra_timeframes(self) -> None:
+        klines_1m = _make_klines(10)
+        klines_1d = _make_klines(5)
+
+        store = KlineDataStore()
+        with patch.object(store, 'ensure_data', return_value="data/mock.csv"):
+            with patch.object(store, 'load_csv', side_effect=[klines_1m, klines_1d]):
+                client = BacktestClient(
+                    order_repo=InMemoryOrderRepository(),
+                    data_store=store,
+                    symbol=SYMBOL,
+                    timeframe='1m',
+                    start_date='2025-01-01',
+                    end_date='2025-02-01',
+                    extra_timeframes=('1d',),
+                )
+
+        client.update_current_timestamp(TS_BASE + 3 * 60_000)
+        result_1d = client.fetch_ohlcv(SYMBOL, '1d', limit=3)
+        assert len(result_1d) == 3
+
+    def test_no_data_store_falls_back_to_empty(self) -> None:
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
+        result = client.fetch_ohlcv(SYMBOL, '1m')
+        assert result == []
+
+    def test_get_all_klines(self) -> None:
+        klines = _make_klines(10)
+        store = KlineDataStore()
+        with patch.object(store, 'ensure_data', return_value="data/mock.csv"):
+            with patch.object(store, 'load_csv', return_value=klines):
+                client = BacktestClient(
+                    order_repo=InMemoryOrderRepository(),
+                    data_store=store,
+                    symbol=SYMBOL,
+                    timeframe='1m',
+                    start_date='2025-01-01',
+                    end_date='2025-02-01',
+                )
+
+        all_klines = client.get_all_klines()
+        assert len(all_klines) == 10
+        assert all_klines[0].timestamp == TS_BASE
