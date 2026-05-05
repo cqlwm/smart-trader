@@ -16,27 +16,12 @@ class KlineDataStore:
     """K线数据存储"""
 
     def __init__(self):
+        # file_path:df
         self.data_cache: Dict[str, pd.DataFrame] = {}
+        self.columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
 
-    def _load_df(self, file_path: str, loader_fn) -> pd.DataFrame:
-        """加载并校验 DataFrame，带缓存"""
-        cache_key = file_path
-        if cache_key in self.data_cache:
-            return self.data_cache[cache_key]
-        df = loader_fn(file_path)
-        expected_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-        if not all(col in df.columns for col in expected_columns):
-            raise ValueError(f"Data must contain columns: {expected_columns}")
-        df['timestamp'] = df['timestamp'].astype(int)
-        df['open'] = df['open'].astype(float)
-        df['high'] = df['high'].astype(float)
-        df['low'] = df['low'].astype(float)
-        df['close'] = df['close'].astype(float)
-        df['volume'] = df['volume'].astype(float)
-        self.data_cache[cache_key] = df
-        return df
-
-    def _df_to_klines(self, df: pd.DataFrame, symbol: Symbol, timeframe: str) -> List[Kline]:
+    @staticmethod
+    def _df_to_klines(df: pd.DataFrame, symbol: Symbol, timeframe: str) -> List[Kline]:
         """将 DataFrame 向量化转为 Kline 列表"""
         return [
             Kline(
@@ -64,9 +49,26 @@ class KlineDataStore:
         """从CSV文件加载历史K线数据（timestamp,open,high,low,close,volume）"""
         if not Path(file_path).exists():
             raise FileNotFoundError(f"Data file not found: {file_path}")
-        df = self._load_df(file_path, pd.read_csv)
+
+        cache_key = file_path
+        if cache_key in self.data_cache:
+            df = self.data_cache[cache_key]
+        else:
+            df = pd.read_csv(file_path)
+
+        if not all(col in df.columns for col in self.columns):
+            raise ValueError(f"Data must contain columns: {self.columns}")
+        df['timestamp'] = df['timestamp'].astype(int)
+        df['open'] = df['open'].astype(float)
+        df['high'] = df['high'].astype(float)
+        df['low'] = df['low'].astype(float)
+        df['close'] = df['close'].astype(float)
+        df['volume'] = df['volume'].astype(float)
+        self.data_cache[cache_key] = df
+
         klines = self._df_to_klines(df, symbol, timeframe)
         logger.info(f"Loaded {len(klines)} klines from {file_path}")
+
         return klines
 
     def clear_cache(self):
@@ -83,23 +85,24 @@ class KlineDataStore:
         offset: timedelta | None = None,
     ) -> str:
         """确保数据文件存在，若不存在则自动下载并缓存"""
-        if isinstance(start_time, str):
-            start_dt = datetime.fromisoformat(start_time)
-            if start_dt.tzinfo is None:
-                start_dt = start_dt.replace(tzinfo=timezone.utc)
-        else:
-            start_dt = start_time
-        if isinstance(end_time, str):
-            end_dt = datetime.fromisoformat(end_time)
-            if end_dt.tzinfo is None:
-                end_dt = end_dt.replace(tzinfo=timezone.utc)
-        else:
-            end_dt = end_time
+        def to_datetime(_t: Union[str, datetime]) -> datetime:
+            if isinstance(_t, str):
+                _r = datetime.fromisoformat(_t)
+                if _r.tzinfo is None:
+                    _r = _r.replace(tzinfo=timezone.utc)
+            else:
+                _r = _t
+            return _r
 
-        start_str = start_dt.strftime("%Y%m%d")
-        end_str = end_dt.strftime("%Y%m%d")
-        offset_str = f"{int(offset.total_seconds())}s" if offset else "0s"
-        file_path = f"{data_dir}/{symbol.binance()}_{timeframe}_{start_str}_{offset_str}_{end_str}.csv"
+        start_dt = to_datetime(start_time)
+        end_dt= to_datetime(end_time)
+
+        file_path = (
+            f"{data_dir}/{symbol.binance()}_{timeframe}_"
+            f"{start_dt.strftime('%Y%m%d')}_"
+            f"{int(offset.total_seconds()) if offset else '0'}s_"
+            f"{end_dt.strftime('%Y%m%d')}.csv"
+        )
 
         if Path(file_path).exists():
             logger.info(f"Cache hit: {file_path}")
@@ -107,16 +110,20 @@ class KlineDataStore:
 
         download_start = start_dt - offset if offset else start_dt
         logger.info(f"Cache miss, downloading: {file_path}")
-        return self.download_historical_kline(symbol, timeframe, download_start, end_dt, file_path)
+        df = self.download_historical_kline(symbol, timeframe, download_start, end_dt, file_path)
 
-    @staticmethod
+        self.data_cache[file_path] = df
+
+        return file_path
+
     def download_historical_kline(
+        self,
         symbol: Symbol,
         interval: str,
         start_datetime: datetime,
         end_datetime: datetime,
         file_path: str
-    ) -> str:
+    ) -> pd.DataFrame:
         """从Binance合约下载历史K线数据并保存为CSV"""
         exchange = ccxt.binance(ConstructorArgs(options={"defaultType": "future"}))
 
@@ -146,7 +153,7 @@ class KlineDataStore:
         if not all_ohlcv:
             raise ValueError("No data downloaded")
 
-        df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df = pd.DataFrame(all_ohlcv, columns=self.columns)
         df['timestamp'] = df['timestamp'].astype(int)
         df = df.sort_values('timestamp').reset_index(drop=True)
 
@@ -154,4 +161,4 @@ class KlineDataStore:
         df.to_csv(file_path, index=False)
 
         logger.info(f"Saved {len(df)} klines to {file_path}")
-        return file_path
+        return df
