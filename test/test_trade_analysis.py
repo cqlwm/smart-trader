@@ -1,7 +1,7 @@
-import pytest
-from model import Symbol, Kline, OrderSide, PositionSide, OrderStatus
+from model import Symbol, OrderSide, PositionSide
 from backtest.backtest_client import BacktestClient
-from backtest.backtest_analysis import BacktestAnalysis
+from backtest.trade_analysis import TradeAnalysis
+from client.ex_client import ExSwapClient
 from persistence.order_repository import InMemoryOrderRepository
 
 
@@ -24,10 +24,10 @@ def _client_with_trade() -> BacktestClient:
     return client
 
 
-class TestBacktestAnalysis:
+class TestTradeAnalysis:
     def test_analyze_returns_dict(self) -> None:
         client = _client_with_trade()
-        analysis = BacktestAnalysis(client, initial_balance=10_000.0)
+        analysis = TradeAnalysis(client, initial_balance=10_000.0)
         result = analysis.analyze()
         assert isinstance(result, dict)
         assert 'summary' in result
@@ -37,21 +37,33 @@ class TestBacktestAnalysis:
 
     def test_final_state_includes_balance(self) -> None:
         client = _client_with_trade()
-        analysis = BacktestAnalysis(client, initial_balance=10_000.0)
+        analysis = TradeAnalysis(client, initial_balance=10_000.0)
         result = analysis.analyze()
         assert 'balance' in result['final_state']
         assert 'pnl' in result['final_state']
 
     def test_report_returns_string(self) -> None:
         client = _client_with_trade()
-        analysis = BacktestAnalysis(client, initial_balance=10_000.0)
+        analysis = TradeAnalysis(client, initial_balance=10_000.0)
         report = analysis.report()
         assert isinstance(report, str)
         assert "BACKTEST REPORT" in report
 
     def test_empty_backtest(self) -> None:
         client = BacktestClient(order_repo=InMemoryOrderRepository(), initial_balance=10_000.0)
-        analysis = BacktestAnalysis(client, initial_balance=10_000.0)
+        analysis = TradeAnalysis(client, initial_balance=10_000.0)
         result = analysis.analyze()
         assert result['summary']['total_trades'] == 0
         assert result['final_state']['balance'] == 10_000.0
+
+    def test_initial_balance_defaults_to_client_balance(self) -> None:
+        client = BacktestClient(order_repo=InMemoryOrderRepository(), initial_balance=5_000.0)
+        analysis = TradeAnalysis(client)
+        assert analysis.initial_balance == 5_000.0
+
+    def test_accepts_ex_swap_client_type(self) -> None:
+        client = _client_with_trade()
+        typed_client: ExSwapClient = client
+        analysis = TradeAnalysis(typed_client, initial_balance=10_000.0)
+        result = analysis.analyze()
+        assert isinstance(result, dict)

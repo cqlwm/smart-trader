@@ -86,6 +86,10 @@ class ExSwapClient(ExClient):
     def positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         pass
 
+    def get_trade_history(self) -> list[dict[str, Any]]:
+        """Return all filled trade history. Override in subclasses for custom behavior."""
+        return []
+
 
 class ExSpotClient(ExClient):
     @abstractmethod

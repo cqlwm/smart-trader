@@ -293,3 +293,27 @@ class BinanceSwapClient(ExSwapClient):
             return self.exchange.fetch_positions([symbol])  # type: ignore
         else:
             return self.exchange.fetch_positions()  # type: ignore
+
+    def get_trade_history(self) -> list[dict[str, Any]]:
+        return [self._order_to_dict(o) for o in self.order_repo.find_history()]
+
+    @staticmethod
+    def _order_to_dict(order: Order) -> dict[str, Any]:
+        return {
+            'id': order.order_id,
+            'clientOrderId': order.order_id,
+            'symbol': order.symbol.binance(),
+            'side': order.side.value,
+            'position_side': order.position_side.value,
+            'type': order.order_type,
+            'price': order.price,
+            'amount': order.quantity,
+            'filled': order.filled_quantity,
+            'filled_quantity': order.filled_quantity,
+            'remaining': order.quantity - order.filled_quantity,
+            'filled_price': order.filled_price,
+            'cost': order.filled_price * order.filled_quantity if order.filled_price else 0,
+            'status': order.status.value,
+            'timestamp': order.created_at,
+            'fee': order.fee,
+        }

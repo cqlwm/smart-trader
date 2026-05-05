@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from backtest.backtest_analysis import BacktestAnalysis
+from backtest.trade_analysis import TradeAnalysis as BacktestAnalysis
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
 from backtest.config import BacktestConfig
