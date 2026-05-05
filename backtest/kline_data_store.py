@@ -1,6 +1,5 @@
 import pandas as pd
-import json
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Union
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import time
@@ -13,8 +12,8 @@ from ccxt.base.types import ConstructorArgs
 logger = log.getLogger(__name__)
 
 
-class HistoricalDataLoader:
-    """历史数据加载器"""
+class KlineDataStore:
+    """K线数据存储"""
 
     def __init__(self):
         self.data_cache: Dict[str, pd.DataFrame] = {}
@@ -69,49 +68,6 @@ class HistoricalDataLoader:
         klines = self._df_to_klines(df, symbol, timeframe)
         logger.info(f"Loaded {len(klines)} klines from {file_path}")
         return klines
-
-    def load_json(self, file_path: str, symbol: Symbol, timeframe: str) -> List[Kline]:
-        """从JSON文件加载历史K线数据"""
-        if not Path(file_path).exists():
-            raise FileNotFoundError(f"Data file not found: {file_path}")
-
-        def _read_json(path: str) -> pd.DataFrame:
-            with open(path, 'r') as f:
-                return pd.DataFrame(json.load(f))
-
-        df = self._load_df(file_path, _read_json)
-        klines = self._df_to_klines(df, symbol, timeframe)
-        logger.info(f"Loaded {len(klines)} klines from {file_path}")
-        return klines
-
-    def load_from_dataframe(self, df: pd.DataFrame, symbol: Symbol, timeframe: str) -> List[Kline]:
-        """从 pandas DataFrame 加载历史K线数据"""
-        expected_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-        if not all(col in df.columns for col in expected_columns):
-            raise ValueError(f"DataFrame must contain columns: {expected_columns}")
-        klines = self._df_to_klines(df.astype({
-            'timestamp': int, 'open': float, 'high': float,
-            'low': float, 'close': float, 'volume': float
-        }), symbol, timeframe)
-        logger.info(f"Loaded {len(klines)} klines from DataFrame")
-        return klines
-
-    def filter_by_date_range(self, klines: List[Kline], start_timestamp: Optional[int] = None,
-                             end_timestamp: Optional[int] = None) -> List[Kline]:
-        if start_timestamp is None and end_timestamp is None:
-            return klines
-        filtered = [
-            k for k in klines
-            if (start_timestamp is None or k.timestamp >= start_timestamp)
-            and (end_timestamp is None or k.timestamp <= end_timestamp)
-        ]
-        logger.info(f"Filtered klines from {len(klines)} to {len(filtered)}")
-        return filtered
-
-    def get_price_series(self, klines: List[Kline]) -> pd.Series:
-        prices = [k.close for k in klines]
-        timestamps = [k.timestamp for k in klines]
-        return pd.Series(prices, index=timestamps, name='close')
 
     def clear_cache(self):
         self.data_cache.clear()
