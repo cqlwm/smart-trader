@@ -7,8 +7,9 @@ from persistence.order_repository import InMemoryOrderRepository, OrderRepositor
 
 
 class MexcSwapClient(ExSwapClient):
-    def __init__(self, order_repo: OrderRepository | None = None):
+    def __init__(self, order_repo: OrderRepository | None = None, data_store: Any | None = None):
         self.order_repo = order_repo or InMemoryOrderRepository()
+        self.data_store = data_store
 
     def balance(self, coin):
         pass

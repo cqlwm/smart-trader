@@ -28,8 +28,9 @@ def _get_lock(symbol):
     return symbol_locks[symbol]
 
 class OkxSwapClient(ExSwapClient):
-    def __init__(self, api_key, secret, password, test: bool = False, order_repo: OrderRepository | None = None):
+    def __init__(self, api_key, secret, password, test: bool = False, order_repo: OrderRepository | None = None, data_store: Any | None = None):
         self.order_repo = order_repo or InMemoryOrderRepository()
+        self.data_store = data_store
         self.exchange = ccxt.okx({
             'apiKey': api_key,
             'secret': secret,

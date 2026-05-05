@@ -9,8 +9,9 @@ from persistence.order_repository import InMemoryOrderRepository, OrderRepositor
 
 
 class BybitSwapClient(ExSwapClient):
-    def __init__(self, _api_key, _api_secret, test, order_repo: OrderRepository | None = None):
+    def __init__(self, _api_key, _api_secret, test, order_repo: OrderRepository | None = None, data_store: Any | None = None):
         self.order_repo = order_repo or InMemoryOrderRepository()
+        self.data_store = data_store
         self.client = ccxt.bybit({
             'apiKey': _api_key,
             'secret': _api_secret,
