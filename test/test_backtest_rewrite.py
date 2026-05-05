@@ -44,25 +44,24 @@ def _client_with_data(kline_count: int = 10) -> BacktestClient:
 class TestBacktestConfig:
     def test_frozen_dataclass(self) -> None:
         config = BacktestConfig(
-            strategy_type="signal_grid",
-            strategy_config={"param": 1},
+            config_path="strategies.yaml",
             symbol=SYMBOL,
             timeframe="1m",
             start_date="2025-01-01",
             end_date="2025-06-01",
         )
-        assert config.strategy_type == "signal_grid"
+        assert config.config_path == "strategies.yaml"
         assert config.initial_balance == 10000.0
         assert config.maker_fee == 0.0002
         assert config.taker_fee == 0.0004
+        assert config.start_index == 300
 
         with pytest.raises(AttributeError):
             config.initial_balance = 999  # type: ignore[misc]
 
-    def test_custom_fees(self) -> None:
+    def test_custom_fees_and_start_index(self) -> None:
         config = BacktestConfig(
-            strategy_type="test",
-            strategy_config={},
+            config_path="custom.yaml",
             symbol=SYMBOL,
             timeframe="5m",
             start_date="2025-01-01",
@@ -70,10 +69,24 @@ class TestBacktestConfig:
             initial_balance=50000.0,
             maker_fee=0.001,
             taker_fee=0.002,
+            start_index=0,
+            data_dir="my_data",
         )
         assert config.initial_balance == 50000.0
         assert config.maker_fee == 0.001
         assert config.taker_fee == 0.002
+        assert config.start_index == 0
+        assert config.data_dir == "my_data"
+        assert config.config_path == "custom.yaml"
+
+    def test_default_config_path(self) -> None:
+        config = BacktestConfig(
+            symbol=SYMBOL,
+            timeframe="1m",
+            start_date="2025-01-01",
+            end_date="2025-06-01",
+        )
+        assert config.config_path == "strategies.yaml"
 
 
 class TestBacktestResult:
