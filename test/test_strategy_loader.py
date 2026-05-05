@@ -170,3 +170,23 @@ strategies:
             assert handlers[0].strategy.symbol == Symbol(base="DOGE", quote="USDC")
         finally:
             os.unlink(yaml_path)
+
+
+class TestStrategyLoaderIntegration:
+    def test_load_actual_strategies_yaml(self) -> None:
+        """Integration: load strategies.yaml and verify all handlers constructed."""
+        import strategy.strategies  # noqa: F401
+
+        yaml_path = os.path.join(os.path.dirname(__file__), "..", "strategies.yaml")
+        if not os.path.exists(yaml_path):
+            pytest.skip("strategies.yaml not found")
+
+        loader = StrategyLoader(yaml_path)
+        mock_client = MagicMock()
+        mock_client.order_repo = MagicMock()
+        handlers = loader.load(mock_client)
+        assert len(handlers) == 3
+
+        strategy_types = [h.strategy.__class__.__name__ for h in handlers]
+        assert "SignalGridStrategy" in strategy_types
+        assert "SMCIntradayStrategy" in strategy_types
