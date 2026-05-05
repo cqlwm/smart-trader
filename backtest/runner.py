@@ -1,6 +1,8 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
+
+import pandas as pd
 
 from backtest.analyzer import BacktestAnalyzer
 from backtest.backtest_client import BacktestClient
@@ -9,8 +11,9 @@ from backtest.config import BacktestConfig
 from backtest.data_loader import HistoricalDataLoader
 from backtest.result import BacktestResult
 from event_loop.handler.kline_handler import KlineHandler
-from model import Kline
+from model import Kline, Symbol
 from persistence.order_repository import InMemoryOrderRepository
+from strategy import GeneralStrategy
 from strategy.registry import StrategyRegistry
 
 logger = logging.getLogger(__name__)
@@ -41,6 +44,7 @@ class BacktestRunner:
         klines.sort(key=lambda k: k.timestamp)
 
         strategy = self._create_strategy(client)
+        self._preinitialize_klines(strategy, client, klines)
         handler = KlineHandler(strategy)
 
         start_ts = self._parse_timestamp(self.config.start_date)
@@ -87,10 +91,14 @@ class BacktestRunner:
             logger.info("Loaded %d klines for %s %s", len(klines), symbol.binance(), timeframe)
 
         for tf in self.config.extra_timeframes:
+            # Higher timeframes need a wider date range to accumulate enough bars
+            # for SMC analysis (which requires >= 50 closed bars)
+            tf_offset = self._extra_tf_offset(tf)
             tf_path = data_loader.ensure_data(
                 symbol, tf,
                 self.config.start_date, self.config.end_date,
                 "data",
+                offset=tf_offset,
             )
             tf_klines = data_loader.load_csv(tf_path, symbol, tf)
             if tf_klines:
@@ -98,6 +106,44 @@ class BacktestRunner:
                 logger.info("Loaded %d klines for %s %s", len(tf_klines), symbol.binance(), tf)
 
         return klines
+
+    def _preinitialize_klines(self, strategy: Any, client: BacktestClient, klines: list[Kline]) -> None:
+        """Pre-populate kline_data_dict for all timeframes using BacktestClient data.
+
+        BacktestEventLoop only replays the entry timeframe K-lines, so multi-timeframe
+        strategies never receive events for other timeframes. This method pre-fills
+        the strategy's kline_data_dict so that klines() calls work for all timeframes.
+        """
+        if not isinstance(strategy, GeneralStrategy):
+            return
+
+        # Set current_timestamp to the first kline so fetch_ohlcv can find data
+        if klines:
+            client.update_current_timestamp(klines[0].timestamp)
+
+        for symbol in strategy.symbols:
+            for tf in strategy.timeframes:
+                ohlcv = client.fetch_ohlcv(symbol, tf, limit=strategy.init_kline_nums)
+                if not ohlcv:
+                    logger.warning("No data to pre-initialize %s %s", symbol.binance(), tf)
+                    continue
+
+                df = pd.DataFrame([k.to_dict() for k in ohlcv])
+                if symbol not in strategy.kline_data_dict:
+                    strategy.kline_data_dict[symbol] = {}
+                if tf not in strategy.kline_data_dict[symbol]:
+                    strategy.kline_data_dict[symbol][tf] = strategy._create_empty_kline_data(tf)
+                strategy.kline_data_dict[symbol][tf].klines = df
+                logger.info("Pre-initialized %s %s with %d klines", symbol.binance(), tf, len(df))
+
+    @staticmethod
+    def _extra_tf_offset(timeframe: str) -> timedelta | None:
+        """Calculate how far back to extend data for higher timeframes."""
+        tf_minutes = {"1w": 10080, "1d": 1440, "4h": 240, "1h": 60}
+        minutes = tf_minutes.get(timeframe, 0)
+        if minutes == 0:
+            return None
+        return timedelta(minutes=minutes * 100)
 
     def _create_strategy(self, client: BacktestClient) -> Any:
         if self._strategy_factory is not None:
