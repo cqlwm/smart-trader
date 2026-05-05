@@ -5,21 +5,21 @@ logger = logging.getLogger(__name__)
 
 
 class StrategyRegistry:
-    """Registry for strategy types. Strategies self-register via the @register_strategy decorator."""
-
-    _registry: dict[str, type] = {}
+    _registry: dict[str, tuple[type, type]] = {}
 
     @classmethod
-    def register(cls, name: str, strategy_class: type) -> None:
+    def register(cls, name: str, strategy_class: type, config_class: type) -> None:
         if name in cls._registry:
             logger.warning("Strategy type '%s' already registered, overwriting", name)
-        cls._registry[name] = strategy_class
-        logger.info("Registered strategy type: %s -> %s", name, strategy_class.__name__)
+        cls._registry[name] = (strategy_class, config_class)
+        logger.info("Registered strategy type: %s -> (%s, %s)", name, strategy_class.__name__, config_class.__name__)
 
     @classmethod
-    def get(cls, name: str) -> type:
+    def get(cls, name: str) -> tuple[type, type]:
         if name not in cls._registry:
-            raise KeyError(f"Strategy type '{name}' not registered. Available: {list(cls._registry.keys())}")
+            raise KeyError(
+                f"Strategy type '{name}' not registered. Available: {list(cls._registry.keys())}"
+            )
         return cls._registry[name]
 
     @classmethod
@@ -31,9 +31,8 @@ class StrategyRegistry:
         cls._registry.clear()
 
 
-def register_strategy(name: str) -> Callable[[type], type]:
-    """Decorator to register a strategy class under a given name."""
+def register_strategy(name: str, config_class: type) -> Callable[[type], type]:
     def decorator(cls: type) -> type:
-        StrategyRegistry.register(name, cls)
+        StrategyRegistry.register(name, cls, config_class)
         return cls
     return decorator

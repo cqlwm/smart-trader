@@ -149,7 +149,7 @@ class BacktestRunner:
         if self._strategy_factory is not None:
             return self._strategy_factory(client)
 
-        strategy_cls = StrategyRegistry.get(self.config.strategy_type)
+        strategy_cls, _config_cls = StrategyRegistry.get(self.config.strategy_type)
         return strategy_cls(client, self.config.strategy_config)
 
     @staticmethod

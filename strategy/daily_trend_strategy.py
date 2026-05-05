@@ -26,7 +26,7 @@ class DailyTrendStrategyConfig(BaseModel):
     signal: Signal
 
 
-@register_strategy("daily_trend")
+@register_strategy("daily_trend", DailyTrendStrategyConfig)
 class DailyTrendStrategy(GeneralStrategy):
     def __init__(self, config: DailyTrendStrategyConfig, ex_client):
         super().__init__([config.trade_symbol] + config.direction_symbols, ['1d', config.trade_timeframe])

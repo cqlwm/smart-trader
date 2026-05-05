@@ -41,7 +41,7 @@ class StrategyInstanceManager:
             raise ValueError(f"Cannot start instance in status {instance.status.value}")
 
         try:
-            strategy_cls = StrategyRegistry.get(instance.strategy_type)
+            strategy_cls, _config_cls = StrategyRegistry.get(instance.strategy_type)
             logger.info("Starting strategy instance %s (type=%s)", instance_id, instance.strategy_type)
             self._live_strategies[instance_id] = strategy_cls
             updated = replace(instance, status=InstanceStatus.RUNNING, error_message=None)

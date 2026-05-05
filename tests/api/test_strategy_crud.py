@@ -10,10 +10,14 @@ class DummyStrategy:
     pass
 
 
+class DummyConfig:
+    pass
+
+
 @pytest.fixture(autouse=True)
 def setup_overrides():
     StrategyRegistry.clear()
-    StrategyRegistry.register("dummy", DummyStrategy)
+    StrategyRegistry.register("dummy", DummyStrategy, DummyConfig)
 
     mgr = StrategyInstanceManager()
 

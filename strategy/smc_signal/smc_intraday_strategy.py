@@ -20,7 +20,7 @@ def _build_order_id(side: OrderSide) -> str:
     return f"{side.value}{secrets.token_hex(nbytes=5)}"
 
 
-@register_strategy("smc_intraday")
+@register_strategy("smc_intraday", SimpleIntradayConfig)
 class SMCIntradayStrategy(GeneralStrategy):
     """多周期 SMC 日内策略。
 

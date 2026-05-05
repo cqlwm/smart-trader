@@ -13,9 +13,16 @@ class AnotherStrategy:
     pass
 
 
+class DummyConfig:
+    pass
+
+
+class AnotherConfig:
+    pass
+
+
 @pytest.fixture(autouse=True)
 def clean_registry():
-    """Ensure each test starts with a clean registry."""
     StrategyRegistry.clear()
     yield
     StrategyRegistry.clear()
@@ -23,42 +30,48 @@ def clean_registry():
 
 class TestStrategyRegistry:
     def test_register_and_get(self) -> None:
-        StrategyRegistry.register("dummy", DummyStrategy)
-        assert StrategyRegistry.get("dummy") is DummyStrategy
+        StrategyRegistry.register("dummy", DummyStrategy, DummyConfig)
+        strategy_cls, config_cls = StrategyRegistry.get("dummy")
+        assert strategy_cls is DummyStrategy
+        assert config_cls is DummyConfig
 
     def test_get_unknown_raises(self) -> None:
         with pytest.raises(KeyError, match="not registered"):
             StrategyRegistry.get("nonexistent")
 
     def test_list_types(self) -> None:
-        StrategyRegistry.register("dummy", DummyStrategy)
-        StrategyRegistry.register("another", AnotherStrategy)
+        StrategyRegistry.register("dummy", DummyStrategy, DummyConfig)
+        StrategyRegistry.register("another", AnotherStrategy, AnotherConfig)
         types = StrategyRegistry.list_types()
         assert "dummy" in types
         assert "another" in types
         assert len(types) == 2
 
     def test_decorator_registers(self) -> None:
-        @register_strategy("decorated")
+        @register_strategy("decorated", DummyConfig)
         class DecoratedStrategy:
             pass
 
-        assert StrategyRegistry.get("decorated") is DecoratedStrategy
+        strategy_cls, config_cls = StrategyRegistry.get("decorated")
+        assert strategy_cls is DecoratedStrategy
+        assert config_cls is DummyConfig
 
     def test_overwrite_warning(self) -> None:
-        StrategyRegistry.register("dup", DummyStrategy)
-        StrategyRegistry.register("dup", AnotherStrategy)
-        assert StrategyRegistry.get("dup") is AnotherStrategy
+        StrategyRegistry.register("dup", DummyStrategy, DummyConfig)
+        StrategyRegistry.register("dup", AnotherStrategy, AnotherConfig)
+        strategy_cls, config_cls = StrategyRegistry.get("dup")
+        assert strategy_cls is AnotherStrategy
+        assert config_cls is AnotherConfig
 
     def test_clear(self) -> None:
-        StrategyRegistry.register("dummy", DummyStrategy)
+        StrategyRegistry.register("dummy", DummyStrategy, DummyConfig)
         StrategyRegistry.clear()
         assert StrategyRegistry.list_types() == []
 
 
 class TestStrategyInstanceManager:
     def _setup_manager(self) -> StrategyInstanceManager:
-        StrategyRegistry.register("dummy", DummyStrategy)
+        StrategyRegistry.register("dummy", DummyStrategy, DummyConfig)
         return StrategyInstanceManager()
 
     def test_create_instance(self) -> None:

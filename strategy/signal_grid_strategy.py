@@ -245,7 +245,7 @@ class SignalGridStrategyConfig(BaseModel):
     trailing_stop_rate: float = 0.02
     trailing_stop_activation_profit_rate: float = 0.01
 
-@register_strategy("signal_grid")
+@register_strategy("signal_grid", SignalGridStrategyConfig)
 class SignalGridStrategy(SimpleStrategy):
 
     def __init__(self, config: SignalGridStrategyConfig, ex_client: ExSwapClient, repository: StrategyRepository | None = None):

@@ -225,7 +225,7 @@ class SimpleGridStrategyConfig(BaseModel):
     backup_file: str = ""
 
 
-@register_strategy("simple_grid")
+@register_strategy("simple_grid", SimpleGridStrategyConfig)
 class SimpleGridStrategy(SimpleStrategy):
     def __init__(self, ex_client: ExSwapClient, config: SimpleGridStrategyConfig, timeframe: str, repository: StrategyRepository | None = None):
         super().__init__(config.symbol, timeframe)
