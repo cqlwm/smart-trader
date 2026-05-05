@@ -129,3 +129,58 @@ class TestBacktestAnalyzer:
         assert "SUMMARY" in report
         assert "RISK METRICS" in report
         assert "TRADE METRICS" in report
+
+
+class TestFetchOhlcvTimeParams:
+    def test_fetch_ohlcv_with_start_time(self) -> None:
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
+        klines = _make_klines(10)
+        client.load_historical_data(SYMBOL, '1m', klines)
+
+        start_ts = TS_BASE + 3 * 60_000
+        result = client.fetch_ohlcv(SYMBOL, '1m', start_time=start_ts)
+        assert len(result) == 7
+        assert result[0].timestamp == start_ts
+
+    def test_fetch_ohlcv_with_end_time(self) -> None:
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
+        klines = _make_klines(10)
+        client.load_historical_data(SYMBOL, '1m', klines)
+
+        end_ts = TS_BASE + 5 * 60_000
+        result = client.fetch_ohlcv(SYMBOL, '1m', end_time=end_ts)
+        assert len(result) == 6
+        assert result[-1].timestamp == end_ts
+
+    def test_fetch_ohlcv_with_time_range(self) -> None:
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
+        klines = _make_klines(10)
+        client.load_historical_data(SYMBOL, '1m', klines)
+
+        start_ts = TS_BASE + 2 * 60_000
+        end_ts = TS_BASE + 7 * 60_000
+        result = client.fetch_ohlcv(SYMBOL, '1m', start_time=start_ts, end_time=end_ts)
+        assert len(result) == 6
+        assert result[0].timestamp == start_ts
+        assert result[-1].timestamp == end_ts
+
+    def test_fetch_ohlcv_time_range_with_limit(self) -> None:
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
+        klines = _make_klines(10)
+        client.load_historical_data(SYMBOL, '1m', klines)
+
+        start_ts = TS_BASE + 2 * 60_000
+        end_ts = TS_BASE + 7 * 60_000
+        result = client.fetch_ohlcv(SYMBOL, '1m', limit=3, start_time=start_ts, end_time=end_ts)
+        assert len(result) == 3
+        assert result[0].timestamp == TS_BASE + 5 * 60_000
+
+    def test_fetch_ohlcv_no_time_params_unchanged(self) -> None:
+        client = BacktestClient(order_repo=InMemoryOrderRepository())
+        klines = _make_klines(10)
+        client.load_historical_data(SYMBOL, '1m', klines)
+        client.update_current_timestamp(TS_BASE + 5 * 60_000)
+
+        result = client.fetch_ohlcv(SYMBOL, '1m', limit=3)
+        assert len(result) == 3
+        assert result[-1].timestamp == TS_BASE + 5 * 60_000

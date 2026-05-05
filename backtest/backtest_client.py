@@ -279,15 +279,22 @@ class BacktestClient(ExSwapClient):
         self.historical_data[key] = sorted(klines, key=lambda k: k.timestamp)
         logger.info("Loaded %d klines for %s timeframe %s", len(klines), symbol.binance(), timeframe)
 
-    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> list[Kline]:
+    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100,
+                    start_time: int | None = None, end_time: int | None = None) -> list[Kline]:
         key = f"{symbol.binance()}_{timeframe}"
         if key not in self.historical_data:
             logger.warning("No historical data available for %s timeframe %s", symbol.binance(), timeframe)
             return []
 
         klines = self.historical_data[key]
-        current_klines = [k for k in klines if k.timestamp <= self.current_timestamp]
 
+        if start_time is not None or end_time is not None:
+            klines = [k for k in klines
+                      if (start_time is None or k.timestamp >= start_time)
+                      and (end_time is None or k.timestamp <= end_time)]
+            return klines[-limit:] if len(klines) > limit else klines
+
+        current_klines = [k for k in klines if k.timestamp <= self.current_timestamp]
         if not current_klines:
             logger.warning("No klines available before timestamp %d for timeframe %s",
                           self.current_timestamp, timeframe)

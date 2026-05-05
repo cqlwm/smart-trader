@@ -11,6 +11,7 @@ class ExClient(ABC):
     exchange_name: str
     exchange: Exchange
     order_repo: OrderRepository
+    data_store: Any | None = None
 
     def symbol_info(self, symbol: Symbol) -> SymbolInfo:
         raise NotImplementedError()
@@ -46,7 +47,8 @@ class ExClient(ABC):
         """
         pass
 
-    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> list[Kline]:
+    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100,
+                    start_time: int | None = None, end_time: int | None = None) -> list[Kline]:
         if limit < 1:
             return []
 
