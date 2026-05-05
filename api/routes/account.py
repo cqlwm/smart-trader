@@ -8,7 +8,7 @@ router = APIRouter(prefix="/api/v1/account", dependencies=[Depends(verify_api_ke
 
 @router.get("/balances", response_model=BaseResponse[List[Balance]])
 async def get_balances(bot_manager=Depends(get_bot_manager)):
-    client = bot_manager.main_binance_client
+    client = bot_manager.ex_client
     # ccxt fetch_balance
     raw_balances = client.exchange.fetch_balance()
     balances = []
@@ -32,7 +32,7 @@ async def get_balances(bot_manager=Depends(get_bot_manager)):
 
 @router.get("/positions", response_model=BaseResponse[List[Position]])
 async def get_positions(bot_manager=Depends(get_bot_manager)):
-    client = bot_manager.main_binance_client
+    client = bot_manager.ex_client
     raw_positions = client.positions()
     positions = []
     

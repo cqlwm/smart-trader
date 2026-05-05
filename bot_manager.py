@@ -4,6 +4,8 @@ import logging
 from typing import Literal
 
 from client.binance_client import BinanceSwapClient
+from client.ex_client import ExSwapClient
+from event_loop.base import DataEventLoop
 from event_loop.binance import BinanceDataEventLoop
 from event_loop.handler.kline_handler import KlineHandler
 from strategy.instance_manager import StrategyInstanceManager
@@ -27,22 +29,17 @@ def create_binance_client(client_type: Literal["MAIN", "COPY"]) -> BinanceSwapCl
 
 
 class BotManager:
-    def __init__(self) -> None:
-        self.main_binance_client: BinanceSwapClient | None = None
-        self.data_event_loop: BinanceDataEventLoop | None = None
+    def __init__(self, ex_client: ExSwapClient, el: DataEventLoop) -> None:
+        self.ex_client: ExSwapClient = ex_client
+        self.data_event_loop: DataEventLoop = el
         self._thread: threading.Thread | None = None
         self.instance_manager = StrategyInstanceManager()
-
-    def _ensure_binance_client(self) -> BinanceSwapClient:
-        if self.main_binance_client is None:
-            self.main_binance_client = create_binance_client('MAIN')
-        return self.main_binance_client
 
     def start_bot(self) -> None:
         from template import dogeusdc
         from template import btcusdc_smc
 
-        client = self._ensure_binance_client()
+        client = self.ex_client
         handlers: list[KlineHandler] = []
 
         doge_handler = dogeusdc.market_trend(client)
@@ -74,13 +71,14 @@ class BotManager:
 
     def start_in_background(self) -> None:
         logger.info("Starting bot in background thread...")
-        self._thread = threading.Thread(target=self.start_bot, daemon=True)
-        self._thread.start()
+        thread = threading.Thread(target=self.start_bot, daemon=True)
+        thread.start()
+        self._thread = thread
 
     def stop(self) -> None:
         logger.info("Stopping BotManager...")
         if self.data_event_loop:
-            self.data_event_loop.close()
+            self.data_event_loop.stop()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5)
         logger.info("BotManager stopped.")

@@ -42,7 +42,7 @@ async def list_orders(
     offset: int = Query(0, ge=0),
     bot_manager=Depends(get_bot_manager),
 ):
-    client = bot_manager.main_binance_client
+    client = bot_manager.ex_client
     if client is None:
         raise HTTPException(status_code=503, detail="Binance client not initialized")
 
@@ -75,7 +75,7 @@ async def get_order(
     order_id: str,
     bot_manager=Depends(get_bot_manager),
 ):
-    client = bot_manager.main_binance_client
+    client = bot_manager.ex_client
     if client is None:
         raise HTTPException(status_code=503, detail="Binance client not initialized")
 
@@ -93,7 +93,7 @@ async def list_strategy_orders(
     offset: int = Query(0, ge=0),
     bot_manager=Depends(get_bot_manager),
 ):
-    client = bot_manager.main_binance_client
+    client = bot_manager.ex_client
     if client is None:
         raise HTTPException(status_code=503, detail="Binance client not initialized")
 
