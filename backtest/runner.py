@@ -8,7 +8,7 @@ from backtest.analyzer import BacktestAnalyzer
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
 from backtest.config import BacktestConfig
-from backtest.data_loader import HistoricalDataLoader
+from backtest.kline_data_store import KlineDataStore
 from backtest.result import BacktestResult
 from event_loop.handler.kline_handler import KlineHandler
 from model import Kline, Symbol
@@ -28,7 +28,7 @@ class BacktestRunner:
         self._strategy_factory = strategy_factory
 
     def run(self) -> BacktestResult:
-        data_loader = HistoricalDataLoader()
+        data_loader = KlineDataStore()
         client = BacktestClient(
             order_repo=InMemoryOrderRepository(),
             initial_balance=self.config.initial_balance,
@@ -76,7 +76,7 @@ class BacktestRunner:
             report=report,
         )
 
-    def _load_data(self, data_loader: HistoricalDataLoader,
+    def _load_data(self, data_loader: KlineDataStore,
                    client: BacktestClient) -> list[Kline]:
         symbol = self.config.symbol
         timeframe = self.config.timeframe

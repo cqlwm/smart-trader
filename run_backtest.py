@@ -9,7 +9,7 @@ import os
 from typing import List, Tuple, Callable, Any
 from datetime import datetime, timedelta, timezone
 from model import Symbol, OrderSide, PositionSide
-from backtest.data_loader import HistoricalDataLoader
+from backtest.kline_data_store import KlineDataStore
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
 from backtest.analyzer import BacktestAnalyzer
@@ -37,7 +37,7 @@ def run_generic_backtest(
 ):
     try:
         logger.info("加载历史数据...")
-        data_loader = HistoricalDataLoader()
+        data_loader = KlineDataStore()
         all_klines = []
         backtest_client = BacktestClient(
             order_repo=InMemoryOrderRepository(),
@@ -59,7 +59,9 @@ def run_generic_backtest(
             file_path = data_loader.ensure_data(symbol, timeframe, start_time, end_time, data_dir, offset=data_offset)
             klines = data_loader.load_csv(file_path, symbol, timeframe)
             if data_offset:
-                klines = data_loader.filter_by_date_range(klines, start_timestamp, end_timestamp)
+                klines = [k for k in klines
+                          if (start_timestamp is None or k.timestamp >= start_timestamp)
+                          and (end_timestamp is None or k.timestamp <= end_timestamp)]
             if not klines:
                 logger.error(f"未加载到历史数据: {symbol.binance()} {timeframe}")
                 return

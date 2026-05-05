@@ -5,7 +5,7 @@ AlphaTrendStrategy 回测运行脚本
 """
 
 import os
-from backtest.data_loader import HistoricalDataLoader
+from backtest.kline_data_store import KlineDataStore
 from backtest.backtest_client import BacktestClient
 from backtest.multi_timeframe_backtest_event_loop import MultiTimeframeBacktestEventLoop
 from backtest.analyzer import BacktestAnalyzer
@@ -60,7 +60,7 @@ def run_alpha_trend_backtest(data_files=None, start_timestamp=1759516200000):
         symbol = strategy_task.symbol
 
         logger.info("加载历史数据...")
-        data_loader = HistoricalDataLoader()
+        data_loader = KlineDataStore()
         historical_data = {}
 
         for timeframe, file_path in data_files.items():

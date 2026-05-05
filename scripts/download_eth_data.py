@@ -12,7 +12,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from model import Symbol
-from backtest.data_loader import HistoricalDataLoader
+from backtest.kline_data_store import KlineDataStore
 import log
 
 logger = log.getLogger(__name__)
@@ -28,7 +28,7 @@ def download_data(interval, file_path):
 
     try:
         # 创建数据加载器
-        data_loader = HistoricalDataLoader()
+        data_loader = KlineDataStore()
 
         # 下载数据
         saved_file = data_loader.download_and_save_historical_data(

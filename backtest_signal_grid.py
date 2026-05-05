@@ -12,7 +12,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from model import Symbol, OrderSide, PositionSide
-from backtest.data_loader import HistoricalDataLoader
+from backtest.kline_data_store import KlineDataStore
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
 from backtest.analyzer import BacktestAnalyzer
@@ -43,7 +43,7 @@ def run_signal_grid_backtest(data_file="data/ethusdt_2025_10_1m.csv"):
     try:
         # 1. 加载历史数据
         logger.info("加载历史数据...")
-        data_loader = HistoricalDataLoader()
+        data_loader = KlineDataStore()
         historical_klines = data_loader.load_csv(data_file, symbol, timeframe)
 
         if not historical_klines:
