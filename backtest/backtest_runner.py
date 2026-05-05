@@ -18,7 +18,6 @@ class BacktestRunner:
         self._backtest_client = self._create_backtest_client()
 
         self._event_loop = BacktestEventLoop(
-            on_progress_callback=self._progress_callback,
             start_index=config.start_index,
         )
         self._event_loop.set_backtest_client(self._backtest_client)
@@ -32,8 +31,7 @@ class BacktestRunner:
 
         logger.info(
             "BacktestRunner initialized: %s %s %s~%s",
-            config.symbol.binance(), config.timeframe,
-            config.start_date, config.end_date,
+            config.symbol.binance(), config.timeframe, config.start_date, config.end_date
         )
 
     def _create_backtest_client(self) -> BacktestClient:
@@ -52,17 +50,12 @@ class BacktestRunner:
             data_dir=self._config.data_dir,
         )
 
-    def _progress_callback(self, current: int, total: int) -> None:
-        if current % 1000 == 0:
-            progress = (current / total) * 100
-            logger.info("Backtest progress: %.1f%% (%d/%d)", progress, current, total)
-
     def run(self) -> dict[str, Any]:
         self._bot_manager.start_bot()
         self._event_loop.stop()
 
         trade_analysis = TradeAnalysis(
-            self._backtest_client,
+            client=self._backtest_client,
             initial_balance=self._config.initial_balance,
         )
         analysis = trade_analysis.analyze()
