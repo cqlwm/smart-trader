@@ -15,6 +15,7 @@ from api.schemas.backtest import (
     CompletedTradeResponse,
 )
 from api.schemas.strategy_schemas import StrategyTypeInfo
+from backtest.backtest_client import BacktestClient
 from backtest.config import BacktestConfig
 from backtest.runner import BacktestRunner
 from model import Symbol
@@ -30,6 +31,72 @@ def _parse_symbol(symbol_str: str) -> Symbol:
     if len(parts) != 2:
         raise ValueError(f"Invalid symbol format: {symbol_str}. Expected 'BASE/QUOTE' or 'BASE/QUOTE:USDT'")
     return Symbol(base=parts[0], quote=parts[1])
+
+
+def _build_strategy_factory(
+    strategy_type: str,
+    symbol: Symbol,
+    timeframe: str,
+    strategy_config: dict[str, Any],
+):
+    """Build a factory function that constructs a strategy with the correct arguments for its type."""
+
+    # Remove keys that the factory sets explicitly to avoid duplicate keyword arguments
+    config = {k: v for k, v in strategy_config.items()
+              if k not in ("symbol", "timeframe", "trade_symbol", "trade_timeframe",
+                           "exchange_id", "order_file_path")}
+
+    if strategy_type == "smc_intraday":
+        def factory(client: BacktestClient) -> Any:
+            from strategy.smc_signal.smc_intraday_strategy import SMCIntradayStrategy
+            return SMCIntradayStrategy(
+                symbols=[symbol],
+                timeframes=[timeframe],
+                ex_client=client,
+                config=config,
+            )
+        return factory
+
+    if strategy_type == "signal_grid":
+        from strategy.signal_grid_strategy import SignalGridStrategy, SignalGridStrategyConfig
+
+        def factory(client: BacktestClient) -> Any:
+            cfg = SignalGridStrategyConfig(
+                symbol=symbol,
+                timeframe=timeframe,
+                order_file_path="data/grids_strategy_v2.json",
+                **config,
+            )
+            return SignalGridStrategy(cfg, client)
+        return factory
+
+    if strategy_type == "simple_grid":
+        from strategy.simple_grid_strategy import SimpleGridStrategy, SimpleGridStrategyConfig
+
+        def factory(client: BacktestClient) -> Any:
+            cfg = SimpleGridStrategyConfig(
+                symbol=symbol,
+                **config,
+            )
+            return SimpleGridStrategy(client, cfg, timeframe)
+        return factory
+
+    if strategy_type == "daily_trend":
+        from strategy.daily_trend_strategy import DailyTrendStrategy, DailyTrendStrategyConfig
+
+        def factory(client: BacktestClient) -> Any:
+            cfg = DailyTrendStrategyConfig(
+                trade_symbol=symbol,
+                trade_timeframe=timeframe,
+                direction_symbols=[symbol],
+                order_file_path="data/daily_trend_strategy.json",
+                signal=None,
+                **config,
+            )
+            return DailyTrendStrategy(cfg, client)
+        return factory
+
+    raise ValueError(f"No backtest factory for strategy type: {strategy_type}")
 
 
 def _to_result_response(result: Any) -> BacktestResultResponse:
@@ -111,6 +178,13 @@ async def run_backtest(request: BacktestRequest):
     except KeyError:
         raise HTTPException(status_code=400, detail=f"Unknown strategy type: {request.strategy_type}")
 
+    try:
+        strategy_factory = _build_strategy_factory(
+            request.strategy_type, symbol, request.timeframe, request.strategy_config,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     config = BacktestConfig(
         strategy_type=request.strategy_type,
         strategy_config=request.strategy_config,
@@ -122,7 +196,7 @@ async def run_backtest(request: BacktestRequest):
     )
 
     try:
-        runner = BacktestRunner(config)
+        runner = BacktestRunner(config, strategy_factory=strategy_factory)
         result = runner.run()
     except Exception as e:
         logger.error("Backtest failed: %s", e, exc_info=True)
