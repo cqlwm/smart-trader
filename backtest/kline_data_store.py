@@ -107,33 +107,21 @@ class KlineDataStore:
 
         download_start = start_dt - offset if offset else start_dt
         logger.info(f"Cache miss, downloading: {file_path}")
-        return self.download_and_save_historical_data(symbol, timeframe, download_start, end_dt, file_path)
+        return self.download_historical_kline(symbol, timeframe, download_start, end_dt, file_path)
 
-    def download_and_save_historical_data(
-        self,
+    @staticmethod
+    def download_historical_kline(
         symbol: Symbol,
         interval: str,
-        start_time: Union[str, datetime],
-        end_time: Union[str, datetime],
+        start_datetime: datetime,
+        end_datetime: datetime,
         file_path: str
     ) -> str:
         """从Binance合约下载历史K线数据并保存为CSV"""
         exchange = ccxt.binance(ConstructorArgs(options={"defaultType": "future"}))
 
-        if isinstance(start_time, str):
-            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-        else:
-            start_dt = start_time
-
-        if isinstance(end_time, str):
-            end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
-        else:
-            end_dt = end_time
-
-        start_timestamp = int(start_dt.timestamp() * 1000)
-        end_timestamp = int(end_dt.timestamp() * 1000)
-
-        logger.info(f"Downloading {symbol.binance()} {interval} data from {start_dt} to {end_dt}")
+        start_timestamp = int(start_datetime.timestamp() * 1000)
+        end_timestamp = int(end_datetime.timestamp() * 1000)
 
         all_ohlcv = []
         since = start_timestamp
