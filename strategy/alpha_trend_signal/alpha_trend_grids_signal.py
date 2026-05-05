@@ -23,9 +23,9 @@ class AlphaTrendGridsSignal(Signal):
     没有多空倾向, 所有信号都是入场信号，所有信号都是出场信号
     """
 
-    def __init__(self, ats: AlphaTrendSignal):
-        super().__init__(ats.side)
-        self.ats = ats
+    def __init__(self, inner: AlphaTrendSignal):
+        super().__init__(inner.side)
+        self.ats = inner
 
     def run(self, klines: DataFrame) -> int:
         self.ats.run(klines)
