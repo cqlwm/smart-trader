@@ -16,7 +16,7 @@ class BinanceDataEventLoop(DataEventLoop):
 
     def __init__(self, kline_subscribes: list[str]) -> None:
         super().__init__()
-        self.kline_subscribes = kline_subscribes
+        self.kline_subscribes: list[str] = kline_subscribes
         self._parser = BinanceKlineParser()
 
     def start(self) -> None:
