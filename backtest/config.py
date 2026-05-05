@@ -14,3 +14,4 @@ class BacktestConfig:
     initial_balance: float = 10000.0
     maker_fee: float = 0.0002
     taker_fee: float = 0.0004
+    extra_timeframes: tuple[str, ...] = ()

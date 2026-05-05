@@ -85,6 +85,18 @@ class BacktestRunner:
         if klines:
             client.load_historical_data(symbol, timeframe, klines)
             logger.info("Loaded %d klines for %s %s", len(klines), symbol.binance(), timeframe)
+
+        for tf in self.config.extra_timeframes:
+            tf_path = data_loader.ensure_data(
+                symbol, tf,
+                self.config.start_date, self.config.end_date,
+                "data",
+            )
+            tf_klines = data_loader.load_csv(tf_path, symbol, tf)
+            if tf_klines:
+                client.load_historical_data(symbol, tf, tf_klines)
+                logger.info("Loaded %d klines for %s %s", len(tf_klines), symbol.binance(), tf)
+
         return klines
 
     def _create_strategy(self, client: BacktestClient) -> Any:

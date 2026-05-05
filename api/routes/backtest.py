@@ -47,11 +47,14 @@ def _build_strategy_factory(
                            "exchange_id", "order_file_path")}
 
     if strategy_type == "smc_intraday":
+        entry_tf = timeframe
+        all_timeframes = ["1w", "1d", entry_tf]
+
         def factory(client: BacktestClient) -> Any:
             from strategy.smc_signal.smc_intraday_strategy import SMCIntradayStrategy
             return SMCIntradayStrategy(
                 symbols=[symbol],
-                timeframes=[timeframe],
+                timeframes=all_timeframes,
                 ex_client=client,
                 config=config,
             )
@@ -185,6 +188,11 @@ async def run_backtest(request: BacktestRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    extra_timeframes: tuple[str, ...] = ()
+    if request.strategy_type == "smc_intraday":
+        entry_tf = request.timeframe
+        extra_timeframes = tuple(tf for tf in ("1w", "1d") if tf != entry_tf)
+
     config = BacktestConfig(
         strategy_type=request.strategy_type,
         strategy_config=request.strategy_config,
@@ -193,6 +201,7 @@ async def run_backtest(request: BacktestRequest):
         start_date=request.start_date,
         end_date=request.end_date,
         initial_balance=request.initial_balance,
+        extra_timeframes=extra_timeframes,
     )
 
     try:
