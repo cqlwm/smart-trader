@@ -12,7 +12,6 @@ from model import Symbol, OrderSide, PositionSide
 from backtest.kline_data_store import KlineDataStore
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
-from backtest.analyzer import BacktestAnalyzer
 from event_loop.handler.kline_handler import KlineHandler
 from strategy.signal_grid_strategy import SignalGridStrategy, SignalGridStrategyConfig
 from strategy.daily_trend_strategy import DailyTrendStrategy, DailyTrendStrategyConfig
@@ -37,45 +36,30 @@ def run_generic_backtest(
 ):
     try:
         logger.info("加载历史数据...")
-        data_loader = KlineDataStore()
-        all_klines = []
+
+        primary_symbol, primary_tf = data_requirements[0]
+        extra_tfs = tuple(tf for _, tf in data_requirements[1:])
+
+        data_store = KlineDataStore()
         backtest_client = BacktestClient(
             order_repo=InMemoryOrderRepository(),
             initial_balance=initial_balance,
             maker_fee=0.0002,
-            taker_fee=0.0004
+            taker_fee=0.0004,
+            data_store=data_store,
+            symbol=primary_symbol,
+            timeframe=primary_tf,
+            start_date=start_time,
+            end_date=end_time,
+            extra_timeframes=extra_tfs,
+            data_dir=data_dir,
         )
 
-        start_dt = datetime.fromisoformat(start_time)
-        if start_dt.tzinfo is None:
-            start_dt = start_dt.replace(tzinfo=timezone.utc)
-        end_dt = datetime.fromisoformat(end_time)
-        if end_dt.tzinfo is None:
-            end_dt = end_dt.replace(tzinfo=timezone.utc)
-        start_timestamp = int(start_dt.timestamp() * 1000)
-        end_timestamp = int(end_dt.timestamp() * 1000)
-
-        for symbol, timeframe in data_requirements:
-            file_path = data_loader.ensure_data(symbol, timeframe, start_time, end_time, data_dir, offset=data_offset)
-            klines = data_loader.load_csv(file_path, symbol, timeframe)
-            if data_offset:
-                klines = [k for k in klines
-                          if (start_timestamp is None or k.timestamp >= start_timestamp)
-                          and (end_timestamp is None or k.timestamp <= end_timestamp)]
-            if not klines:
-                logger.error(f"未加载到历史数据: {symbol.binance()} {timeframe}")
-                return
-
-            logger.info(f"加载了 {len(klines)} 根K线数据 for {symbol.binance()} {timeframe}")
-            backtest_client.load_historical_data(symbol, timeframe, klines)
-            all_klines.extend(klines)
+        all_klines = backtest_client.get_all_klines()
 
         if not all_klines:
             logger.error("没有任何历史数据被加载")
             return
-
-        # Sort all historical klines by timestamp chronologically
-        all_klines.sort(key=lambda k: k.timestamp)
 
         kline_handler = KlineHandler(strategy_factory(backtest_client))
 
@@ -102,13 +86,17 @@ def run_generic_backtest(
         logger.info(f"回测完成! 总交易次数: {len(trade_history)}")
         logger.info(f"最终余额: ${backtest_client.get_final_balance():.2f}")
 
-        analyzer = BacktestAnalyzer(initial_balance)
-        analysis = analyzer.analyze(trade_history)
+        from backtest.trade_analysis import TradeAnalysis
+        trade_analysis = TradeAnalysis(backtest_client, initial_balance=initial_balance)
+        analysis = trade_analysis.analyze()
 
         # Using the first data requirement for the report name
         main_symbol, main_tf = data_requirements[0]
         report_file = f"backtest_report_{main_symbol.simple()}_{main_tf}.txt"
-        report = analyzer.generate_report(analysis, report_file)
+        report = trade_analysis.report()
+        if report_file:
+            with open(report_file, 'w') as f:
+                f.write(report)
 
         summary = analysis['summary']
         risk = analysis['risk_metrics']

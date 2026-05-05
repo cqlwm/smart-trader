@@ -60,12 +60,13 @@ def run_alpha_trend_backtest(data_files=None, start_timestamp=1759516200000):
         symbol = strategy_task.symbol
 
         logger.info("加载历史数据...")
-        data_loader = KlineDataStore()
+        data_store = KlineDataStore()
         historical_data = {}
 
         for timeframe, file_path in data_files.items():
-            klines = data_loader.load_csv(file_path, symbol, timeframe)
+            klines = data_store.load_csv(file_path, symbol, timeframe)
             historical_data[timeframe] = klines
+            backtest_client._store_klines(symbol, timeframe, klines)
             logger.info(f"加载了 {len(klines)} 根{timeframe} K线数据")
 
 
@@ -115,12 +116,16 @@ def run_alpha_trend_backtest(data_files=None, start_timestamp=1759516200000):
             logger.info(f"First order: {backtest_orders[0]}")
 
         # 8. 分析结果
-        analyzer = BacktestAnalyzer(initial_balance)
-        analysis = analyzer.analyze(trade_history)
+        from backtest.trade_analysis import TradeAnalysis
+        trade_analysis = TradeAnalysis(backtest_client, initial_balance=initial_balance)
+        analysis = trade_analysis.analyze()
 
         # 9. 生成报告
         report_file = f"backtest_report_alpha_trend_{symbol.simple()}_{timeframes[0]}_{timeframes[1]}.txt"
-        report = analyzer.generate_report(analysis, report_file)
+        report = trade_analysis.report()
+        if report_file:
+            with open(report_file, 'w') as f:
+                f.write(report)
 
         # 打印关键指标
         summary = analysis['summary']

@@ -43,8 +43,8 @@ def run_signal_grid_backtest(data_file="data/ethusdt_2025_10_1m.csv"):
     try:
         # 1. 加载历史数据
         logger.info("加载历史数据...")
-        data_loader = KlineDataStore()
-        historical_klines = data_loader.load_csv(data_file, symbol, timeframe)
+        data_store = KlineDataStore()
+        historical_klines = data_store.load_csv(data_file, symbol, timeframe)
 
         if not historical_klines:
             logger.error("未加载到历史数据")
@@ -90,6 +90,7 @@ def run_signal_grid_backtest(data_file="data/ethusdt_2025_10_1m.csv"):
         # 5. 创建回测任务
         # 准备历史数据字典
         historical_data = {timeframe: historical_klines}
+        backtest_client._store_klines(symbol, timeframe, historical_klines)
         backtest_task = BacktestHandler(symbol, strategy, backtest_client, historical_data)
 
         # 6. 创建回测事件循环
@@ -126,12 +127,16 @@ def run_signal_grid_backtest(data_file="data/ethusdt_2025_10_1m.csv"):
         logger.info(f"最终余额: ${backtest_client.get_final_balance():.2f}")
 
         # 9. 分析结果
-        analyzer = BacktestAnalyzer(initial_balance)
-        analysis = analyzer.analyze(trade_history)
+        from backtest.trade_analysis import TradeAnalysis
+        trade_analysis = TradeAnalysis(backtest_client, initial_balance=initial_balance)
+        analysis = trade_analysis.analyze()
 
         # 10. 生成报告
         report_file = f"backtest_report_signal_grid_{symbol.simple()}_{timeframe}.txt"
-        report = analyzer.generate_report(analysis, report_file)
+        report = trade_analysis.report()
+        if report_file:
+            with open(report_file, 'w') as f:
+                f.write(report)
 
         # 打印关键指标
         summary = analysis['summary']

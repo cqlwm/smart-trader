@@ -16,14 +16,26 @@ from api.schemas.backtest import (
 )
 from api.schemas.strategy_schemas import StrategyTypeInfo
 from backtest.backtest_client import BacktestClient
-from backtest.config import BacktestConfig
-from backtest.runner import BacktestRunner
+from backtest.backtest_event_loop import BacktestEventLoop
+from backtest.trade_analysis import TradeAnalysis
+from backtest.kline_data_store import KlineDataStore
+from backtest.result import BacktestResult
+from event_loop.handler.kline_handler import KlineHandler
+from persistence.order_repository import InMemoryOrderRepository
+from datetime import datetime, timezone
 from model import Symbol
 from strategy.registry import StrategyRegistry
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/backtest", dependencies=[Depends(verify_api_key)])
+
+
+def _parse_start_timestamp(date_str: str) -> int:
+    dt = datetime.fromisoformat(date_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
 
 
 def _parse_symbol(symbol_str: str) -> Symbol:
@@ -192,20 +204,45 @@ async def run_backtest(request: BacktestRequest):
         entry_tf = request.timeframe
         extra_timeframes = tuple(tf for tf in ("1w", "1d") if tf != entry_tf)
 
-    config = BacktestConfig(
-        strategy_type=request.strategy_type,
-        strategy_config=request.strategy_config,
-        symbol=symbol,
-        timeframe=request.timeframe,
-        start_date=request.start_date,
-        end_date=request.end_date,
-        initial_balance=request.initial_balance,
-        extra_timeframes=extra_timeframes,
-    )
-
     try:
-        runner = BacktestRunner(config, strategy_factory=strategy_factory)
-        result = runner.run()
+        data_store = KlineDataStore()
+        client = BacktestClient(
+            order_repo=InMemoryOrderRepository(),
+            initial_balance=request.initial_balance,
+            data_store=data_store,
+            symbol=symbol,
+            timeframe=request.timeframe,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            extra_timeframes=extra_timeframes,
+        )
+
+        all_klines = client.get_all_klines()
+        if not all_klines:
+            raise HTTPException(status_code=500, detail="No historical data loaded")
+
+        strategy = strategy_factory(client)
+        handler = KlineHandler(strategy)
+        start_ts = _parse_start_timestamp(request.start_date)
+
+        event_loop = BacktestEventLoop(
+            historical_klines=all_klines,
+            start_timestamp=start_ts,
+        )
+        event_loop.set_backtest_client(client)
+        event_loop.add_handler(handler)
+        event_loop.start()
+        event_loop.stop()
+
+        trade_analysis = TradeAnalysis(client, initial_balance=request.initial_balance)
+        analysis = trade_analysis.analyze()
+
+        result = BacktestResult(
+            analysis=analysis,
+            trade_history=client.get_trade_history(),
+            final_balance=client.get_final_balance(),
+            report=trade_analysis.report(),
+        )
     except Exception as e:
         logger.error("Backtest failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Backtest execution failed: {str(e)}")
