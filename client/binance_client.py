@@ -8,7 +8,7 @@ from client.ex_client import ExSwapClient
 
 import requests
 from model import Order, PositionSide, Symbol, PlaceOrderBehavior, SymbolInfo
-from model import OrderSide, OrderStatus
+from model import OrderSide, OrderStatus, Kline
 from persistence.order_repository import InMemoryOrderRepository, OrderRepository
 import log
 from ccxt.base.types import ConstructorArgs
@@ -16,9 +16,10 @@ from ccxt.base.types import ConstructorArgs
 logger = log.getLogger('BinanceSwapClient')
 
 class BinanceSwapClient(ExSwapClient):
-    def __init__(self, api_key: str, api_secret: str, is_test: bool = False, order_repo: OrderRepository | None = None):
+    def __init__(self, api_key: str, api_secret: str, is_test: bool = False, order_repo: OrderRepository | None = None, data_store: Any | None = None):
         self.exchange_name = 'binance'
         self.order_repo = order_repo or InMemoryOrderRepository()
+        self.data_store = data_store
 
         self.exchange = ccxt.binance(ConstructorArgs(
             apiKey=api_key,
@@ -68,6 +69,69 @@ class BinanceSwapClient(ExSwapClient):
             min_qty=min_qty,
             max_qty=max_qty,
         )
+
+    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100,
+                    start_time: int | None = None, end_time: int | None = None) -> list[Kline]:
+        if start_time is not None or end_time is not None:
+            if self.data_store:
+                from datetime import datetime, timezone as tz
+                start_dt = datetime.fromtimestamp(start_time / 1000, tz=tz.utc) if start_time else None
+                end_dt = datetime.fromtimestamp(end_time / 1000, tz=tz.utc) if end_time else None
+
+                start_str = start_dt.isoformat() if start_dt else ""
+                end_str = end_dt.isoformat() if end_dt else ""
+
+                file_path = self.data_store.ensure_data(
+                    symbol, timeframe,
+                    start_str or "2020-01-01",
+                    end_str or datetime.now(tz=tz.utc).isoformat(),
+                    "data",
+                )
+                klines = self.data_store.load_csv(file_path, symbol, timeframe)
+                return self._filter_klines_by_time(klines, start_time, end_time, limit)
+            return self._fetch_ohlcv_via_ccxt(symbol, timeframe, limit, start_time, end_time)
+        return self._fetch_ohlcv_via_ccxt(symbol, timeframe, limit)
+
+    def _fetch_ohlcv_via_ccxt(self, symbol: Symbol, timeframe: str, limit: int = 100,
+                               start_time: int | None = None, end_time: int | None = None) -> list[Kline]:
+        since = start_time
+        list_ohlcv = self.exchange.fetch_ohlcv(
+            symbol.ccxt(), timeframe, since=since, limit=limit
+        )
+        klines: list[Kline] = []
+        for ohlcv in list_ohlcv:
+            ts = ohlcv[0]
+            if end_time is not None and ts > end_time:
+                break
+            klines.append(
+                Kline(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    timestamp=ts,
+                    open=ohlcv[1],
+                    high=ohlcv[2],
+                    low=ohlcv[3],
+                    close=ohlcv[4],
+                    volume=ohlcv[5],
+                    finished=True
+                )
+            )
+
+        if klines:
+            timeframe_ms = self.exchange.parse_timeframe(timeframe)
+            klines[-1].finished = klines[-1].timestamp + timeframe_ms * 1000 <= int(time.time() * 1000)
+
+        return klines[-limit:] if len(klines) > limit else klines
+
+    @staticmethod
+    def _filter_klines_by_time(klines: list[Kline], start_time: int | None,
+                                end_time: int | None, limit: int) -> list[Kline]:
+        filtered = [
+            k for k in klines
+            if (start_time is None or k.timestamp >= start_time)
+            and (end_time is None or k.timestamp <= end_time)
+        ]
+        return filtered[-limit:] if len(filtered) > limit else filtered
 
     def create_chaser(self, symbol: Symbol, order_side: OrderSide, quantity: float, position_side: str, place_order_behavior: PlaceOrderBehavior, strategy_id: str = "") -> LimitOrderChaser:
         return LimitOrderChaser(
