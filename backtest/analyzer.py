@@ -30,6 +30,7 @@ class BacktestAnalyzer:
             return self._empty_results()
 
         trades_df = pd.DataFrame(completed_trades)
+        serializable_trades = self._serialize_completed_trades(completed_trades)
 
         total_return = trades_df['pnl'].sum()
         annualized_return = self._calculate_annualized_return(trades_df, total_return)
@@ -71,7 +72,8 @@ class BacktestAnalyzer:
             },
             'equity_curve': self._calculate_equity_curve_from_trades(trades_df),
             'monthly_returns': self._calculate_monthly_returns_from_trades(trades_df),
-            'trade_analysis': self._analyze_completed_trades(trades_df)
+            'trade_analysis': self._analyze_completed_trades(trades_df),
+            'completed_trades': serializable_trades
         }
 
     def _empty_results(self) -> Dict[str, Any]:
@@ -101,7 +103,8 @@ class BacktestAnalyzer:
             },
             'equity_curve': [],
             'monthly_returns': [],
-            'trade_analysis': {}
+            'trade_analysis': {},
+            'completed_trades': []
         }
 
     def _identify_completed_trades(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
@@ -180,6 +183,27 @@ class BacktestAnalyzer:
             'entry_time': entry_row['timestamp'],
             'exit_time': exit_row['timestamp']
         }
+
+    @staticmethod
+    def _serialize_completed_trades(trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert Pandas Timestamps to serializable formats."""
+        result = []
+        for t in trades:
+            entry_time = t['entry_time']
+            exit_time = t['exit_time']
+            result.append({
+                'symbol': t['symbol'],
+                'position_side': t['position_side'],
+                'entry_price': float(t['entry_price']),
+                'exit_price': float(t['exit_price']),
+                'quantity': float(t['quantity']),
+                'pnl': float(t['pnl']),
+                'total_fees': float(t['total_fees']),
+                'net_pnl': float(t['net_pnl']),
+                'entry_time': int(entry_time.timestamp() * 1000) if hasattr(entry_time, 'timestamp') else entry_time,
+                'exit_time': int(exit_time.timestamp() * 1000) if hasattr(exit_time, 'timestamp') else exit_time,
+            })
+        return result
 
     def _calculate_annualized_return(self, df: pd.DataFrame, total_return: float) -> float:
         if df.empty:

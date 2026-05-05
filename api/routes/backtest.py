@@ -145,8 +145,7 @@ def _to_result_response(result: Any) -> BacktestResultResponse:
     ]
 
     completed_trades = []
-    trade_history = result.trade_history
-    for trade in trade_history:
+    for trade in analysis.get("completed_trades", []):
         completed_trades.append(CompletedTradeResponse(
             symbol=trade.get("symbol", ""),
             position_side=trade.get("position_side", ""),
