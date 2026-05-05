@@ -135,7 +135,7 @@ class TestBinanceKlineParser:
 
 
 class MockExClient(ExClient):
-    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int) -> list[Kline]:
+    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100, start_time: int | None = None, end_time: int | None = None) -> list[Kline]:
         return []
 
     def balance(self, coin: str) -> float:

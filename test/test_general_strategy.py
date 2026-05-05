@@ -8,7 +8,7 @@ from client.ex_client import ExClient
 
 
 class MockExClient(ExClient):
-    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int) -> List[Kline]:
+    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100, start_time: int | None = None, end_time: int | None = None) -> List[Kline]:
         return []
     
     def balance(self):
