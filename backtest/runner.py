@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from backtest.analyzer import BacktestAnalyzer
+from backtest.backtest_analysis import BacktestAnalysis
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
 from backtest.config import BacktestConfig
@@ -59,12 +59,12 @@ class BacktestRunner:
         event_loop.start()
         event_loop.stop()
 
-        trade_history = client.get_trade_history()
-        final_balance = client.get_final_balance()
+        backtest_analysis = BacktestAnalysis(client, self.config.initial_balance)
+        analysis = backtest_analysis.analyze()
+        report = backtest_analysis.report()
 
-        analyzer = BacktestAnalyzer(self.config.initial_balance)
-        analysis = analyzer.analyze(trade_history)
-        report = analyzer.generate_report(analysis)
+        final_balance = client.get_final_balance()
+        trade_history = client.get_trade_history()
 
         logger.info("Backtest completed. Trades: %d, Final balance: %.2f",
                      len(trade_history), final_balance)
@@ -160,11 +160,12 @@ class BacktestRunner:
         return int(dt.timestamp() * 1000)
 
     def _empty_result(self) -> BacktestResult:
-        analyzer = BacktestAnalyzer(self.config.initial_balance)
-        analysis = analyzer.analyze([])
+        client = BacktestClient(order_repo=InMemoryOrderRepository(), initial_balance=self.config.initial_balance)
+        backtest_analysis = BacktestAnalysis(client, self.config.initial_balance)
+        analysis = backtest_analysis.analyze()
         return BacktestResult(
             analysis=analysis,
             trade_history=[],
             final_balance=self.config.initial_balance,
-            report=analyzer.generate_report(analysis),
+            report=backtest_analysis.report(),
         )
