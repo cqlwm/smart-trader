@@ -34,7 +34,7 @@ def main():
                 config_path = arg.split("=", 1)[1]
         BotManager(
             ex_client=create_binance_client("MAIN"),
-            el=BinanceDataEventLoop(kline_subscribes=[]),
+            el=BinanceDataEventLoop(),
             config_path=config_path,
         ).start_bot()
     else:

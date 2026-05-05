@@ -4,6 +4,7 @@ import websocket
 import logging
 import random
 
+from model import Symbol
 from event_loop.base import DataEventLoop
 from event_loop.handler.binance_kline_parser import BinanceKlineParser
 
@@ -14,10 +15,22 @@ class BinanceDataEventLoop(DataEventLoop):
     SET_PROPERTY_ID = 1
     SUBSCRIBE_KLINE_ID = 2
 
-    def __init__(self, kline_subscribes: list[str]) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.kline_subscribes: list[str] = kline_subscribes
+        self.kline_subscribes: list[str] = []
         self._parser = BinanceKlineParser()
+
+    def subscribe(self, symbols: list[Symbol], timeframes: list[str]) -> None:
+        for symbol in symbols:
+            for timeframe in timeframes:
+                key = symbol.binance_ws_sub_kline(timeframe)
+                self.add_kline_subscribe(key)
+
+    def unsubscribe(self, symbols: list[Symbol], timeframes: list[str]) -> None:
+        for symbol in symbols:
+            for timeframe in timeframes:
+                key = symbol.binance_ws_sub_kline(timeframe)
+                self.remove_kline_subscribe(key)
 
     def start(self) -> None:
         websocket_url = "wss://fstream.binance.com/stream"

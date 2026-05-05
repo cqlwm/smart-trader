@@ -3,7 +3,6 @@ import logging
 
 from client.ex_client import ExSwapClient
 from event_loop.base import DataEventLoop
-from event_loop.binance import BinanceDataEventLoop
 from event_loop.handler.kline_handler import KlineHandler
 from strategy.instance_manager import StrategyInstanceManager
 from strategy.loader import StrategyLoader
@@ -26,23 +25,10 @@ class BotManager:
         loader = StrategyLoader(self._config_path)
         handlers: list[KlineHandler] = loader.load(self.ex_client)
 
-        kline_subscribes: list[str] = []
-        self.data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
-
         for handler in handlers:
-            for symbol in handler.strategy.symbols:
-                for timeframe in handler.strategy.timeframes:
-                    k = symbol.binance_ws_sub_kline(timeframe)
-                    if k not in kline_subscribes:
-                        kline_subscribes.append(k)
-
             self.data_event_loop.add_handler(handler)
+            self.data_event_loop.subscribe(handler.strategy.symbols, handler.strategy.timeframes)
 
-        if len(kline_subscribes) == 0:
-            logger.warning('No kline subscribes found')
-            return
-
-        logger.info("Starting BinanceDataEventLoop...")
         self.data_event_loop.start()
 
     def start_in_background(self) -> None:
