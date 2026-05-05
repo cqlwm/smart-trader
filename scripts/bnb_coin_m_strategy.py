@@ -159,3 +159,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+'''
+0 8 * * * BNB_ST_DIR=/root/projects/smart-trader-script/smart-trader && /root/.local/bin/uv run --project $BNB_ST_DIR python $BNB_ST_DIR/scripts/bnb_coin_m_strategy.py >> /tmp/bnb_coin_m_strategy.log 2>&1
+'''
