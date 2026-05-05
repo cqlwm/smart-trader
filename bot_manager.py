@@ -6,32 +6,25 @@ from event_loop.base import DataEventLoop
 from event_loop.binance import BinanceDataEventLoop
 from event_loop.handler.kline_handler import KlineHandler
 from strategy.instance_manager import StrategyInstanceManager
+from strategy.loader import StrategyLoader
+import strategy.strategies  # noqa: F401 — trigger auto-registration
 import dotenv
 
 dotenv.load_dotenv()
 logger = logging.getLogger(__name__)
 
+
 class BotManager:
-    def __init__(self, ex_client: ExSwapClient, el: DataEventLoop) -> None:
+    def __init__(self, ex_client: ExSwapClient, el: DataEventLoop, config_path: str = "strategies.yaml") -> None:
         self.ex_client: ExSwapClient = ex_client
         self.data_event_loop: DataEventLoop = el
+        self._config_path = config_path
         self._thread: threading.Thread | None = None
         self.instance_manager = StrategyInstanceManager()
 
     def start_bot(self) -> None:
-        from template import dogeusdc
-        from template import btcusdc_smc
-
-        client = self.ex_client
-        handlers: list[KlineHandler] = []
-
-        doge_handler = dogeusdc.market_trend(client)
-        if doge_handler:
-            handlers.append(doge_handler)
-
-        smc_handler = btcusdc_smc.smc_intraday(client)
-        if smc_handler:
-            handlers.append(smc_handler)
+        loader = StrategyLoader(self._config_path)
+        handlers: list[KlineHandler] = loader.load(self.ex_client)
 
         kline_subscribes: list[str] = []
         self.data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)

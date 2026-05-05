@@ -28,10 +28,14 @@ def create_binance_client(client_type: Literal["MAIN", "COPY"]) -> BinanceSwapCl
 
 def main():
     if "--no-api" in sys.argv:
-        # from bot_manager import bot_manager
+        config_path = "strategies.yaml"
+        for arg in sys.argv:
+            if arg.startswith("--config="):
+                config_path = arg.split("=", 1)[1]
         BotManager(
             ex_client=create_binance_client("MAIN"),
-            el=BinanceDataEventLoop(kline_subscribes=[])
+            el=BinanceDataEventLoop(kline_subscribes=[]),
+            config_path=config_path,
         ).start_bot()
     else:
         uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=False)
