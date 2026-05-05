@@ -15,3 +15,4 @@ class BacktestConfig:
     maker_fee: float = 0.0002
     taker_fee: float = 0.0004
     extra_timeframes: tuple[str, ...] = ()
+    data_dir: str = "data"

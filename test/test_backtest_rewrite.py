@@ -5,7 +5,7 @@ from typing import Any
 from model import Symbol, Kline
 from backtest.config import BacktestConfig
 from backtest.result import BacktestResult
-from backtest.runner import BacktestRunner
+
 from backtest.backtest_client import BacktestClient
 from backtest.analyzer import BacktestAnalyzer
 from backtest.kline_data_store import KlineDataStore

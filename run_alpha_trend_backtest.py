@@ -8,7 +8,6 @@ import os
 from backtest.kline_data_store import KlineDataStore
 from backtest.backtest_client import BacktestClient
 from backtest.multi_timeframe_backtest_event_loop import MultiTimeframeBacktestEventLoop
-from backtest.analyzer import BacktestAnalyzer
 from event_loop.handler.backtest_task import BacktestHandler
 from template.ethusdt import alpha_trend
 from persistence.order_repository import InMemoryOrderRepository
