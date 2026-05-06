@@ -1,10 +1,21 @@
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Optional
+from dataclasses import dataclass
+
 import log
 
 logger = log.getLogger(__name__)
 
+
+
+
+@dataclass(frozen=True)
+class BacktestResult:
+    analysis: dict[str, Any]
+    trade_history: list[dict[str, Any]]
+    final_balance: float
+    report: str
 
 class BacktestAnalyzer:
     """回测结果分析器"""

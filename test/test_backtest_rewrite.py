@@ -1,14 +1,13 @@
 import pytest
-from unittest.mock import patch, MagicMock
-from typing import Any
+from unittest.mock import patch
 
 from model import Symbol, Kline
 from backtest.config import BacktestConfig
 from backtest.result import BacktestResult
 
 from backtest.backtest_client import BacktestClient
-from backtest.analyzer import BacktestAnalyzer
-from backtest.kline_data_store import KlineDataStore
+from backtest.backtest_analyzer import BacktestAnalyzer
+from persistence.kline_data_store import KlineDataStore
 from persistence.order_repository import InMemoryOrderRepository
 
 

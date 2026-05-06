@@ -319,8 +319,8 @@ from bot_manager import BotManager
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
 from backtest.config import BacktestConfig
-from backtest.kline_data_store import KlineDataStore
-from backtest.trade_analysis import TradeAnalysis
+from persistence.kline_data_store import KlineDataStore
+from trade_analysis import TradeAnalysis
 from persistence.order_repository import InMemoryOrderRepository
 
 logger = logging.getLogger(__name__)

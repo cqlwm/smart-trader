@@ -6,7 +6,7 @@ from typing import Any
 from client.ex_client import ExSwapClient
 from model import Symbol, SymbolInfo, Order, OrderSide, PositionSide, OrderStatus, Kline
 from persistence.order_repository import OrderRepository
-from backtest.kline_data_store import KlineDataStore
+from persistence.kline_data_store import KlineDataStore
 
 logger = logging.getLogger(__name__)
 

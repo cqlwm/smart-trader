@@ -3,6 +3,7 @@ import time
 import ccxt
 from typing import Any, Dict, List, Optional
 
+from persistence.kline_data_store import KlineDataStore
 from client.binance_chaser_order import LimitOrderChaser
 from client.ex_client import ExSwapClient
 
@@ -16,7 +17,7 @@ from ccxt.base.types import ConstructorArgs
 logger = log.getLogger('BinanceSwapClient')
 
 class BinanceSwapClient(ExSwapClient):
-    def __init__(self, api_key: str, api_secret: str, is_test: bool = False, order_repo: OrderRepository | None = None, data_store: Any | None = None):
+    def __init__(self, api_key: str, api_secret: str, is_test: bool = False, order_repo: OrderRepository | None = None, data_store: KlineDataStore | None = None):
         self.exchange_name = 'binance'
         self.order_repo = order_repo or InMemoryOrderRepository()
         self.data_store = data_store

@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, timezone
 
-from backtest.kline_data_store import KlineDataStore
+from persistence.kline_data_store import KlineDataStore
 from model import Symbol, Kline
 
 

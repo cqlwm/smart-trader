@@ -41,7 +41,7 @@ Add new test class to `test/test_backtest_rewrite.py`:
 ```python
 from datetime import timedelta
 from unittest.mock import MagicMock
-from backtest.kline_data_store import KlineDataStore
+from persistence.kline_data_store import KlineDataStore
 
 
 class TestBacktestClientAutoLoad:
@@ -241,7 +241,7 @@ Add the required imports at the top of `backtest/backtest_client.py`:
 
 ```python
 from datetime import timedelta
-from backtest.kline_data_store import KlineDataStore
+from persistence.kline_data_store import KlineDataStore
 ```
 
 Remove `load_historical_data` method entirely.
@@ -351,7 +351,7 @@ git commit -m "refactor: update tests to use BacktestClient._store_klines instea
 ```python
 from typing import Any
 
-from backtest.analyzer import BacktestAnalyzer
+from backtest.backtest_analyzer import BacktestAnalyzer
 from client.ex_client import ExSwapClient
 
 
@@ -450,10 +450,9 @@ import pytest
 from typing import Any
 from model import Symbol, OrderSide, PositionSide
 from backtest.backtest_client import BacktestClient
-from backtest.trade_analysis import TradeAnalysis
+from trade_analysis import TradeAnalysis
 from client.ex_client import ExSwapClient
 from persistence.order_repository import InMemoryOrderRepository
-
 
 SYMBOL = Symbol(base='eth', quote='usdt')
 TS_BASE = 1_700_000_000_000
@@ -615,14 +614,15 @@ def _parse_start_timestamp(date_str: str) -> int:
 ```
 
 Update imports at the top of `api/routes/backtest.py`:
+
 ```python
 # Remove:
 from backtest.runner import BacktestRunner
 
 # Add:
 from backtest.backtest_event_loop import BacktestEventLoop
-from backtest.trade_analysis import TradeAnalysis
-from backtest.kline_data_store import KlineDataStore
+from trade_analysis import TradeAnalysis
+from persistence.kline_data_store import KlineDataStore
 from backtest.result import BacktestResult
 from event_loop.handler.kline_handler import KlineHandler
 from persistence.order_repository import InMemoryOrderRepository
@@ -686,16 +686,18 @@ From:
 ```
 
 To:
+
 ```python
-        from backtest.trade_analysis import TradeAnalysis
-        trade_analysis = TradeAnalysis(backtest_client, initial_balance=initial_balance)
-        analysis = trade_analysis.analyze()
-        report = trade_analysis.report()
-        ...
-        # Save report to file
-        if report_file:
-            with open(report_file, 'w') as f:
-                f.write(report)
+        from trade_analysis import TradeAnalysis
+
+trade_analysis = TradeAnalysis(backtest_client, initial_balance=initial_balance)
+analysis = trade_analysis.analyze()
+report = trade_analysis.report()
+...
+# Save report to file
+if report_file:
+    with open(report_file, 'w') as f:
+        f.write(report)
 ```
 
 Remove the `BacktestAnalyzer` import and `from backtest.kline_data_store import KlineDataStore` if no longer used directly.
@@ -748,14 +750,16 @@ From:
 ```
 
 To:
+
 ```python
-        from backtest.trade_analysis import TradeAnalysis
-        trade_analysis = TradeAnalysis(backtest_client, initial_balance=initial_balance)
-        analysis = trade_analysis.analyze()
-        report = trade_analysis.report()
-        if report_file:
-            with open(report_file, 'w') as f:
-                f.write(report)
+        from trade_analysis import TradeAnalysis
+
+trade_analysis = TradeAnalysis(backtest_client, initial_balance=initial_balance)
+analysis = trade_analysis.analyze()
+report = trade_analysis.report()
+if report_file:
+    with open(report_file, 'w') as f:
+        f.write(report)
 ```
 
 - [ ] **Step 4: Update `backtest_signal_grid.py`**

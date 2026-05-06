@@ -51,7 +51,7 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
-from backtest.kline_data_store import KlineDataStore
+from persistence.kline_data_store import KlineDataStore
 from model import Symbol
 
 
@@ -332,11 +332,12 @@ git commit -m "refactor: rename HistoricalDataLoader to KlineDataStore, remove u
 - [ ] **Step 1: Update imports in backtest/runner.py**
 
 In `backtest/runner.py`, line 11:
+
 ```python
 # Before:
 from backtest.data_loader import HistoricalDataLoader
 # After:
-from backtest.kline_data_store import KlineDataStore
+from persistence.kline_data_store import KlineDataStore
 ```
 
 Line 31:
@@ -358,11 +359,12 @@ def _load_data(self, data_loader: KlineDataStore,
 - [ ] **Step 2: Update imports in run_backtest.py**
 
 In `run_backtest.py`, line 12:
+
 ```python
 # Before:
 from backtest.data_loader import HistoricalDataLoader
 # After:
-from backtest.kline_data_store import KlineDataStore
+from persistence.kline_data_store import KlineDataStore
 ```
 
 Line 40:
@@ -386,11 +388,12 @@ klines = [k for k in klines
 - [ ] **Step 3: Update imports in run_alpha_trend_backtest.py**
 
 In `run_alpha_trend_backtest.py`, line 8:
+
 ```python
 # Before:
 from backtest.data_loader import HistoricalDataLoader
 # After:
-from backtest.kline_data_store import KlineDataStore
+from persistence.kline_data_store import KlineDataStore
 ```
 
 Line 63:
@@ -404,11 +407,12 @@ data_loader = KlineDataStore()
 - [ ] **Step 4: Update imports in backtest_signal_grid.py**
 
 In `backtest_signal_grid.py`, line 15:
+
 ```python
 # Before:
 from backtest.data_loader import HistoricalDataLoader
 # After:
-from backtest.kline_data_store import KlineDataStore
+from persistence.kline_data_store import KlineDataStore
 ```
 
 Line 46:
@@ -422,11 +426,12 @@ data_loader = KlineDataStore()
 - [ ] **Step 5: Update imports in scripts/download_eth_data.py**
 
 In `scripts/download_eth_data.py`, line 15:
+
 ```python
 # Before:
 from backtest.data_loader import HistoricalDataLoader
 # After:
-from backtest.kline_data_store import KlineDataStore
+from persistence.kline_data_store import KlineDataStore
 ```
 
 Line 31:
@@ -957,7 +962,7 @@ Create `backtest/backtest_analysis.py`:
 ```python
 from typing import Any
 
-from backtest.analyzer import BacktestAnalyzer
+from backtest.backtest_analyzer import BacktestAnalyzer
 from backtest.backtest_client import BacktestClient
 
 
@@ -1012,7 +1017,7 @@ The import was already updated in Task 2. Now update the `BacktestAnalyzer` impo
 
 ```python
 # Before:
-from backtest.analyzer import BacktestAnalyzer
+from backtest.backtest_analyzer import BacktestAnalyzer
 # After:
 from backtest.backtest_analysis import BacktestAnalysis
 ```

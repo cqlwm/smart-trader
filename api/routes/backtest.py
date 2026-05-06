@@ -17,8 +17,8 @@ from api.schemas.backtest import (
 from api.schemas.strategy_schemas import StrategyTypeInfo
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
-from backtest.trade_analysis import TradeAnalysis
-from backtest.kline_data_store import KlineDataStore
+from trade_analysis import TradeAnalysis
+from persistence.kline_data_store import KlineDataStore
 from backtest.result import BacktestResult
 from event_loop.handler.kline_handler import KlineHandler
 from persistence.order_repository import InMemoryOrderRepository

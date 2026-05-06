@@ -2,7 +2,7 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
-from backtest.kline_data_store import KlineDataStore
+from persistence.kline_data_store import KlineDataStore
 from model import Symbol
 
 

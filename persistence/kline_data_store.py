@@ -107,39 +107,35 @@ class KlineDataStore:
         if Path(file_path).exists():
             logger.info(f"Cache hit: {file_path}")
             return file_path
+        else:
+            logger.info(f"Cache miss, downloading: {file_path}")
 
-        download_start = start_dt - offset if offset else start_dt
-        logger.info(f"Cache miss, downloading: {file_path}")
-        df = self.download_historical_kline(symbol, timeframe, download_start, end_dt, file_path)
+        start_dt = start_dt - offset if offset else start_dt
+        df = self._fetch_klines(symbol, timeframe, int(start_dt.timestamp() * 1000), int(end_dt.timestamp() * 1000))
+
+        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(file_path, index=False)
+
+        logger.info(f"Saved {len(df)} klines to {file_path}")
 
         self.data_cache[file_path] = df
 
         return file_path
 
-    def download_historical_kline(
-        self,
-        symbol: Symbol,
-        interval: str,
-        start_datetime: datetime,
-        end_datetime: datetime,
-        file_path: str
-    ) -> pd.DataFrame:
+    def _fetch_klines(self, symbol: Symbol, interval: str, start: int, end: int) -> pd.DataFrame:
         """从Binance合约下载历史K线数据并保存为CSV"""
-        exchange = ccxt.binance(ConstructorArgs(options={"defaultType": "future"}))
-
-        start_timestamp = int(start_datetime.timestamp() * 1000)
-        end_timestamp = int(end_datetime.timestamp() * 1000)
+        exchange = ccxt.binance(ConstructorArgs(enableRateLimit=True, options={"defaultType": "future"}))
 
         all_ohlcv = []
-        since = start_timestamp
+        since = start
 
-        while since < end_timestamp:
+        while since < end:
             try:
                 ohlcv = exchange.fetch_ohlcv(symbol.ccxt(), interval, since=since, limit=1000)
                 if not ohlcv:
                     logger.info("No more data available")
                     break
-                filtered_ohlcv = [row for row in ohlcv if row[0] <= end_timestamp]
+                filtered_ohlcv = [row for row in ohlcv if row[0] <= end]
                 all_ohlcv.extend(filtered_ohlcv)
                 if len(ohlcv) < 1000:
                     break
@@ -157,8 +153,4 @@ class KlineDataStore:
         df['timestamp'] = df['timestamp'].astype(int)
         df = df.sort_values('timestamp').reset_index(drop=True)
 
-        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(file_path, index=False)
-
-        logger.info(f"Saved {len(df)} klines to {file_path}")
         return df
