@@ -32,7 +32,7 @@ class TestEnsureData:
         expected_path = "data/ETHUSDT_5m_20260301_2592000s_20260319.csv"
 
         with patch.object(Path, 'exists', return_value=True):
-            result = store.ensure_data(symbol, "5m", start_time, end_time, "data", offset=offset)
+            result = store.ensure_data(symbol, "5m", start_time, end_time, offset=offset)
 
         assert result == expected_path
 
@@ -45,7 +45,7 @@ class TestEnsureData:
         with patch.object(Path, 'exists', return_value=False):
             with patch.object(store, 'download_and_save_historical_data') as mock_download:
                 mock_download.return_value = "mock_path"
-                store.ensure_data(symbol, "5m", start_time, end_time, "data", offset=offset)
+                store.ensure_data(symbol, "5m", start_time, end_time, offset=offset)
 
         mock_download.assert_called_once()
         call_args = mock_download.call_args

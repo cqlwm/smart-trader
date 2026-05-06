@@ -17,8 +17,8 @@ def klines() -> list[Kline]:
     path = store.ensure_data(
         symbol=SYMBOL,
         timeframe=TIMEFRAME,
-        start_time=START_DATE,
-        end_time=END_DATE,
+        start=START_DATE,
+        end=END_DATE,
         data_dir='data',
     )
     return store.load_csv(path, SYMBOL, TIMEFRAME)

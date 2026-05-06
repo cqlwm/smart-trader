@@ -70,7 +70,7 @@ class BacktestClient(ExSwapClient):
         extra_timeframes: tuple[str, ...] = (),
         data_dir: str = "data",
     ) -> None:
-        file_path = data_store.ensure_data(symbol, timeframe, start_date, end_date, data_dir)
+        file_path = data_store.ensure_data(symbol, timeframe, start_date, end_date)
         klines = data_store.load_csv(file_path, symbol, timeframe)
         if klines:
             self._store_klines(symbol, timeframe, klines)
@@ -78,7 +78,7 @@ class BacktestClient(ExSwapClient):
 
         for tf in extra_timeframes:
             tf_offset = self._extra_tf_offset(tf)
-            tf_path = data_store.ensure_data(symbol, tf, start_date, end_date, data_dir, offset=tf_offset)
+            tf_path = data_store.ensure_data(symbol, tf, start_date, end_date, offset=tf_offset)
             tf_klines = data_store.load_csv(tf_path, symbol, tf)
             if tf_klines:
                 self._store_klines(symbol, tf, tf_klines)

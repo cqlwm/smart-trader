@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import time
 import ccxt
+from ccxt.base.exchange import Exchange
 import log
 
 from model import Kline, Symbol
@@ -15,10 +16,13 @@ logger = log.getLogger(__name__)
 class KlineDataStore:
     """K线数据存储"""
 
-    def __init__(self):
-        # file_path:df
-        self.data_cache: Dict[str, pd.DataFrame] = {}
-        self.columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
+    def __init__(self, exchange: Exchange | None = None):
+        self.data_cache: Dict[str, pd.DataFrame] = {} # file_path:df
+        self.columns: list[str] = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        if exchange is None:
+            exchange = ccxt.binance(ConstructorArgs(enableRateLimit=True, options={"defaultType": "future"}))
+        self.exchange = exchange
+        self.data_dir: str = "data"
 
     @staticmethod
     def _df_to_klines(df: pd.DataFrame, symbol: Symbol, timeframe: str) -> List[Kline]:
@@ -50,40 +54,28 @@ class KlineDataStore:
         if not Path(file_path).exists():
             raise FileNotFoundError(f"Data file not found: {file_path}")
 
-        cache_key = file_path
-        if cache_key in self.data_cache:
-            df = self.data_cache[cache_key]
+        if file_path in self.data_cache:
+            df = self.data_cache[file_path]
         else:
             df = pd.read_csv(file_path)
 
-        if not all(col in df.columns for col in self.columns):
-            raise ValueError(f"Data must contain columns: {self.columns}")
-        df['timestamp'] = df['timestamp'].astype(int)
-        df['open'] = df['open'].astype(float)
-        df['high'] = df['high'].astype(float)
-        df['low'] = df['low'].astype(float)
-        df['close'] = df['close'].astype(float)
-        df['volume'] = df['volume'].astype(float)
-        self.data_cache[cache_key] = df
+            if not all(col in df.columns for col in self.columns):
+                raise ValueError(f"Data must contain columns: {self.columns}")
+            df['timestamp'] = df['timestamp'].astype(int)
+            df['open'] = df['open'].astype(float)
+            df['high'] = df['high'].astype(float)
+            df['low'] = df['low'].astype(float)
+            df['close'] = df['close'].astype(float)
+            df['volume'] = df['volume'].astype(float)
+
+            self.data_cache[file_path] = df
 
         klines = self._df_to_klines(df, symbol, timeframe)
         logger.info(f"Loaded {len(klines)} klines from {file_path}")
 
         return klines
 
-    def clear_cache(self):
-        self.data_cache.clear()
-        logger.info("Data cache cleared")
-
-    def ensure_data(
-        self,
-        symbol: Symbol,
-        timeframe: str,
-        start_time: Union[str, datetime],
-        end_time: Union[str, datetime],
-        data_dir: str = "data",
-        offset: timedelta | None = None,
-    ) -> str:
+    def ensure_data(self, symbol: Symbol, timeframe: str, start: Union[str, datetime], end: Union[str, datetime], offset: timedelta | None = None) -> str:
         """确保数据文件存在，若不存在则自动下载并缓存"""
         def to_datetime(_t: Union[str, datetime]) -> datetime:
             if isinstance(_t, str):
@@ -94,11 +86,11 @@ class KlineDataStore:
                 _r = _t
             return _r
 
-        start_dt = to_datetime(start_time)
-        end_dt= to_datetime(end_time)
+        start_dt = to_datetime(start)
+        end_dt= to_datetime(end)
 
         file_path = (
-            f"{data_dir}/{symbol.binance()}_{timeframe}_"
+            f"{self.data_dir}/{symbol.simple()}_{timeframe}_"
             f"{start_dt.strftime('%Y%m%d')}_"
             f"{int(offset.total_seconds()) if offset else '0'}s_"
             f"{end_dt.strftime('%Y%m%d')}.csv"
@@ -123,15 +115,13 @@ class KlineDataStore:
         return file_path
 
     def _fetch_klines(self, symbol: Symbol, interval: str, start: int, end: int) -> pd.DataFrame:
-        """从Binance合约下载历史K线数据并保存为CSV"""
-        exchange = ccxt.binance(ConstructorArgs(enableRateLimit=True, options={"defaultType": "future"}))
 
         all_ohlcv = []
         since = start
 
         while since < end:
             try:
-                ohlcv = exchange.fetch_ohlcv(symbol.ccxt(), interval, since=since, limit=1000)
+                ohlcv = self.exchange.fetch_ohlcv(symbol.ccxt(), interval, since=since, limit=1000)
                 if not ohlcv:
                     logger.info("No more data available")
                     break
