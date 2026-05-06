@@ -1,6 +1,8 @@
 import logging
+from datetime import datetime, timezone
 from typing import Callable
 
+from backtest.types import BacktestConfig
 from event_loop.base import DataEventLoop
 from event_loop.event import KlineEvent
 from model import Kline, Symbol
@@ -9,33 +11,35 @@ from backtest.backtest_client import BacktestClient
 logger = logging.getLogger(__name__)
 
 
+def _parse_date_to_timestamp(date_str: str) -> int:
+    """将 YYYY-MM-DD 格式转为 UTC 毫秒时间戳"""
+    dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+
 class BacktestEventLoop(DataEventLoop):
     """回测事件循环，从历史数据重放K线（同步模式）"""
 
     def __init__(self,
-                 on_progress_callback: Callable[[int, int], None] | None = None,
-                 start_timestamp: int | None = None,
-                 start_index: int | None = None) -> None:
+                 config: BacktestConfig,
+                 on_progress_callback: Callable[[int, int], None] | None = None) -> None:
         super().__init__()
-        self._subscriptions: list[tuple[Symbol, str]] = []
+        self._config = config
+        self._start_ts = _parse_date_to_timestamp(config.start_date)
+        self._end_ts = _parse_date_to_timestamp(config.end_date)
+        self._subscriptions: dict[str, tuple[Symbol, str]] = {}
         self.on_progress_callback = on_progress_callback
         self.start_index = 0
+        self.end_index = 0
         self.current_index = 0
         self.is_running = False
         self.backtest_client: BacktestClient | None = None
         self.historical_klines: list[Kline] = []
 
-        if start_timestamp is not None:
-            self._start_timestamp = start_timestamp
-        else:
-            self._start_timestamp = None
-
-        self._start_index_override = start_index
-
     def subscribe(self, symbols: list[Symbol], timeframes: list[str]) -> None:
         for symbol in symbols:
             for tf in timeframes:
-                self._subscriptions.append((symbol, tf))
+                self._subscriptions[f"{symbol.simple()}_{tf}"] = (symbol, tf)
 
     def set_backtest_client(self, client: BacktestClient) -> None:
         self.backtest_client = client
@@ -58,12 +62,13 @@ class BacktestEventLoop(DataEventLoop):
             return
 
         self._resolve_start_index()
+        self._resolve_end_index()
 
         self.is_running = True
         self.current_index = self.start_index
 
-        logger.info("Backtest started from index %d (%d klines loaded)",
-                     self.start_index, len(self.historical_klines))
+        logger.info("Backtest started from index %d to %d (%d klines loaded)",
+                    self.start_index, self.end_index, len(self.historical_klines))
         self._run_backtest_sync()
 
     def stop(self) -> None:
@@ -75,27 +80,35 @@ class BacktestEventLoop(DataEventLoop):
         if not self.backtest_client:
             return []
         collected: list[Kline] = []
-        for symbol, tf in self._subscriptions:
-            key = f"{symbol.binance()}_{tf}"
-            if key in self.backtest_client._kline_cache:
-                collected.extend(self.backtest_client._kline_cache[key])
+
+        for _, (symbol, tf) in self._subscriptions.items():
+            klines = self.backtest_client.fetch_ohlcv(
+                symbol, tf,
+                start_time=self._start_ts,
+                end_time=self._end_ts,
+                limit=0,
+            )
+            collected.extend(klines)
+
         return sorted(collected, key=lambda k: k.timestamp)
 
     def _resolve_start_index(self) -> None:
-        if self._start_index_override is not None:
-            self.start_index = max(0, min(self._start_index_override, len(self.historical_klines) - 1))
-        elif self._start_timestamp is not None:
-            self.start_index = 0
-            for i, kline in enumerate(self.historical_klines):
-                if kline.timestamp >= self._start_timestamp:
-                    self.start_index = i
-                    break
-            self.start_index = max(0, min(self.start_index, len(self.historical_klines) - 1))
-        else:
-            self.start_index = min(300, len(self.historical_klines) - 1)
+        default_warmup = min(300, len(self.historical_klines) - 1)
+        for i, kline in enumerate(self.historical_klines):
+            if kline.timestamp >= self._start_ts:
+                self.start_index = i
+                return
+        self.start_index = default_warmup
+
+    def _resolve_end_index(self) -> None:
+        for i, kline in enumerate(self.historical_klines):
+            if kline.timestamp >= self._end_ts:
+                self.end_index = i
+                return
+        self.end_index = len(self.historical_klines)
 
     def _run_backtest_sync(self) -> None:
-        while self.is_running and self.current_index < len(self.historical_klines):
+        while self.is_running and self.current_index < self.end_index:
             self._process_next_kline()
 
             if self.on_progress_callback:
@@ -126,7 +139,7 @@ class BacktestEventLoop(DataEventLoop):
     def progress(self) -> float:
         if not self.historical_klines:
             return 0.0
-        total_backtest_klines = len(self.historical_klines) - self.start_index
+        total_backtest_klines = self.end_index - self.start_index
         if total_backtest_klines <= 0:
             return 1.0
         current_backtest_index = self.current_index - self.start_index
@@ -140,4 +153,4 @@ class BacktestEventLoop(DataEventLoop):
 
     @property
     def is_completed(self) -> bool:
-        return self.current_index >= len(self.historical_klines)
+        return self.current_index >= self.end_index

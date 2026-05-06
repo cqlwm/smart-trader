@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from model import Symbol, Kline
-from backtest.config import BacktestConfig
+from backtest.types import BacktestConfig
 from backtest.backtest_runner import BacktestRunner
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
@@ -32,17 +32,17 @@ def _make_klines(count: int) -> list[Kline]:
 
 class TestBacktestEventLoopSubscribe:
     def test_subscribe_records_pairs(self) -> None:
-        el = BacktestEventLoop(start_index=0)
+        el = BacktestEventLoop(config=BacktestConfig(symbol=SYMBOL, timeframe='1m', start_date='2023-11-14', end_date='2023-11-15'))
         el.subscribe(symbols=[SYMBOL], timeframes=['1m', '5m'])
-        assert (SYMBOL, '1m') in el._subscriptions
-        assert (SYMBOL, '5m') in el._subscriptions
+        assert (SYMBOL, '1m') in el._subscriptions.values()
+        assert (SYMBOL, '5m') in el._subscriptions.values()
 
     def test_load_subscribed_klines_from_client(self) -> None:
         klines = _make_klines(5)
         client = BacktestClient(order_repo=InMemoryOrderRepository())
         client._store_klines(SYMBOL, '1m', klines)
 
-        el = BacktestEventLoop(start_index=0)
+        el = BacktestEventLoop(config=BacktestConfig(symbol=SYMBOL, timeframe='1m', start_date='2023-11-14', end_date='2023-11-15'))
         el.set_backtest_client(client)
         el.subscribe(symbols=[SYMBOL], timeframes=['1m'])
 
@@ -56,7 +56,7 @@ class TestBacktestEventLoopSubscribe:
         client._store_klines(SYMBOL, '1m', klines_1m)
         client._store_klines(SYMBOL, '5m', klines_5m)
 
-        el = BacktestEventLoop(start_index=0)
+        el = BacktestEventLoop(config=BacktestConfig(symbol=SYMBOL, timeframe='1m', start_date='2023-11-14', end_date='2023-11-15'))
         el.set_backtest_client(client)
         el.subscribe(symbols=[SYMBOL], timeframes=['1m'])
 
@@ -64,7 +64,7 @@ class TestBacktestEventLoopSubscribe:
         assert len(loaded) == 5  # only 1m klines
 
     def test_load_subscribed_klines_empty_without_client(self) -> None:
-        el = BacktestEventLoop(start_index=0)
+        el = BacktestEventLoop(config=BacktestConfig(symbol=SYMBOL, timeframe='1m', start_date='2023-11-14', end_date='2023-11-15'))
         el.subscribe(symbols=[SYMBOL], timeframes=['1m'])
         assert el._load_subscribed_klines() == []
 
@@ -73,7 +73,7 @@ class TestBacktestEventLoopSubscribe:
         client = BacktestClient(order_repo=InMemoryOrderRepository())
         client._store_klines(SYMBOL, '1m', klines)
 
-        el = BacktestEventLoop(start_index=0)
+        el = BacktestEventLoop(config=BacktestConfig(symbol=SYMBOL, timeframe='1m', start_date='2023-11-14', end_date='2023-11-15'))
         el.set_backtest_client(client)
         el.subscribe(symbols=[SYMBOL], timeframes=['1m'])
         el.start()
@@ -109,7 +109,6 @@ class TestBacktestRunnerInit:
             timeframe='1m',
             start_date='2025-01-01',
             end_date='2025-02-01',
-            start_index=0,
         )
 
         with patch('backtest.backtest_runner.KlineDataStore') as mock_store_cls:
@@ -122,7 +121,7 @@ class TestBacktestRunnerInit:
 
         assert isinstance(runner._event_loop, BacktestEventLoop)
         assert runner._event_loop.backtest_client is runner._backtest_client
-        assert (SYMBOL, '1m') in runner._event_loop._subscriptions
+        assert (SYMBOL, '1m') in runner._event_loop._subscriptions.values()
 
     def test_creates_bot_manager(self) -> None:
         klines = _make_klines(10)
@@ -154,7 +153,6 @@ class TestBacktestRunnerRun:
             timeframe='1m',
             start_date='2025-01-01',
             end_date='2025-02-01',
-            start_index=0,
         )
 
         with patch('backtest.backtest_runner.KlineDataStore') as mock_store_cls:
@@ -179,7 +177,6 @@ class TestBacktestRunnerRun:
             timeframe='1m',
             start_date='2025-01-01',
             end_date='2025-02-01',
-            start_index=0,
         )
 
         with patch('backtest.backtest_runner.KlineDataStore') as mock_store_cls:
@@ -203,7 +200,6 @@ class TestBacktestRunnerReport:
             timeframe='1m',
             start_date='2025-01-01',
             end_date='2025-02-01',
-            start_index=0,
         )
 
         with patch('backtest.backtest_runner.KlineDataStore') as mock_store_cls:

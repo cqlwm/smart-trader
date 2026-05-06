@@ -2,8 +2,9 @@ import pytest
 from unittest.mock import patch
 
 from model import Symbol, Kline
-from backtest.config import BacktestConfig
-from backtest.result import BacktestResult
+
+from backtest.backtest_runner import BacktestConfig
+from backtest.backtest_analyzer import BacktestResult
 
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_analyzer import BacktestAnalyzer

@@ -7,9 +7,6 @@ import log
 
 logger = log.getLogger(__name__)
 
-
-
-
 @dataclass(frozen=True)
 class BacktestResult:
     analysis: dict[str, Any]

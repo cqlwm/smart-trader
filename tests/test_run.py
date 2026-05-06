@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from model import Symbol
-from backtest.config import BacktestConfig
+from backtest.types import BacktestConfig
 
 
 class TestParseSymbol:

@@ -17,25 +17,18 @@ from api.schemas.backtest import (
 from api.schemas.strategy_schemas import StrategyTypeInfo
 from backtest.backtest_client import BacktestClient
 from backtest.backtest_event_loop import BacktestEventLoop
+from backtest.types import BacktestConfig
 from trade_analysis import TradeAnalysis
 from persistence.kline_data_store import KlineDataStore
 from backtest.result import BacktestResult
 from event_loop.handler.kline_handler import KlineHandler
 from persistence.order_repository import InMemoryOrderRepository
-from datetime import datetime, timezone
 from model import Symbol
 from strategy.registry import StrategyRegistry
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/backtest", dependencies=[Depends(verify_api_key)])
-
-
-def _parse_start_timestamp(date_str: str) -> int:
-    dt = datetime.fromisoformat(date_str)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return int(dt.timestamp() * 1000)
 
 
 def _parse_symbol(symbol_str: str) -> Symbol:
@@ -219,12 +212,16 @@ async def run_backtest(request: BacktestRequest):
 
         strategy = strategy_factory(client)
         handler = KlineHandler(strategy)
-        start_ts = _parse_start_timestamp(request.start_date)
-
         all_timeframes = [request.timeframe] + list(extra_timeframes)
-        event_loop = BacktestEventLoop(
-            start_timestamp=start_ts,
+        config = BacktestConfig(
+            symbol=symbol,
+            timeframe=request.timeframe,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            initial_balance=request.initial_balance,
+            extra_timeframes=extra_timeframes,
         )
+        event_loop = BacktestEventLoop(config=config)
         event_loop.set_backtest_client(client)
         event_loop.subscribe(symbols=[symbol], timeframes=all_timeframes)
         event_loop.add_handler(handler)

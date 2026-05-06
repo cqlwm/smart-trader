@@ -9,7 +9,7 @@ from bot_manager import BotManager
 from client.binance_client import BinanceSwapClient
 from event_loop.binance import BinanceDataEventLoop
 from backtest.backtest_runner import BacktestRunner
-from backtest.config import BacktestConfig
+from backtest.types import BacktestConfig
 from model import Symbol
 
 dotenv.load_dotenv()

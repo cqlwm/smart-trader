@@ -1,4 +1,3 @@
-import logging
 from typing import Any
 
 from bot_manager import BotManager
@@ -7,13 +6,9 @@ from backtest.backtest_event_loop import BacktestEventLoop
 from persistence.kline_data_store import KlineDataStore
 from trade_analysis import TradeAnalysis
 from persistence.order_repository import InMemoryOrderRepository
-
-logger = logging.getLogger(__name__)
-
 from dataclasses import dataclass
 
 from model import Symbol
-
 
 @dataclass(frozen=True)
 class BacktestConfig:
@@ -27,17 +22,13 @@ class BacktestConfig:
     taker_fee: float = 0.0004
     extra_timeframes: tuple[str, ...] = ()
     data_dir: str = "data"
-    start_index: int = 300
-
 
 class BacktestRunner:
     def __init__(self, config: BacktestConfig) -> None:
         self._config = config
         self._backtest_client = self._create_backtest_client()
 
-        self._event_loop = BacktestEventLoop(
-            start_index=config.start_index,
-        )
+        self._event_loop = BacktestEventLoop(config=config)
         self._event_loop.set_backtest_client(self._backtest_client)
         self._event_loop.subscribe(symbols=[config.symbol], timeframes=[config.timeframe])
 
@@ -49,7 +40,7 @@ class BacktestRunner:
 
         logger.info(
             "BacktestRunner initialized: %s %s %s~%s",
-            config.symbol.binance(), config.timeframe, config.start_date, config.end_date
+            config.symbol.ccxt(), config.timeframe, config.start_date, config.end_date
         )
 
     def _create_backtest_client(self) -> BacktestClient:

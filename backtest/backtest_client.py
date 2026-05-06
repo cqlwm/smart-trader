@@ -340,8 +340,10 @@ class BacktestClient(ExSwapClient):
         if start_time is not None or end_time is not None:
             klines = [k for k in klines
                       if (start_time is None or k.timestamp >= start_time)
-                      and (end_time is None or k.timestamp <= end_time)]
-            return klines[-limit:] if len(klines) > limit else klines
+                      and (end_time is None or k.timestamp < end_time)]
+            if limit and len(klines) > limit:
+                return klines[-limit:]
+            return klines
 
         current_klines = [k for k in klines if k.timestamp <= self.current_timestamp]
         if not current_klines:
@@ -349,7 +351,9 @@ class BacktestClient(ExSwapClient):
                           self.current_timestamp, timeframe)
             return []
 
-        return current_klines[-limit:] if len(current_klines) >= limit else current_klines
+        if limit and len(current_klines) >= limit:
+            return current_klines[-limit:]
+        return current_klines
 
     @staticmethod
     def _order_to_dict(order: Order) -> dict[str, Any]:
