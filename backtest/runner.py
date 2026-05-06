@@ -39,11 +39,6 @@ class BacktestRunner:
             maker_fee=self._config.maker_fee,
             taker_fee=self._config.taker_fee,
             data_store=data_store,
-            symbol=self._config.symbol,
-            timeframe=self._config.timeframe,
-            start_date=self._config.start_date,
-            end_date=self._config.end_date,
-            extra_timeframes=self._config.extra_timeframes,
         )
 
     def run(self) -> dict[str, Any]:

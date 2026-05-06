@@ -58,7 +58,7 @@ class BacktestClient(ExSwapClient):
         key = f"{symbol.binance()}_{timeframe}"
         self._kline_cache[key] = sorted(klines, key=lambda k: k.timestamp)
 
-    def _ensure_klines(self, symbol: Symbol, timeframe: str, limit: int) -> None:
+    def _ensure_klines(self, symbol: Symbol, timeframe: str, limit: int, start_time: int | None = None, end_time: int | None = None) -> None:
         """Lazy-load klines from data_store if not cached."""
         key = f"{symbol.binance()}_{timeframe}"
         if key in self._kline_cache:
@@ -73,10 +73,15 @@ class BacktestClient(ExSwapClient):
             logger.warning("Unknown timeframe: %s", timeframe)
             return
 
-        buffer_ratio = 1.3
-        range_ms = int(limit * tf_ms * buffer_ratio)
-        end_ts = self.current_timestamp
-        start_ts = end_ts - range_ms
+        # If start_time and end_time are provided, use those (for full backtest range)
+        if start_time is not None and end_time is not None:
+            start_ts = start_time
+            end_ts = end_time
+        else:
+            buffer_ratio = 1.3
+            range_ms = int(limit * tf_ms * buffer_ratio)
+            end_ts = self.current_timestamp
+            start_ts = end_ts - range_ms
 
         from datetime import datetime, timezone
         start_date = datetime.fromtimestamp(start_ts / 1000, tz=timezone.utc).strftime('%Y-%m-%d')
@@ -337,7 +342,7 @@ class BacktestClient(ExSwapClient):
 
     def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100,
                     start_time: int | None = None, end_time: int | None = None) -> list[Kline]:
-        self._ensure_klines(symbol, timeframe, limit)
+        self._ensure_klines(symbol, timeframe, limit, start_time, end_time)
 
         key = f"{symbol.binance()}_{timeframe}"
         if key not in self._kline_cache:

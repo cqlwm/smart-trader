@@ -201,11 +201,6 @@ async def run_backtest(request: BacktestRequest):
             order_repo=InMemoryOrderRepository(),
             initial_balance=request.initial_balance,
             data_store=data_store,
-            symbol=symbol,
-            timeframe=request.timeframe,
-            start_date=request.start_date,
-            end_date=request.end_date,
-            extra_timeframes=extra_timeframes,
         )
 
         strategy = strategy_factory(client)
