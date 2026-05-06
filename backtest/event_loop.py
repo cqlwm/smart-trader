@@ -20,15 +20,12 @@ def _parse_date_to_timestamp(date_str: str) -> int:
 class BacktestEventLoop(DataEventLoop):
     """回测事件循环，从历史数据重放K线（同步模式）"""
 
-    def __init__(self,
-                 config: BacktestConfig,
-                 on_progress_callback: Callable[[int, int], None] | None = None) -> None:
+    def __init__(self, config: BacktestConfig) -> None:
         super().__init__()
         self._config = config
         self._start_ts = _parse_date_to_timestamp(config.start_date)
         self._end_ts = _parse_date_to_timestamp(config.end_date)
         self._subscriptions: dict[str, tuple[Symbol, str]] = {}
-        self.on_progress_callback = on_progress_callback
         self.start_index = 0
         self.end_index = 0
         self.current_index = 0
@@ -110,9 +107,6 @@ class BacktestEventLoop(DataEventLoop):
     def _run_backtest_sync(self) -> None:
         while self.is_running and self.current_index < self.end_index:
             self._process_next_kline()
-
-            if self.on_progress_callback:
-                self.on_progress_callback(self.current_index, len(self.historical_klines))
 
         self.is_running = False
         logger.info("Backtest completed")
