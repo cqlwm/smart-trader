@@ -243,21 +243,3 @@ class TestBacktestClientAutoLoad:
         client = BacktestClient(order_repo=InMemoryOrderRepository())
         result = client.fetch_ohlcv(SYMBOL, '1m')
         assert result == []
-
-    def test_get_all_klines(self) -> None:
-        klines = _make_klines(10)
-        store = KlineDataStore()
-        with patch.object(store, 'ensure_data', return_value="data/mock.csv"):
-            with patch.object(store, 'load_csv', return_value=klines):
-                client = BacktestClient(
-                    order_repo=InMemoryOrderRepository(),
-                    data_store=store,
-                    symbol=SYMBOL,
-                    timeframe='1m',
-                    start_date='2025-01-01',
-                    end_date='2025-02-01',
-                )
-
-        all_klines = client.get_all_klines()
-        assert len(all_klines) == 10
-        assert all_klines[0].timestamp == TS_BASE

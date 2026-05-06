@@ -107,13 +107,6 @@ class BacktestClient(ExSwapClient):
         except Exception:
             return 0
 
-    def get_all_klines(self) -> list[Kline]:
-        """Get all klines for the primary timeframe, sorted by timestamp."""
-        all_klines: list[Kline] = []
-        for klines in self._kline_cache.values():
-            all_klines.extend(klines)
-        return sorted(all_klines, key=lambda k: k.timestamp)
-
     def update_current_price(self, symbol: Symbol, price: float) -> None:
         self.current_prices[symbol.binance()] = price
 
