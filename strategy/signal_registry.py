@@ -1,7 +1,13 @@
 import logging
 from typing import Callable
 
+from model import OrderSide
+
 logger = logging.getLogger(__name__)
+
+_ENUM_MAP: dict[str, type] = {
+    "side": OrderSide,
+}
 
 
 class SignalRegistry:
@@ -32,12 +38,23 @@ class SignalRegistry:
 
     @classmethod
     def from_config(cls, config: dict) -> object:
-        cfg = {**config}
+        cfg = cls._resolve_fields(config)
         signal_type = cfg.pop("type")
         signal_cls = cls.get(signal_type)
         if "inner" in cfg:
             cfg["inner"] = cls.from_config(cfg.pop("inner"))
         return signal_cls(**cfg)
+
+    @classmethod
+    def _resolve_fields(cls, config: dict) -> dict:
+        resolved: dict = {}
+        for key, value in config.items():
+            enum_cls = _ENUM_MAP.get(key)
+            if enum_cls is not None and isinstance(value, str):
+                resolved[key] = enum_cls(value.lower())
+            else:
+                resolved[key] = value
+        return resolved
 
 
 def register_signal(name: str) -> Callable[[type], type]:

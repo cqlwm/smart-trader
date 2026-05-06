@@ -1,6 +1,5 @@
 import logging
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any
 
 from client.ex_client import ExSwapClient

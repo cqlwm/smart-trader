@@ -43,6 +43,12 @@ class TestSignalRegistry:
         assert isinstance(signal, FakeSignal)
         assert signal.side == OrderSide.BUY
 
+    def test_from_config_coerces_side_string(self) -> None:
+        SignalRegistry.register("fake", FakeSignal)
+        signal = SignalRegistry.from_config({"type": "fake", "side": "BUY"})
+        assert isinstance(signal, FakeSignal)
+        assert signal.side == OrderSide.BUY
+
     def test_from_config_nested(self) -> None:
         SignalRegistry.register("fake", FakeSignal)
         SignalRegistry.register("fake_grids", FakeGridsSignal)
@@ -52,6 +58,16 @@ class TestSignalRegistry:
         })
         assert isinstance(signal, FakeGridsSignal)
         assert isinstance(signal.inner, FakeSignal)
+        assert signal.inner.side == OrderSide.SELL
+
+    def test_from_config_coerces_nested_side_string(self) -> None:
+        SignalRegistry.register("fake", FakeSignal)
+        SignalRegistry.register("fake_grids", FakeGridsSignal)
+        signal = SignalRegistry.from_config({
+            "type": "fake_grids",
+            "inner": {"type": "fake", "side": "SELL"},
+        })
+        assert isinstance(signal, FakeGridsSignal)
         assert signal.inner.side == OrderSide.SELL
 
     def test_from_config_does_not_mutate_input(self) -> None:
