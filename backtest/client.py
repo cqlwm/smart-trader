@@ -350,7 +350,7 @@ class BacktestClient(ExSwapClient):
                 return klines[-limit:]
             return klines
 
-        current_klines = [k for k in klines if k.timestamp <= self.current_timestamp]
+        current_klines = [k for k in klines if k.close_timestamp() <= self.current_timestamp]
         if not current_klines:
             logger.warning("No klines available before timestamp %d for timeframe %s",
                           self.current_timestamp, timeframe)

@@ -29,21 +29,12 @@ class SMCIntradayStrategy(GeneralStrategy):
     3. 使用 SimpleIntradayStrategy 判断方向和入场
     4. 执行下单
     """
-
-    def __init__(
-        self,
-        config: SimpleIntradayConfig,
-        ex_client: ExSwapClient,
-    ):
-        symbol = Symbol(
-            base=config.symbol.split("/")[0],
-            quote=config.symbol.split("/")[1].split(":")[0],
-        )
-        super().__init__(symbols=[symbol], timeframes=list(config.timeframes))
+    def __init__(self, config: SimpleIntradayConfig, ex_client: ExSwapClient):
+        super().__init__(symbols=[config.symbol], timeframes=list(config.timeframes))
         self.ex_client = ex_client
-        self._strategy_config = config
-        self._smc_strategy = SimpleIntradayStrategy(self._strategy_config)
-        self.strategy_id: str = f"smc_intraday_{symbol.simple()}"
+        self._config = config
+        self._smc_strategy = SimpleIntradayStrategy(self._config)
+        self.strategy_id: str = f"smc_intraday_{config.symbol.simple()}"
         self.order_repo = ex_client.order_repo
         self._last_action: str = "WAIT"
 
@@ -51,7 +42,7 @@ class SMCIntradayStrategy(GeneralStrategy):
         return self.ex_client
 
     def on_kline_finished(self, timeframe: str, symbol: Symbol):
-        if timeframe != self._strategy_config.entry_timeframe:
+        if timeframe != self._config.entry_timeframe:
             return
 
         mtf_result = self._build_mtf_result(symbol)
@@ -77,7 +68,7 @@ class SMCIntradayStrategy(GeneralStrategy):
 
     def _build_mtf_result(self, symbol: Symbol) -> MultiTimeframeResult | None:
         results = {}
-        for tf in self._strategy_config.timeframes:
+        for tf in self._config.timeframes:
             klines_df = self.klines(tf, symbol)
             closed = klines_df[klines_df["finished"] == True].copy()
             closed["datetime"] = pd.to_datetime(closed["datetime"], utc=True)
@@ -90,9 +81,9 @@ class SMCIntradayStrategy(GeneralStrategy):
             results[tf] = engine.analyze(smc_df)
 
         mtf_config = MultiTimeframeConfig(
-            exchange_id=self._strategy_config.exchange_id,
+            exchange_id=self._config.exchange_id,
             symbol=symbol.ccxt(),
-            timeframes=self._strategy_config.timeframes,
+            timeframes=self._config.timeframes,
         )
         return MultiTimeframeResult(
             symbol=symbol.ccxt(),
@@ -105,7 +96,7 @@ class SMCIntradayStrategy(GeneralStrategy):
     def _build_smc_config(self, timeframe: str) -> SMCConfig:
         smc_symbol = self.symbols[0].ccxt() if self.symbols else ""
         return SMCConfig(
-            exchange_id=self._strategy_config.exchange_id,
+            exchange_id=self._config.exchange_id,
             symbol=smc_symbol,
             timeframe=timeframe,
             lookback_bars=500,

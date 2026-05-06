@@ -187,7 +187,7 @@ class TestFetchOhlcvLazyLoading:
 
         repo = InMemoryOrderRepository()
         client = BacktestClient(data_store=mock_store, order_repo=repo, initial_balance=10_000.0)
-        client.update_current_timestamp(TS_BASE + 4 * 60_000)
+        client.update_current_timestamp(TS_BASE + 5 * 60_000)
 
         result = client.fetch_ohlcv(SYMBOL, '1m', limit=5)
 
@@ -203,7 +203,7 @@ class TestFetchOhlcvLazyLoading:
 
         repo = InMemoryOrderRepository()
         client = BacktestClient(data_store=mock_store, order_repo=repo, initial_balance=10_000.0)
-        client.update_current_timestamp(TS_BASE + 4 * 60_000)
+        client.update_current_timestamp(TS_BASE + 5 * 60_000)
 
         client.fetch_ohlcv(SYMBOL, '1m', limit=5)
         client.fetch_ohlcv(SYMBOL, '1m', limit=5)
@@ -226,7 +226,7 @@ class TestFetchOhlcvLazyLoading:
         repo = InMemoryOrderRepository()
         client = BacktestClient(data_store=mock_store, order_repo=repo, initial_balance=10_000.0)
         client._store_klines(SYMBOL, '1m', klines)
-        client.update_current_timestamp(TS_BASE + 4 * 60_000)
+        client.update_current_timestamp(TS_BASE + 5 * 60_000)
 
         result = client.fetch_ohlcv(SYMBOL, '1m', limit=5)
         mock_store.ensure_data.assert_not_called()

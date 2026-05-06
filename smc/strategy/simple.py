@@ -6,6 +6,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from model import Symbol
 from smc.mtf import TIMEFRAME_MINUTES, MultiTimeframeAnalyzer, MultiTimeframeResult
 from smc.schemas import (
     ConditionOutput,
@@ -32,8 +33,7 @@ logger = logging.getLogger(__name__)
 class SimpleIntradayConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    exchange_id: str = "binanceusdm"
-    symbol: str = "BTC/USDT:USDT"
+    symbol: Symbol = Symbol(base="BTC", quote="USDC")
     risk_per_trade_pct: float = 1.0
     account_balance: float = 100.0
     min_risk_reward: float = 2.0

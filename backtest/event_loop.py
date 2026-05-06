@@ -82,19 +82,19 @@ class BacktestEventLoop(DataEventLoop):
             )
             collected.extend(klines)
 
-        return sorted(collected, key=lambda k: k.timestamp)
+        return sorted(collected, key=lambda k: k.close_timestamp())
 
     def _resolve_start_index(self) -> None:
         default_warmup = min(self.default_warmup, len(self.historical_klines) - 1)
         for i, kline in enumerate(self.historical_klines):
-            if kline.timestamp >= self._start_ts:
+            if kline.close_timestamp() >= self._start_ts:
                 self.start_index = i
                 return
         self.start_index = default_warmup
 
     def _resolve_end_index(self) -> None:
         for i, kline in enumerate(self.historical_klines):
-            if kline.timestamp >= self._end_ts:
+            if kline.close_timestamp() >= self._end_ts:
                 self.end_index = i
                 return
         self.end_index = len(self.historical_klines)
@@ -113,7 +113,7 @@ class BacktestEventLoop(DataEventLoop):
         kline = self.historical_klines[self.current_index]
 
         self.backtest_client.update_current_price(kline.symbol, kline.close)
-        self.backtest_client.update_current_timestamp(kline.timestamp)
+        self.backtest_client.update_current_timestamp(kline.close_timestamp())
 
         kline_event = KlineEvent(timestamp=kline.timestamp, kline=kline)
         self.loop(kline_event)

@@ -5,6 +5,24 @@ from enum import Enum
 from dataclasses import dataclass
 import builtins
 from decimal import Decimal
+
+TIMEFRAME_MINUTES: dict[str, int] = {
+    "1m": 1,
+    "3m": 3,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "2h": 120,
+    "4h": 240,
+    "6h": 360,
+    "8h": 480,
+    "12h": 720,
+    "1d": 1440,
+    "3d": 4320,
+    "1w": 10080,
+    "1M": 43200,
+}
 class PositionSide(Enum):
     LONG = 'long'
     SHORT = 'short'
@@ -187,6 +205,10 @@ class Kline:
         self.timestamp = timestamp
         self.datetime = str(datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc))
         self.finished = finished
+
+    def close_timestamp(self) -> int:
+        minutes = TIMEFRAME_MINUTES.get(self.timeframe, 1)
+        return self.timestamp + minutes * 60 * 1000
         
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -79,9 +79,9 @@ class TestBacktestEventLoopIntegration:
         klines = _make_klines(10)
         strategy = CollectorStrategy(symbols=[SYMBOL], timeframes=['1m'])
         handler = KlineHandler(strategy)
+        client = _make_client_with_klines(klines)
 
-        event_loop = BacktestEventLoop(config=_make_config())
-        event_loop.set_backtest_client(_make_client_with_klines(klines))
+        event_loop = BacktestEventLoop(config=_make_config(), backtest_client=client)
         event_loop.subscribe(symbols=[SYMBOL], timeframes=['1m'])
         event_loop.add_handler(handler)
         event_loop.start()
@@ -94,21 +94,19 @@ class TestBacktestEventLoopIntegration:
         handler = KlineHandler(strategy)
         client = _make_client_with_klines(klines)
 
-        event_loop = BacktestEventLoop(config=_make_config())
-        event_loop.set_backtest_client(client)
+        event_loop = BacktestEventLoop(config=_make_config(), backtest_client=client)
         event_loop.subscribe(symbols=[SYMBOL], timeframes=['1m'])
         event_loop.add_handler(handler)
         event_loop.start()
 
         assert client.get_current_price(SYMBOL) == 2005.0 + 4
-        assert client.current_timestamp == TS_BASE + 4 * 60_000
+        assert client.current_timestamp == klines[-1].close_timestamp()
 
     def test_progress_tracking(self) -> None:
         klines = _make_klines(10)
         client = _make_client_with_klines(klines)
 
-        event_loop = BacktestEventLoop(config=_make_config())
-        event_loop.set_backtest_client(client)
+        event_loop = BacktestEventLoop(config=_make_config(), backtest_client=client)
         event_loop.subscribe(symbols=[SYMBOL], timeframes=['1m'])
         event_loop.start()
 
@@ -138,13 +136,12 @@ class TestBacktestEventLoopIntegration:
         client = BacktestClient(order_repo=InMemoryOrderRepository(), initial_balance=10_000.0)
         client._store_klines(SYMBOL, '1d', daily_klines)
 
-        event_loop = BacktestEventLoop(config=config)
-        event_loop.set_backtest_client(client)
+        event_loop = BacktestEventLoop(config=config, backtest_client=client)
         event_loop.subscribe(symbols=[SYMBOL], timeframes=['1d'])
         event_loop.add_handler(handler)
         event_loop.start()
 
-        assert len(strategy.received_klines) == 3
+        assert len(strategy.received_klines) == 2
 
     def test_fetch_ohlcv_limit_zero_returns_all(self) -> None:
         klines = _make_klines(200)
