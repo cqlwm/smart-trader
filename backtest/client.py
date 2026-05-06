@@ -25,17 +25,12 @@ class BacktestClient(ExSwapClient):
 
     def __init__(
         self,
-        data_store: KlineDataStore,
         order_repo: OrderRepository,
+        data_store: KlineDataStore | None = None,
         initial_balance: float = 10000.0,
         maker_fee: float = 0.0002,
         taker_fee: float = 0.0004,
         symbol_infos: dict[str, SymbolInfo] | None = None,
-        symbol: Symbol | None = None,
-        timeframe: str | None = None,
-        start_date: str | None = None,
-        end_date: str | None = None,
-        extra_timeframes: tuple[str, ...] = (),
     ) -> None:
         self.exchange_name = 'backtest'
         self.exchange = None  # type: ignore
@@ -57,45 +52,55 @@ class BacktestClient(ExSwapClient):
 
         self._kline_cache: dict[str, list[Kline]] = {}
 
-        if data_store and symbol and timeframe and start_date and end_date:
-            self._load_data_from_store(data_store, symbol, timeframe, start_date, end_date, extra_timeframes)
-
         logger.info("BacktestClient initialized with balance: %s", initial_balance)
-
-    def _load_data_from_store(
-        self,
-        data_store: KlineDataStore,
-        symbol: Symbol,
-        timeframe: str,
-        start_date: str,
-        end_date: str,
-        extra_timeframes: tuple[str, ...] = (),
-    ) -> None:
-        file_path = data_store.ensure_data(symbol, timeframe, start_date, end_date)
-        klines = data_store.load_csv(file_path, symbol, timeframe)
-        if klines:
-            self._store_klines(symbol, timeframe, klines)
-            logger.info("Auto-loaded %d klines for %s %s", len(klines), symbol.binance(), timeframe)
-
-        for tf in extra_timeframes:
-            tf_offset = self._extra_tf_offset(tf)
-            tf_path = data_store.ensure_data(symbol, tf, start_date, end_date, offset=tf_offset)
-            tf_klines = data_store.load_csv(tf_path, symbol, tf)
-            if tf_klines:
-                self._store_klines(symbol, tf, tf_klines)
-                logger.info("Auto-loaded %d klines for %s %s", len(tf_klines), symbol.binance(), tf)
 
     def _store_klines(self, symbol: Symbol, timeframe: str, klines: list[Kline]) -> None:
         key = f"{symbol.binance()}_{timeframe}"
         self._kline_cache[key] = sorted(klines, key=lambda k: k.timestamp)
 
+    def _ensure_klines(self, symbol: Symbol, timeframe: str, limit: int) -> None:
+        """Lazy-load klines from data_store if not cached."""
+        key = f"{symbol.binance()}_{timeframe}"
+        if key in self._kline_cache:
+            return
+
+        if self.data_store is None:
+            logger.warning("No data_store configured, cannot load %s %s", symbol.binance(), timeframe)
+            return
+
+        tf_ms = self._parse_timeframe_to_ms(timeframe)
+        if tf_ms == 0:
+            logger.warning("Unknown timeframe: %s", timeframe)
+            return
+
+        buffer_ratio = 1.3
+        range_ms = int(limit * tf_ms * buffer_ratio)
+        end_ts = self.current_timestamp
+        start_ts = end_ts - range_ms
+
+        from datetime import datetime, timezone
+        start_date = datetime.fromtimestamp(start_ts / 1000, tz=timezone.utc).strftime('%Y-%m-%d')
+        end_date = datetime.fromtimestamp(end_ts / 1000, tz=timezone.utc).strftime('%Y-%m-%d')
+
+        try:
+            file_path = self.data_store.ensure_data(symbol, timeframe, start_date, end_date)
+            klines = self.data_store.load_csv(file_path, symbol, timeframe)
+            if klines:
+                self._store_klines(symbol, timeframe, klines)
+                logger.info("Lazy-loaded %d klines for %s %s", len(klines), symbol.binance(), timeframe)
+        except FileNotFoundError:
+            logger.warning("Data file not found for %s %s", symbol.binance(), timeframe)
+        except ValueError as e:
+            logger.warning("Failed to load data for %s %s: %s", symbol.binance(), timeframe, e)
+
     @staticmethod
-    def _extra_tf_offset(timeframe: str) -> timedelta | None:
-        tf_minutes = {"1w": 10080, "1d": 1440, "4h": 240, "1h": 60}
-        minutes = tf_minutes.get(timeframe, 0)
-        if minutes == 0:
-            return None
-        return timedelta(minutes=minutes * 100)
+    def _parse_timeframe_to_ms(timeframe: str) -> int:
+        """Convert timeframe string (e.g. '5m', '1h', '1d') to milliseconds."""
+        try:
+            import ccxt
+            return ccxt.Exchange.parse_timeframe(timeframe) * 1000
+        except Exception:
+            return 0
 
     def get_all_klines(self) -> list[Kline]:
         """Get all klines for the primary timeframe, sorted by timestamp."""
@@ -332,6 +337,8 @@ class BacktestClient(ExSwapClient):
 
     def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100,
                     start_time: int | None = None, end_time: int | None = None) -> list[Kline]:
+        self._ensure_klines(symbol, timeframe, limit)
+
         key = f"{symbol.binance()}_{timeframe}"
         if key not in self._kline_cache:
             return []

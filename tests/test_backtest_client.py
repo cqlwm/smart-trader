@@ -1,7 +1,9 @@
 import pytest
+from unittest.mock import MagicMock
 from model import Symbol, Kline, OrderSide, PositionSide, OrderStatus
 from backtest.client import BacktestClient
 from persistence.order_repository import InMemoryOrderRepository
+from persistence.kline_data_store import KlineDataStore
 
 
 SYMBOL = Symbol(base='eth', quote='usdt')
@@ -174,3 +176,58 @@ class TestSymbolInfo:
         client = BacktestClient(order_repo=InMemoryOrderRepository(), symbol_infos={SYMBOL.binance(): custom})
         info = client.symbol_info(SYMBOL)
         assert info.tick_size == 0.1
+
+
+class TestFetchOhlcvLazyLoading:
+    def test_fetch_ohlcv_loads_data_from_store_when_cache_miss(self):
+        klines = [_make_kline(low=1900.0, high=2100.0, close=2000.0, ts=TS_BASE + i * 60_000) for i in range(5)]
+        mock_store = MagicMock(spec=KlineDataStore)
+        mock_store.ensure_data.return_value = "data/mock.csv"
+        mock_store.load_csv.return_value = klines
+
+        repo = InMemoryOrderRepository()
+        client = BacktestClient(data_store=mock_store, order_repo=repo, initial_balance=10_000.0)
+        client.update_current_timestamp(TS_BASE + 4 * 60_000)
+
+        result = client.fetch_ohlcv(SYMBOL, '1m', limit=5)
+
+        mock_store.ensure_data.assert_called_once()
+        mock_store.load_csv.assert_called_once_with("data/mock.csv", SYMBOL, '1m')
+        assert len(result) == 5
+
+    def test_fetch_ohlcv_uses_cache_on_second_call(self):
+        klines = [_make_kline(low=1900.0, high=2100.0, close=2000.0, ts=TS_BASE + i * 60_000) for i in range(5)]
+        mock_store = MagicMock(spec=KlineDataStore)
+        mock_store.ensure_data.return_value = "data/mock.csv"
+        mock_store.load_csv.return_value = klines
+
+        repo = InMemoryOrderRepository()
+        client = BacktestClient(data_store=mock_store, order_repo=repo, initial_balance=10_000.0)
+        client.update_current_timestamp(TS_BASE + 4 * 60_000)
+
+        client.fetch_ohlcv(SYMBOL, '1m', limit=5)
+        client.fetch_ohlcv(SYMBOL, '1m', limit=5)
+
+        mock_store.ensure_data.assert_called_once()
+        mock_store.load_csv.assert_called_once()
+
+    def test_fetch_ohlcv_returns_empty_when_no_data_store(self):
+        repo = InMemoryOrderRepository()
+        client = BacktestClient(order_repo=repo, initial_balance=10_000.0)
+        client.update_current_timestamp(TS_BASE)
+
+        result = client.fetch_ohlcv(SYMBOL, '1m', limit=5)
+        assert result == []
+
+    def test_fetch_ohlcv_no_lazy_load_when_cache_hit(self):
+        klines = [_make_kline(low=1900.0, high=2100.0, close=2000.0, ts=TS_BASE + i * 60_000) for i in range(5)]
+        mock_store = MagicMock(spec=KlineDataStore)
+
+        repo = InMemoryOrderRepository()
+        client = BacktestClient(data_store=mock_store, order_repo=repo, initial_balance=10_000.0)
+        client._store_klines(SYMBOL, '1m', klines)
+        client.update_current_timestamp(TS_BASE + 4 * 60_000)
+
+        result = client.fetch_ohlcv(SYMBOL, '1m', limit=5)
+        mock_store.ensure_data.assert_not_called()
+        assert len(result) == 5
