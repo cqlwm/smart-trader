@@ -1,6 +1,5 @@
 import logging
 from datetime import datetime, timezone
-from typing import Callable
 
 from backtest.types import BacktestConfig
 from event_loop.base import DataEventLoop

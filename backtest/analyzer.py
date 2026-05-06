@@ -4,8 +4,6 @@ from typing import List, Dict, Any, Optional
 
 import log
 
-from backtest.types import BacktestResult
-
 logger = log.getLogger(__name__)
 
 class BacktestAnalyzer:

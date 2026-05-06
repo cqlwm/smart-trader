@@ -1,7 +1,7 @@
 import time
 
 import ccxt
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from persistence.kline_data_store import KlineDataStore
 from client.binance_chaser_order import LimitOrderChaser
@@ -232,7 +232,7 @@ class BinanceSwapClient(ExSwapClient):
         if position_side:
             params['positionSide'] = position_side
 
-        order_type = 'limit' if price else 'market'
+        order_type: Literal['limit', 'market'] = 'limit' if price else 'market'
 
         # 只在限价单时设置timeInForce
         if order_type == 'limit' and (kwargs.get('time_in_force') or kwargs.get('timeInForce')):
@@ -247,7 +247,7 @@ class BinanceSwapClient(ExSwapClient):
             raw_order: Dict[str, Any] = self.exchange.create_order(  # type: ignore
                 symbol=symbol.ccxt(),
                 type=order_type,
-                side=order_side.value,
+                side=order_side.val(),
                 amount=quantity,
                 price=price,
                 params=params

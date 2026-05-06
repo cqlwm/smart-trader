@@ -1,8 +1,6 @@
-import pytest
-import pandas as pd
 from typing import List
 
-from strategy import GeneralStrategy, KlineData
+from strategy import GeneralStrategy
 from model import Kline, Symbol
 from client.ex_client import ExClient
 

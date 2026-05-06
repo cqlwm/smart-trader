@@ -72,7 +72,6 @@ def _build_strategy_factory(
             cfg = SignalGridStrategyConfig(
                 symbol=symbol,
                 timeframe=timeframe,
-                order_file_path="data/grids_strategy_v2.json",
                 **config,
             )
             return SignalGridStrategy(cfg, client)
@@ -97,7 +96,6 @@ def _build_strategy_factory(
                 trade_symbol=symbol,
                 trade_timeframe=timeframe,
                 direction_symbols=[symbol],
-                order_file_path="data/daily_trend_strategy.json",
                 signal=None,
                 **config,
             )
