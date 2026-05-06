@@ -19,7 +19,7 @@ def _parse_date_to_timestamp(date_str: str) -> int:
 class BacktestEventLoop(DataEventLoop):
     """回测事件循环，从历史数据重放K线（同步模式）"""
 
-    def __init__(self, config: BacktestConfig) -> None:
+    def __init__(self, config: BacktestConfig, backtest_client: BacktestClient) -> None:
         super().__init__()
         self._config = config
         self._start_ts = _parse_date_to_timestamp(config.start_date)
@@ -29,16 +29,14 @@ class BacktestEventLoop(DataEventLoop):
         self.end_index = 0
         self.current_index = 0
         self.is_running = False
-        self.backtest_client: BacktestClient | None = None
+        self.backtest_client: BacktestClient = backtest_client
         self.historical_klines: list[Kline] = []
+        self.default_warmup = 300
 
     def subscribe(self, symbols: list[Symbol], timeframes: list[str]) -> None:
         for symbol in symbols:
             for tf in timeframes:
                 self._subscriptions[f"{symbol.simple()}_{tf}"] = (symbol, tf)
-
-    def set_backtest_client(self, client: BacktestClient) -> None:
-        self.backtest_client = client
 
     def loop(self, event: KlineEvent) -> None:  # type: ignore[override]
         """同步执行所有任务，保证时序确定性"""
@@ -73,8 +71,6 @@ class BacktestEventLoop(DataEventLoop):
         logger.info("Backtest stopped")
 
     def _load_subscribed_klines(self) -> list[Kline]:
-        if not self.backtest_client:
-            return []
         collected: list[Kline] = []
 
         for _, (symbol, tf) in self._subscriptions.items():
@@ -89,7 +85,7 @@ class BacktestEventLoop(DataEventLoop):
         return sorted(collected, key=lambda k: k.timestamp)
 
     def _resolve_start_index(self) -> None:
-        default_warmup = min(300, len(self.historical_klines) - 1)
+        default_warmup = min(self.default_warmup, len(self.historical_klines) - 1)
         for i, kline in enumerate(self.historical_klines):
             if kline.timestamp >= self._start_ts:
                 self.start_index = i
@@ -116,15 +112,13 @@ class BacktestEventLoop(DataEventLoop):
 
         kline = self.historical_klines[self.current_index]
 
-        if self.backtest_client:
-            self.backtest_client.update_current_price(kline.symbol, kline.close)
-            self.backtest_client.update_current_timestamp(kline.timestamp)
+        self.backtest_client.update_current_price(kline.symbol, kline.close)
+        self.backtest_client.update_current_timestamp(kline.timestamp)
 
         kline_event = KlineEvent(timestamp=kline.timestamp, kline=kline)
         self.loop(kline_event)
 
-        if self.backtest_client:
-            self.backtest_client.check_pending_orders(kline)
+        self.backtest_client.check_pending_orders(kline)
 
         self.current_index += 1
 

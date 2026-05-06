@@ -17,8 +17,7 @@ class BacktestRunner:
         self._config = config
         self._backtest_client = self._create_backtest_client()
 
-        self._event_loop = BacktestEventLoop(config=config)
-        self._event_loop.set_backtest_client(self._backtest_client)
+        self._event_loop = BacktestEventLoop(config=config, backtest_client=self._backtest_client)
         self._event_loop.subscribe(symbols=[config.symbol], timeframes=[config.timeframe])
 
         self._bot_manager = BotManager(
@@ -45,7 +44,6 @@ class BacktestRunner:
             start_date=self._config.start_date,
             end_date=self._config.end_date,
             extra_timeframes=self._config.extra_timeframes,
-            data_dir=self._config.data_dir,
         )
 
     def run(self) -> dict[str, Any]:

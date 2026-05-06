@@ -219,8 +219,7 @@ async def run_backtest(request: BacktestRequest):
             initial_balance=request.initial_balance,
             extra_timeframes=extra_timeframes,
         )
-        event_loop = BacktestEventLoop(config=config)
-        event_loop.set_backtest_client(client)
+        event_loop = BacktestEventLoop(config=config, backtest_client=client)
         event_loop.subscribe(symbols=[symbol], timeframes=all_timeframes)
         event_loop.add_handler(handler)
         event_loop.start()

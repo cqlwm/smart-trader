@@ -25,23 +25,25 @@ class BacktestClient(ExSwapClient):
 
     def __init__(
         self,
+        data_store: KlineDataStore,
         order_repo: OrderRepository,
         initial_balance: float = 10000.0,
         maker_fee: float = 0.0002,
         taker_fee: float = 0.0004,
         symbol_infos: dict[str, SymbolInfo] | None = None,
-        data_store: KlineDataStore | None = None,
         symbol: Symbol | None = None,
         timeframe: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
         extra_timeframes: tuple[str, ...] = (),
-        data_dir: str = "data",
     ) -> None:
         self.exchange_name = 'backtest'
         self.exchange = None  # type: ignore
+
+        self.data_store = data_store
         self.order_repo = order_repo
 
+        self.initial_balance = initial_balance
         self._balance = initial_balance
         self.maker_fee = maker_fee
         self.taker_fee = taker_fee
@@ -51,12 +53,12 @@ class BacktestClient(ExSwapClient):
         self._positions: dict[str, _Position] = {}
 
         self.current_prices: dict[str, float] = {}
-
-        self._kline_cache: dict[str, list[Kline]] = {}
         self.current_timestamp: int = 0
 
+        self._kline_cache: dict[str, list[Kline]] = {}
+
         if data_store and symbol and timeframe and start_date and end_date:
-            self._load_data_from_store(data_store, symbol, timeframe, start_date, end_date, extra_timeframes, data_dir)
+            self._load_data_from_store(data_store, symbol, timeframe, start_date, end_date, extra_timeframes)
 
         logger.info("BacktestClient initialized with balance: %s", initial_balance)
 
@@ -68,7 +70,6 @@ class BacktestClient(ExSwapClient):
         start_date: str,
         end_date: str,
         extra_timeframes: tuple[str, ...] = (),
-        data_dir: str = "data",
     ) -> None:
         file_path = data_store.ensure_data(symbol, timeframe, start_date, end_date)
         klines = data_store.load_csv(file_path, symbol, timeframe)
