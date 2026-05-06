@@ -1,6 +1,6 @@
 from typing import Any
 
-from backtest.backtest_analyzer import BacktestAnalyzer
+from backtest.analyzer import BacktestAnalyzer
 from client.ex_client import ExSwapClient
 
 

@@ -1,6 +1,6 @@
 import pytest
 from model import Symbol, Kline, OrderSide, PositionSide, OrderStatus
-from backtest.backtest_client import BacktestClient
+from backtest.client import BacktestClient
 from persistence.order_repository import InMemoryOrderRepository
 
 

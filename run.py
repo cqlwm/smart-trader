@@ -8,7 +8,7 @@ import uvicorn
 from bot_manager import BotManager
 from client.binance_client import BinanceSwapClient
 from event_loop.binance import BinanceDataEventLoop
-from backtest.backtest_runner import BacktestRunner
+from backtest.runner import BacktestRunner
 from backtest.types import BacktestConfig
 from model import Symbol
 

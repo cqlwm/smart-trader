@@ -133,11 +133,10 @@ from unittest.mock import patch, MagicMock
 
 from model import Symbol, Kline
 from backtest.config import BacktestConfig
-from backtest.backtest_runner import BacktestRunner
-from backtest.backtest_client import BacktestClient
-from backtest.backtest_event_loop import BacktestEventLoop
+from backtest.runner import BacktestRunner
+from backtest.client import BacktestClient
+from backtest.event_loop import BacktestEventLoop
 from persistence.order_repository import InMemoryOrderRepository
-
 
 SYMBOL = Symbol(base='ETH', quote='USDT')
 TS_BASE = 1_700_000_000_000
@@ -234,41 +233,42 @@ class TestBacktestRunnerRun:
             start_index=0,
         )
 
-        with patch('backtest.backtest_runner.KlineDataStore') as mock_store_cls, \
-             patch.object(BacktestRunner, '_start_bot') as mock_start:
-            mock_store = MagicMock()
-            mock_store_cls.return_value = mock_store
-            mock_store.ensure_data.return_value = "data/mock.csv"
-            mock_store.load_csv.return_value = klines
+        with patch('backtest.backtest_runner.KlineDataStore') as mock_store_cls,
+            patch.object(BacktestRunner, '_start_bot') as mock_start:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.ensure_data.return_value = "data/mock.csv"
+        mock_store.load_csv.return_value = klines
 
-            runner = BacktestRunner(config)
-            result = runner.run()
+        runner = BacktestRunner(config)
+        result = runner.run()
 
-        assert 'summary' in result
-        assert 'risk_metrics' in result
-        assert 'trade_metrics' in result
+    assert 'summary' in result
+    assert 'risk_metrics' in result
+    assert 'trade_metrics' in result
 
-    def test_run_calls_bot_start(self) -> None:
-        klines = _make_klines(10)
-        config = BacktestConfig(
-            symbol=SYMBOL,
-            timeframe='1m',
-            start_date='2025-01-01',
-            end_date='2025-02-01',
-            start_index=0,
-        )
 
-        with patch('backtest.backtest_runner.KlineDataStore') as mock_store_cls:
-            mock_store = MagicMock()
-            mock_store_cls.return_value = mock_store
-            mock_store.ensure_data.return_value = "data/mock.csv"
-            mock_store.load_csv.return_value = klines
+def test_run_calls_bot_start(self) -> None:
+    klines = _make_klines(10)
+    config = BacktestConfig(
+        symbol=SYMBOL,
+        timeframe='1m',
+        start_date='2025-01-01',
+        end_date='2025-02-01',
+        start_index=0,
+    )
 
-            runner = BacktestRunner(config)
+    with patch('backtest.backtest_runner.KlineDataStore') as mock_store_cls:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.ensure_data.return_value = "data/mock.csv"
+        mock_store.load_csv.return_value = klines
 
-        with patch.object(runner._bot_manager, 'start_bot') as mock_start:
-            runner.run()
-            mock_start.assert_called_once()
+        runner = BacktestRunner(config)
+
+    with patch.object(runner._bot_manager, 'start_bot') as mock_start:
+        runner.run()
+        mock_start.assert_called_once()
 
 
 class TestBacktestRunnerReport:
@@ -290,16 +290,16 @@ class TestBacktestRunnerReport:
 
             runner = BacktestRunner(config)
 
-        with patch.object(runner._bot_manager, 'start_bot'), \
-             patch('backtest.backtest_runner.TradeAnalysis') as mock_ta_cls:
-            mock_ta = MagicMock()
-            mock_ta.report.return_value = "BACKTEST REPORT\n..."
-            mock_ta_cls.return_value = mock_ta
+        with patch.object(runner._bot_manager, 'start_bot'),
+            patch('backtest.backtest_runner.TradeAnalysis') as mock_ta_cls:
+        mock_ta = MagicMock()
+        mock_ta.report.return_value = "BACKTEST REPORT\n..."
+        mock_ta_cls.return_value = mock_ta
 
-            report = runner.report()
+        report = runner.report()
 
-        mock_ta_cls.assert_called_once()
-        assert "BACKTEST REPORT" in report
+    mock_ta_cls.assert_called_once()
+    assert "BACKTEST REPORT" in report
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -316,8 +316,8 @@ import logging
 from typing import Any
 
 from bot_manager import BotManager
-from backtest.backtest_client import BacktestClient
-from backtest.backtest_event_loop import BacktestEventLoop
+from backtest.client import BacktestClient
+from backtest.event_loop import BacktestEventLoop
 from backtest.config import BacktestConfig
 from persistence.kline_data_store import KlineDataStore
 from trade_analysis import TradeAnalysis
@@ -412,7 +412,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backtest/backtest_runner.py test/test_backtest_runner.py
+git add backtest/runner.py test/test_backtest_runner.py
 git commit -m "feat: add BacktestRunner wrapping BotManager for backtest execution"
 ```
 
@@ -516,7 +516,7 @@ import sys
 from bot_manager import BotManager
 from client.binance_client import BinanceSwapClient
 from event_loop.binance import BinanceDataEventLoop
-from backtest.backtest_runner import BacktestRunner
+from backtest.runner import BacktestRunner
 from backtest.config import BacktestConfig
 from model import Symbol
 

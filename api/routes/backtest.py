@@ -15,12 +15,12 @@ from api.schemas.backtest import (
     CompletedTradeResponse,
 )
 from api.schemas.strategy_schemas import StrategyTypeInfo
-from backtest.backtest_client import BacktestClient
-from backtest.backtest_event_loop import BacktestEventLoop
+from backtest.client import BacktestClient
+from backtest.event_loop import BacktestEventLoop
 from backtest.types import BacktestConfig
 from trade_analysis import TradeAnalysis
 from persistence.kline_data_store import KlineDataStore
-from backtest.result import BacktestResult
+from backtest.types import BacktestResult
 from event_loop.handler.kline_handler import KlineHandler
 from persistence.order_repository import InMemoryOrderRepository
 from model import Symbol

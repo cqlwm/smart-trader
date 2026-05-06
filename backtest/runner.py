@@ -1,27 +1,16 @@
+import log
 from typing import Any
 
 from bot_manager import BotManager
-from backtest.backtest_client import BacktestClient
-from backtest.backtest_event_loop import BacktestEventLoop
+from backtest.client import BacktestClient
+from backtest.event_loop import BacktestEventLoop
 from persistence.kline_data_store import KlineDataStore
 from trade_analysis import TradeAnalysis
 from persistence.order_repository import InMemoryOrderRepository
-from dataclasses import dataclass
 
-from model import Symbol
+from backtest.types import BacktestConfig
 
-@dataclass(frozen=True)
-class BacktestConfig:
-    symbol: Symbol
-    timeframe: str
-    start_date: str
-    end_date: str
-    config_path: str = "strategies.yaml"
-    initial_balance: float = 10000.0
-    maker_fee: float = 0.0002
-    taker_fee: float = 0.0004
-    extra_timeframes: tuple[str, ...] = ()
-    data_dir: str = "data"
+logger = log.getLogger(__name__)
 
 class BacktestRunner:
     def __init__(self, config: BacktestConfig) -> None:

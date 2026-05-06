@@ -254,7 +254,7 @@ Expected: ALL PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backtest/backtest_client.py test/test_backtest_rewrite.py
+git add backtest/client.py test/test_backtest_rewrite.py
 git commit -m "feat: BacktestClient internalizes KlineDataStore, auto-loads data"
 ```
 
@@ -351,7 +351,7 @@ git commit -m "refactor: update tests to use BacktestClient._store_klines instea
 ```python
 from typing import Any
 
-from backtest.backtest_analyzer import BacktestAnalyzer
+from backtest.analyzer import BacktestAnalyzer
 from client.ex_client import ExSwapClient
 
 
@@ -449,7 +449,7 @@ Add `Kline` to imports in `client/binance_client.py` (if not already there from 
 import pytest
 from typing import Any
 from model import Symbol, OrderSide, PositionSide
-from backtest.backtest_client import BacktestClient
+from backtest.client import BacktestClient
 from trade_analysis import TradeAnalysis
 from client.ex_client import ExSwapClient
 from persistence.order_repository import InMemoryOrderRepository
@@ -620,7 +620,7 @@ Update imports at the top of `api/routes/backtest.py`:
 from backtest.runner import BacktestRunner
 
 # Add:
-from backtest.backtest_event_loop import BacktestEventLoop
+from backtest.event_loop import BacktestEventLoop
 from trade_analysis import TradeAnalysis
 from persistence.kline_data_store import KlineDataStore
 from backtest.result import BacktestResult

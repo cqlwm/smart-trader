@@ -639,7 +639,7 @@ Expected: ALL PASS (including new time-param tests and existing ones)
 - [ ] **Step 6: Commit**
 
 ```bash
-git add client/ex_client.py backtest/backtest_client.py test/test_backtest_rewrite.py
+git add client/ex_client.py backtest/client.py test/test_backtest_rewrite.py
 git commit -m "feat: extend fetch_ohlcv with start_time/end_time params"
 ```
 
@@ -893,10 +893,9 @@ Create `test/test_backtest_analysis.py`:
 ```python
 import pytest
 from model import Symbol, Kline, OrderSide, PositionSide, OrderStatus
-from backtest.backtest_client import BacktestClient
+from backtest.client import BacktestClient
 from backtest.backtest_analysis import BacktestAnalysis
 from persistence.order_repository import InMemoryOrderRepository
-
 
 SYMBOL = Symbol(base='eth', quote='usdt')
 TS_BASE = 1_700_000_000_000
@@ -962,8 +961,8 @@ Create `backtest/backtest_analysis.py`:
 ```python
 from typing import Any
 
-from backtest.backtest_analyzer import BacktestAnalyzer
-from backtest.backtest_client import BacktestClient
+from backtest.analyzer import BacktestAnalyzer
+from backtest.client import BacktestClient
 
 
 class BacktestAnalysis:
@@ -1017,7 +1016,7 @@ The import was already updated in Task 2. Now update the `BacktestAnalyzer` impo
 
 ```python
 # Before:
-from backtest.backtest_analyzer import BacktestAnalyzer
+from backtest.analyzer import BacktestAnalyzer
 # After:
 from backtest.backtest_analysis import BacktestAnalysis
 ```

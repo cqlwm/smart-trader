@@ -277,7 +277,7 @@ Check `run.py` for `start_index` usage. If it's in `BacktestConfig` construction
 - [ ] **Step 4: Commit**
 
 ```bash
-git add backtest/backtest_event_loop.py backtest/backtest_runner.py backtest/backtest_client.py
+git add backtest/event_loop.py backtest/runner.py backtest/client.py
 git commit -m "fix: BacktestEventLoop respects start_date/end_date for data loading and loop termination"
 ```
 
@@ -301,7 +301,7 @@ event_loop = BacktestEventLoop(
 Replace with a `BacktestConfig`-based approach. The API route doesn't use `BacktestRunner` so it needs its own config:
 
 ```python
-from backtest.backtest_runner import BacktestConfig
+from backtest.runner import BacktestConfig
 
 config = BacktestConfig(
     symbol=symbol,
@@ -336,7 +336,7 @@ All tests currently use `BacktestEventLoop(historical_klines=klines, start_index
 Add a helper at module level:
 
 ```python
-from backtest.backtest_runner import BacktestConfig
+from backtest.runner import BacktestConfig
 
 # Use dates that map to TS_BASE range
 START_DATE = '2023-11-14'
@@ -391,13 +391,12 @@ import pytest
 from model import Symbol, Kline
 from event_loop.event import KlineEvent
 from event_loop.handler.kline_handler import KlineHandler
-from backtest.backtest_event_loop import BacktestEventLoop, _parse_date_to_timestamp
-from backtest.backtest_runner import BacktestConfig
-from backtest.backtest_client import BacktestClient
+from backtest.event_loop import BacktestEventLoop, _parse_date_to_timestamp
+from backtest.runner import BacktestConfig
+from backtest.client import BacktestClient
 from persistence.order_repository import InMemoryOrderRepository
 from strategy import GeneralStrategy
 from client.ex_client import ExClient
-
 
 SYMBOL = Symbol(base='ETH', quote='USDT')
 TS_BASE = 1_700_000_000_000
@@ -406,7 +405,8 @@ END_DATE = '2023-11-15'
 
 
 class MockExClient(ExClient):
-    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100, start_time: int | None = None, end_time: int | None = None) -> list[Kline]:
+    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100, start_time: int | None = None,
+                    end_time: int | None = None) -> list[Kline]:
         return []
 
     def balance(self, coin: str) -> float:

@@ -3,9 +3,9 @@ import pytest
 from model import Symbol, Kline
 from event_loop.event import KlineEvent
 from event_loop.handler.kline_handler import KlineHandler
-from backtest.backtest_event_loop import BacktestEventLoop, _parse_date_to_timestamp
+from backtest.event_loop import BacktestEventLoop, _parse_date_to_timestamp
 from backtest.types import BacktestConfig
-from backtest.backtest_client import BacktestClient
+from backtest.client import BacktestClient
 from persistence.order_repository import InMemoryOrderRepository
 from strategy import GeneralStrategy
 from client.ex_client import ExClient

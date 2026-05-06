@@ -3,9 +3,9 @@ from unittest.mock import patch, MagicMock
 
 from model import Symbol, Kline
 from backtest.types import BacktestConfig
-from backtest.backtest_runner import BacktestRunner
-from backtest.backtest_client import BacktestClient
-from backtest.backtest_event_loop import BacktestEventLoop
+from backtest.runner import BacktestRunner
+from backtest.client import BacktestClient
+from backtest.event_loop import BacktestEventLoop
 from persistence.order_repository import InMemoryOrderRepository
 
 

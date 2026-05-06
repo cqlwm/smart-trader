@@ -6,7 +6,7 @@ from backtest.types import BacktestConfig
 from event_loop.base import DataEventLoop
 from event_loop.event import KlineEvent
 from model import Kline, Symbol
-from backtest.backtest_client import BacktestClient
+from backtest.client import BacktestClient
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,5 @@
 from model import Symbol, OrderSide, PositionSide
-from backtest.backtest_client import BacktestClient
+from backtest.client import BacktestClient
 from trade_analysis import TradeAnalysis
 from client.ex_client import ExSwapClient
 from persistence.order_repository import InMemoryOrderRepository

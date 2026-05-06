@@ -3,11 +3,11 @@ from unittest.mock import patch
 
 from model import Symbol, Kline
 
-from backtest.backtest_runner import BacktestConfig
-from backtest.backtest_analyzer import BacktestResult
+from backtest.runner import BacktestConfig
+from backtest.analyzer import BacktestResult
 
-from backtest.backtest_client import BacktestClient
-from backtest.backtest_analyzer import BacktestAnalyzer
+from backtest.client import BacktestClient
+from backtest.analyzer import BacktestAnalyzer
 from persistence.kline_data_store import KlineDataStore
 from persistence.order_repository import InMemoryOrderRepository
 
