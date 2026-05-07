@@ -3,7 +3,6 @@ __pycache__
 binance_*.json
 .python-version
 uv.lock
-data
 .env
 .env.*
 data.parquet
