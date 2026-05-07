@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from smc.schemas import (
+from strategies.smc.schemas import (
     Entry,
     ExecutionInfo,
     PositionSizing,
@@ -11,10 +11,10 @@ from smc.schemas import (
     StopLoss,
     Target,
 )
-from smc.types import Bias, EventType, FVGStatus, FairValueGap, OrderBlock, ZonePosition
+from strategies.smc.types import Bias, EventType, FVGStatus, FairValueGap, OrderBlock, ZonePosition
 
 if TYPE_CHECKING:
-    from smc.engine import SMCResult
+    from strategies.smc.engine import SMCResult
 
 
 def compute_signal(result: SMCResult) -> SignalResult:

@@ -1,6 +1,6 @@
 import pandas as pd
 
-from smc.types import Bias, EventType, Pivot, StructureEvent, StructureState
+from strategies.smc.types import Bias, EventType, Pivot, StructureEvent, StructureState
 
 
 def detect_structure_breaks(

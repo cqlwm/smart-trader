@@ -7,8 +7,8 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 from model import Symbol
-from smc.mtf import TIMEFRAME_MINUTES, MultiTimeframeAnalyzer, MultiTimeframeResult
-from smc.schemas import (
+from strategies.smc.mtf import TIMEFRAME_MINUTES, MultiTimeframeAnalyzer, MultiTimeframeResult
+from strategies.smc.schemas import (
     ConditionOutput,
     DirectionContextOutput,
     FVGOutput,
@@ -18,14 +18,14 @@ from smc.schemas import (
     TradePlanOutput,
     TriggerContextOutput,
 )
-from smc.strategy.intraday import (
+from strategies.smc.strategy.intraday import (
     DirectionalContext,
     IntradaySignal,
     MTFAnalysis,
     SetupZone,
 )
-from smc.strategy.risk import RiskManager, RiskParameters, TradePlan
-from smc.types import Bias, OBStatus, OrderBlock
+from strategies.smc.strategy.risk import RiskManager, RiskParameters, TradePlan
+from strategies.smc.types import Bias, OBStatus, OrderBlock
 
 logger = logging.getLogger(__name__)
 
@@ -442,7 +442,7 @@ class SimpleIntradayStrategy:
         return output.model_dump()
 
     def _run_multi_timeframe_analysis(self) -> MultiTimeframeResult:
-        from smc.mtf import MultiTimeframeConfig
+        from strategies.smc.mtf import MultiTimeframeConfig
 
         mtf_config = MultiTimeframeConfig(
             exchange_id=self.config.exchange_id,

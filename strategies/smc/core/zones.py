@@ -1,4 +1,4 @@
-from smc.types import PremiumDiscount, TrailingExtremes, ZonePosition
+from strategies.smc.types import PremiumDiscount, TrailingExtremes, ZonePosition
 
 
 def compute_premium_discount(

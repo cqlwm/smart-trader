@@ -1,6 +1,6 @@
 import pandas as pd
 
-from smc.types import Bias, OBStatus, OrderBlock, StructureEvent
+from strategies.smc.types import Bias, OBStatus, OrderBlock, StructureEvent
 
 
 def create_order_block(

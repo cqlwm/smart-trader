@@ -5,8 +5,8 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 from typing import Optional
 
-from smc.mtf import MultiTimeframeResult
-from smc.types import Bias, OrderBlock
+from strategies.smc.mtf import MultiTimeframeResult
+from strategies.smc.types import Bias, OrderBlock
 
 
 class RiskParameters(BaseModel):

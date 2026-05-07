@@ -1,6 +1,6 @@
 import pandas as pd
 
-from smc.types import Bias, Pivot, TrailingExtremes
+from strategies.smc.types import Bias, Pivot, TrailingExtremes
 
 
 def compute_trailing_extremes(

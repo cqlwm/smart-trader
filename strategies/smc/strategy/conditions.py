@@ -5,11 +5,11 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 from typing import TYPE_CHECKING
 
-from smc.mtf import MultiTimeframeResult
-from smc.types import Bias, OBStatus
+from strategies.smc.mtf import MultiTimeframeResult
+from strategies.smc.types import Bias, OBStatus
 
 if TYPE_CHECKING:
-    from smc.strategy.intraday import SetupZone, TriggerContext
+    from strategies.smc.strategy.intraday import SetupZone, TriggerContext
 
 
 class EntryConditionResult(BaseModel):

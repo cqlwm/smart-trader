@@ -4,10 +4,10 @@ import pandas as pd
 from datetime import datetime, timezone
 
 from model import OrderSide, Symbol
-from smc.config import SMCConfig
-from smc.engine import SMCEngine
-from smc.mtf import MultiTimeframeConfig, MultiTimeframeResult
-from smc.strategy.simple import SimpleIntradayConfig, SimpleIntradayStrategy
+from strategies.smc.config import SMCConfig
+from strategies.smc.engine import SMCEngine
+from strategies.smc.mtf import MultiTimeframeConfig, MultiTimeframeResult
+from strategies.smc.strategy.simple import SimpleIntradayConfig, SimpleIntradayStrategy
 from strategy import GeneralStrategy
 from strategy.registry import register_strategy
 from client.ex_client import ExSwapClient

@@ -2,24 +2,24 @@ from pydantic import BaseModel, ConfigDict
 
 import pandas as pd
 
-from smc.config import SMCConfig
-from smc.core.equal_levels import detect_equal_levels
-from smc.core.fvg import detect_fvg, mitigate_fvg
-from smc.core.legs import detect_legs, identify_pivots
-from smc.core.order_blocks import create_order_blocks_from_events, mitigate_order_blocks
-from smc.core.structure import detect_structure_breaks
-from smc.core.trailing import compute_trailing_extremes
-from smc.core.zones import compute_premium_discount
-from smc.data.fetcher import fetch_ohlcv
-from smc.indicators.atr import (
+from strategies.smc.config import SMCConfig
+from strategies.smc.core.equal_levels import detect_equal_levels
+from strategies.smc.core.fvg import detect_fvg, mitigate_fvg
+from strategies.smc.core.legs import detect_legs, identify_pivots
+from strategies.smc.core.order_blocks import create_order_blocks_from_events, mitigate_order_blocks
+from strategies.smc.core.structure import detect_structure_breaks
+from strategies.smc.core.trailing import compute_trailing_extremes
+from strategies.smc.core.zones import compute_premium_discount
+from strategies.smc import fetch_ohlcv
+from strategies.smc.indicators.atr import (
     classify_volatility,
     compute_atr,
     compute_parsed_high_low,
     compute_volatility_measure,
 )
-from smc.output import build_output
-from smc.signal import compute_signal
-from smc.types import (
+from strategies.smc.output import build_output
+from strategies.smc.signal import compute_signal
+from strategies.smc.types import (
     EqualLevel,
     FairValueGap,
     OrderBlock,
@@ -54,15 +54,7 @@ class SMCEngine:
     def config(self) -> SMCConfig:
         return self._config
 
-    def analyze(self, df: pd.DataFrame | None = None) -> SMCResult:
-        if df is None:
-            df = fetch_ohlcv(
-                self._config.symbol,
-                self._config.timeframe,
-                self._config.lookback_bars,
-                self._config.exchange_id,
-            )
-
+    def analyze(self, df: pd.DataFrame) -> SMCResult:
         atr_series = compute_atr(df, self._config.atr_period)
         volatility_measure = compute_volatility_measure(df, self._config.ob_filter, self._config.atr_period)
         parsed_high, parsed_low = compute_parsed_high_low(df, volatility_measure)

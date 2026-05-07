@@ -1,6 +1,6 @@
 import pandas as pd
 
-from smc.types import Pivot
+from strategies.smc.types import Pivot
 
 
 def detect_legs(highs: pd.Series, lows: pd.Series, size: int) -> pd.Series:

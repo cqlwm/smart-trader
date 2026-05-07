@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from smc.schemas import (
+from strategies.smc.schemas import (
     ContextOutput,
     EqualLevelOutput,
     EventOutput,
@@ -19,11 +19,11 @@ from smc.schemas import (
     SwingLabelsOutput,
     ZonesOutput,
 )
-from smc.types import Bias, FVGStatus, ZonePosition
+from strategies.smc.types import Bias, FVGStatus, ZonePosition
 
 if TYPE_CHECKING:
-    from smc.engine import SMCResult
-    from smc.schemas import SignalResult
+    from strategies.smc.engine import SMCResult
+    from strategies.smc.schemas import SignalResult
 
 
 def build_output(result: SMCResult, signal: SignalResult) -> FullOutput:

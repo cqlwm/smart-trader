@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from smc.config import SMCConfig
-from smc.engine import SMCEngine, SMCResult
-from smc.schemas import (
+from strategies.smc.config import SMCConfig
+from strategies.smc.engine import SMCEngine, SMCResult
+from strategies.smc.schemas import (
     DirectionContextOutput,
     FVGOutput,
     MTFAnalysisOutput,
@@ -202,7 +202,7 @@ class MultiTimeframeAnalyzer:
         strategy_name = result.config.strategy
 
         if strategy_name == "simple_intraday" and {"1w", "1d", "5m"}.issubset(result.results.keys()):
-            from smc.strategy.simple import SimpleIntradayConfig, SimpleIntradayStrategy
+            from strategies.smc.strategy.simple import SimpleIntradayConfig, SimpleIntradayStrategy
 
             strategy = SimpleIntradayStrategy(
                 SimpleIntradayConfig(
@@ -223,7 +223,7 @@ class MultiTimeframeAnalyzer:
                 narrative=analysis.narrative,
             )
         elif strategy_name == "intraday" and {"1d", "4h", "1h", "15m"}.issubset(result.results.keys()):
-            from smc.strategy.intraday import IntradayConfig, IntradayStrategy
+            from strategies.smc.strategy.intraday import IntradayConfig, IntradayStrategy
 
             strategy = IntradayStrategy(
                 IntradayConfig(

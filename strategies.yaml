@@ -1,49 +1,49 @@
 strategies:
-  - type: signal_grid
-    config:
-      symbol: {base: DOGE, quote: USDC}
-      timeframe: 5m
-      position_side: LONG
-      master_side: BUY
-      per_order_qty: 3500
-      grid_spacing_rate: -0.1
-      max_order: 3
-      enable_exit_signal: true
-      signal:
-        type: alpha_trend_grids
-        inner:
-          type: alpha_trend
-          side: BUY
-      exit_signal_take_profit_min_rate: 0.03
-      fixed_rate_take_profit: true
-      fixed_take_profit_rate: 0.03
-      enable_max_order_stop_loss: true
-      position_reverse: false
-
-  - type: signal_grid
-    config:
-      symbol: {base: DOGE, quote: USDC}
-      timeframe: 5m
-      position_side: SHORT
-      master_side: SELL
-      per_order_qty: 200
-      grid_spacing_rate: 0.0001
-      max_order: 10
-      enable_exit_signal: true
-      signal:
-        type: alpha_trend_grids
-        inner:
-          type: alpha_trend
-          side: BUY
-      exit_signal_take_profit_min_rate: 0.005
-      fixed_rate_take_profit: true
-      fixed_take_profit_rate: 0.01
-      enable_max_order_stop_loss: true
-      position_reverse: true
+#  - type: signal_grid
+#    config:
+#      symbol: {base: DOGE, quote: USDC}
+#      timeframe: 5m
+#      position_side: LONG
+#      master_side: BUY
+#      per_order_qty: 3500
+#      grid_spacing_rate: -0.1
+#      max_order: 3
+#      enable_exit_signal: true
+#      signal:
+#        type: alpha_trend_grids
+#        inner:
+#          type: alpha_trend
+#          side: BUY
+#      exit_signal_take_profit_min_rate: 0.03
+#      fixed_rate_take_profit: true
+#      fixed_take_profit_rate: 0.03
+#      enable_max_order_stop_loss: true
+#      position_reverse: false
+#
+#  - type: signal_grid
+#    config:
+#      symbol: {base: DOGE, quote: USDC}
+#      timeframe: 5m
+#      position_side: SHORT
+#      master_side: SELL
+#      per_order_qty: 200
+#      grid_spacing_rate: 0.0001
+#      max_order: 10
+#      enable_exit_signal: true
+#      signal:
+#        type: alpha_trend_grids
+#        inner:
+#          type: alpha_trend
+#          side: BUY
+#      exit_signal_take_profit_min_rate: 0.005
+#      fixed_rate_take_profit: true
+#      fixed_take_profit_rate: 0.01
+#      enable_max_order_stop_loss: true
+#      position_reverse: true
 
   - type: smc_intraday
     config:
-      symbol: BTC/USDC
+      symbol: {base: DOGE, quote: USDC}
       timeframes: [1w, 1d, 5m]
       risk_per_trade_pct: 1.0
       account_balance: 100.0
