@@ -1,6 +1,6 @@
 import pandas as pd
 
-from strategies.smc.types import EqualLevel, Pivot
+from strategies.smc.models import EqualLevel, Pivot
 
 
 def detect_equal_levels(

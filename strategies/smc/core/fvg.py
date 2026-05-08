@@ -1,7 +1,7 @@
 import pandas as pd
 
 from strategies.smc.indicators.atr import compute_atr
-from strategies.smc.types import Bias, FVGStatus, FairValueGap
+from strategies.smc.models import Bias, FVGStatus, FairValueGap
 
 
 def detect_fvg(

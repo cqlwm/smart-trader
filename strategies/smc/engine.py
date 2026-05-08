@@ -2,7 +2,6 @@ from pydantic import BaseModel, ConfigDict
 
 import pandas as pd
 
-from strategies.smc.config import SMCConfig
 from strategies.smc.core.equal_levels import detect_equal_levels
 from strategies.smc.core.fvg import detect_fvg, mitigate_fvg
 from strategies.smc.core.legs import detect_legs, identify_pivots
@@ -16,11 +15,12 @@ from strategies.smc.indicators.atr import (
     compute_parsed_high_low,
     compute_volatility_measure,
 )
-from strategies.smc.types import (
+from strategies.smc.models import (
     EqualLevel,
     FairValueGap,
     OrderBlock,
     PremiumDiscount,
+    SMCConfig,
     StructureState,
     TrailingExtremes,
 )
@@ -108,3 +108,4 @@ class SMCEngine:
             volatility=volatility,
             config=self._config,
         )
+

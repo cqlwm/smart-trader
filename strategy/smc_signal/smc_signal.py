@@ -2,7 +2,7 @@ import pandas as pd
 from pandas import DataFrame
 
 from model import OrderSide
-from strategies.smc.config import SMCConfig
+from strategies.smc.models import SMCConfig
 from strategies.smc.engine import SMCEngine
 from strategies.smc.signal import compute_signal
 from strategy import Signal
