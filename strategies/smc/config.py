@@ -3,9 +3,6 @@ from pydantic import BaseModel, ConfigDict
 
 class SMCConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
-    exchange_id: str = "binanceusdm"
-    symbol: str = "BTC/USDT:USDT"
-    timeframe: str = "4h"
     lookback_bars: int = 500
     swing_length: int = 50
     internal_length: int = 5

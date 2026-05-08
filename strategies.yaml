@@ -40,10 +40,3 @@ strategies:
 #      fixed_take_profit_rate: 0.01
 #      enable_max_order_stop_loss: true
 #      position_reverse: true
-
-  - type: smc_intraday
-    config:
-      symbol: {base: DOGE, quote: USDC}
-      timeframes: [1w, 1d, 5m]
-      risk_per_trade_pct: 1.0
-      account_balance: 100.0

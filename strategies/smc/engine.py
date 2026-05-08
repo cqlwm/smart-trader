@@ -10,7 +10,6 @@ from strategies.smc.core.order_blocks import create_order_blocks_from_events, mi
 from strategies.smc.core.structure import detect_structure_breaks
 from strategies.smc.core.trailing import compute_trailing_extremes
 from strategies.smc.core.zones import compute_premium_discount
-from strategies.smc import fetch_ohlcv
 from strategies.smc.indicators.atr import (
     classify_volatility,
     compute_atr,
