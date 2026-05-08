@@ -71,6 +71,7 @@ class OrderBlock(BaseModel):
     formed_index: int
     status: OBStatus
     source: str
+    source_event: StructureEvent | None = None
 
 
 class FairValueGap(BaseModel):

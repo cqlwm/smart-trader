@@ -39,6 +39,7 @@ def _create_order_block(
         formed_index=int(target_idx),
         status=OBStatus.UNTESTED,
         source=source,
+        source_event=event,
     )
 
 
