@@ -16,8 +16,6 @@ from strategies.smc.indicators.atr import (
     compute_parsed_high_low,
     compute_volatility_measure,
 )
-from strategies.smc.output import build_output
-from strategies.smc.signal import compute_signal
 from strategies.smc.types import (
     EqualLevel,
     FairValueGap,
@@ -110,8 +108,3 @@ class SMCEngine:
             volatility=volatility,
             config=self._config,
         )
-
-    @staticmethod
-    def to_json(result: SMCResult) -> dict:
-        signal = compute_signal(result)
-        return build_output(result, signal).model_dump()
