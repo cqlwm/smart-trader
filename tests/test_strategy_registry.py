@@ -1,8 +1,8 @@
 import pytest
 
-from strategy.registry import StrategyRegistry, register_strategy
-from strategy.instance import InstanceStatus, StrategyInstance
-from strategy.instance_manager import StrategyInstanceManager
+from strategies.registry import StrategyRegistry, register_strategy
+from strategies.instance import InstanceStatus, StrategyInstance
+from strategies.instance_manager import StrategyInstanceManager
 
 
 class DummyStrategy:

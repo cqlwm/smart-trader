@@ -4,9 +4,9 @@ from api.schemas.common import BaseResponse
 from api.schemas.strategy import StrategyStatus, StrategyInfo
 from api.schemas.strategy_schemas import CreateStrategyRequest, StrategyResponse, StrategyTypeInfo
 from api.dependencies import verify_api_key, get_bot_manager, get_instance_manager
-from strategy.instance import StrategyInstance
-from strategy.instance_manager import StrategyInstanceManager
-from strategy.registry import StrategyRegistry
+from strategies.instance import StrategyInstance
+from strategies.instance_manager import StrategyInstanceManager
+from strategies.registry import StrategyRegistry
 
 logger = logging.getLogger(__name__)
 

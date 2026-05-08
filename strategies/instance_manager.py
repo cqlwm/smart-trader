@@ -3,8 +3,8 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from strategy.instance import InstanceStatus, StrategyInstance
-from strategy.registry import StrategyRegistry
+from strategies.instance import InstanceStatus, StrategyInstance
+from strategies.registry import StrategyRegistry
 
 logger = logging.getLogger(__name__)
 

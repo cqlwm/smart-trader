@@ -1,5 +1,5 @@
 import pytest
-from strategy.signal_registry import SignalRegistry, register_signal
+from strategies.signal_registry import SignalRegistry, register_signal
 from model import OrderSide
 
 

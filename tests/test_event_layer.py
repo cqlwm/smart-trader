@@ -6,7 +6,7 @@ from event_loop.event import Event, KlineEvent
 from event_loop.handler.binance_kline_parser import BinanceKlineParser
 from event_loop.handler.kline_handler import KlineHandler
 from event_loop.base import Handler
-from strategy import GeneralStrategy
+from strategies import GeneralStrategy
 from client.ex_client import ExClient
 
 

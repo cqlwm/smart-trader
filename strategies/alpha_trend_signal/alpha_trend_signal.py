@@ -4,8 +4,8 @@ import pandas as pd
 from pandas import DataFrame
 
 from model import OrderSide
-from strategy import Signal
-from strategy.signal_registry import register_signal
+from strategies import Signal
+from strategies.signal_registry import register_signal
 
 _datetime = 'datetime'
 _high = 'high'

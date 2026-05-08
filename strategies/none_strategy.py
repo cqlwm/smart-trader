@@ -1,6 +1,6 @@
 from client.ex_client import ExClient
 from model import Symbol
-from strategy import SimpleStrategy
+from strategies import SimpleStrategy
 
 
 class NoneStrategy(SimpleStrategy):

@@ -5,7 +5,7 @@ from model import OrderSide
 from strategies.smc.models import SMCConfig
 from strategies.smc.engine import SMCEngine
 from strategies.smc.signal import compute_signal
-from strategy import Signal
+from strategies import Signal
 
 
 class SMCSignal(Signal):

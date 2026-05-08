@@ -6,7 +6,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import system, account, strategy, orders, backtest
 from bot_manager import BotManager
-from strategy.instance_manager import StrategyInstanceManager
+from strategies.instance_manager import StrategyInstanceManager
 import logging
 
 logger = logging.getLogger(__name__)

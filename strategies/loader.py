@@ -5,8 +5,8 @@ import yaml
 
 from event_loop.handler.kline_handler import KlineHandler
 from model import OrderSide, PositionSide, Symbol
-from strategy.registry import StrategyRegistry
-from strategy.signal_registry import SignalRegistry
+from strategies.registry import StrategyRegistry
+from strategies.signal_registry import SignalRegistry
 
 logger = logging.getLogger(__name__)
 

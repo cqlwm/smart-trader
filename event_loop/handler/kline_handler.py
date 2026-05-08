@@ -2,7 +2,7 @@ import logging
 
 from event_loop.base import Handler
 from event_loop.event import Event, KlineEvent
-from strategy import GeneralStrategy
+from strategies import GeneralStrategy
 
 logger = logging.getLogger(__name__)
 

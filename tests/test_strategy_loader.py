@@ -5,9 +5,9 @@ import pytest
 from unittest.mock import MagicMock
 
 from model import OrderSide, PositionSide, Symbol
-from strategy.loader import StrategyLoader
-from strategy.registry import StrategyRegistry
-from strategy.signal_registry import SignalRegistry
+from strategies.loader import StrategyLoader
+from strategies.registry import StrategyRegistry
+from strategies.signal_registry import SignalRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -175,7 +175,7 @@ strategies:
 class TestStrategyLoaderIntegration:
     def test_load_actual_strategies_yaml(self) -> None:
         """Integration: load strategies.yaml and verify all handlers constructed."""
-        import strategy.strategies  # noqa: F401
+        import strategies  # noqa: F401
 
         yaml_path = os.path.join(os.path.dirname(__file__), "..", "strategies.yaml")
         if not os.path.exists(yaml_path):

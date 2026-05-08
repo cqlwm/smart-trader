@@ -4,7 +4,7 @@ from backtest.event_loop import BacktestEventLoop
 from backtest.types import BacktestConfig
 from backtest.client import BacktestClient
 from persistence.order_repository import InMemoryOrderRepository
-from strategy import GeneralStrategy
+from strategies import GeneralStrategy
 from client.ex_client import ExClient
 
 

@@ -1,6 +1,6 @@
 import os
 from fastapi import Header, HTTPException, Request
-from strategy.instance_manager import StrategyInstanceManager
+from strategies.instance_manager import StrategyInstanceManager
 import dotenv
 
 dotenv.load_dotenv()

@@ -24,7 +24,7 @@ from backtest.types import BacktestResult
 from event_loop.handler.kline_handler import KlineHandler
 from persistence.order_repository import InMemoryOrderRepository
 from model import Symbol
-from strategy.registry import StrategyRegistry
+from strategies.registry import StrategyRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def _build_strategy_factory(
                            "exchange_id", "order_file_path")}
 
     if strategy_type == "signal_grid":
-        from strategy.signal_grid_strategy import SignalGridStrategy, SignalGridStrategyConfig
+        from strategies.signal_grid_strategy import SignalGridStrategy, SignalGridStrategyConfig
 
         def factory(client: BacktestClient) -> Any:
             cfg = SignalGridStrategyConfig(
@@ -64,7 +64,7 @@ def _build_strategy_factory(
         return factory
 
     if strategy_type == "simple_grid":
-        from strategy.simple_grid_strategy import SimpleGridStrategy, SimpleGridStrategyConfig
+        from strategies.simple_grid_strategy import SimpleGridStrategy, SimpleGridStrategyConfig
 
         def factory(client: BacktestClient) -> Any:
             cfg = SimpleGridStrategyConfig(
@@ -75,7 +75,7 @@ def _build_strategy_factory(
         return factory
 
     if strategy_type == "daily_trend":
-        from strategy.daily_trend_strategy import DailyTrendStrategy, DailyTrendStrategyConfig
+        from strategies.daily_trend_strategy import DailyTrendStrategy, DailyTrendStrategyConfig
 
         def factory(client: BacktestClient) -> Any:
             cfg = DailyTrendStrategyConfig(

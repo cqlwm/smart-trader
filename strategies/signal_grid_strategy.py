@@ -2,16 +2,16 @@ import secrets
 import threading
 from typing import Any, List, Callable, Dict
 from client.ex_client import ExSwapClient, ExClient
-from strategy import SimpleStrategy
+from strategies import SimpleStrategy
 from model import OrderSide, OrderStatus, PlaceOrderBehavior, PositionSide
 import logging
 from pydantic import BaseModel, ConfigDict, field_serializer
 from model import Symbol
-from strategy import Signal
+from strategies import Signal
 
 from persistence.repository import StrategyRepository
 from persistence.sqlite_repo import SQLiteStrategyRepository
-from strategy.registry import register_strategy
+from strategies.registry import register_strategy
 
 logger = logging.getLogger(__name__)
 

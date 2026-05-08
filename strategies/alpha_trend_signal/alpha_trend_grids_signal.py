@@ -1,9 +1,9 @@
 import pandas as pd
 from pandas import DataFrame
 
-from strategy import Signal
-from strategy.signal_registry import register_signal
-from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
+from strategies import Signal
+from strategies.signal_registry import register_signal
+from strategies.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 
 _close = 'close'
 _alpha_trend_cross_buy = 'alpha_trend_cross_buy'

@@ -5,14 +5,14 @@ from typing import List
 from datetime import datetime, timezone
 
 from pydantic import BaseModel
-from strategy import SimpleStrategy
+from strategies import SimpleStrategy
 from client.ex_client import ExSwapClient, ExClient
 from model import PlaceOrderBehavior, PositionSide, Symbol, OrderSide, OrderStatus
 import log
 import builtins
 from persistence.repository import StrategyRepository
 from persistence.sqlite_repo import SQLiteStrategyRepository
-from strategy.registry import register_strategy
+from strategies.registry import register_strategy
 
 logger = log.getLogger(__name__)
 

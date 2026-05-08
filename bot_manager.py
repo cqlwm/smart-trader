@@ -4,9 +4,9 @@ import logging
 from client.ex_client import ExSwapClient
 from event_loop.base import DataEventLoop
 from event_loop.handler.kline_handler import KlineHandler
-from strategy.instance_manager import StrategyInstanceManager
-from strategy.loader import StrategyLoader
-import strategy.strategies  # noqa: F401 — trigger auto-registration
+from strategies.instance_manager import StrategyInstanceManager
+from strategies.loader import StrategyLoader
+import strategies  # noqa: F401 — trigger auto-registration
 import dotenv
 
 dotenv.load_dotenv()

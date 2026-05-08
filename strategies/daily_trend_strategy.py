@@ -3,10 +3,10 @@ import talib
 from typing import List, Optional
 
 from model import Symbol, OrderSide, PositionSide, OrderStatus, PlaceOrderBehavior
-from strategy import GeneralStrategy, Signal
+from strategies import GeneralStrategy, Signal
 from pydantic import BaseModel, ConfigDict
-from strategy.signal_grid_strategy import OrderExtension, OrderExtensionManager, build_order_id
-from strategy.registry import register_strategy
+from strategies.signal_grid_strategy import OrderExtension, OrderExtensionManager, build_order_id
+from strategies.registry import register_strategy
 
 logger = logging.getLogger(__name__)
 

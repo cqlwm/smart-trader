@@ -7,8 +7,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from persistence.sqlite_repo import SQLiteStrategyRepository
-from strategy.simple_grid_strategy import OrderPairListModel, OrderPair
-from strategy.signal_grid_strategy import OrderExtensionManager, OrderExtension
+from strategies.simple_grid_strategy import OrderPairListModel, OrderPair
+from strategies.signal_grid_strategy import OrderExtensionManager, OrderExtension
 from model import OrderSide
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

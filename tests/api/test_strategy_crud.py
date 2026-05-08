@@ -2,8 +2,8 @@ import pytest
 from fastapi.testclient import TestClient
 from api.main import app
 from api.dependencies import get_instance_manager, get_bot_manager
-from strategy.registry import StrategyRegistry
-from strategy.instance_manager import StrategyInstanceManager
+from strategies.registry import StrategyRegistry
+from strategies.instance_manager import StrategyInstanceManager
 
 
 class DummyStrategy:
