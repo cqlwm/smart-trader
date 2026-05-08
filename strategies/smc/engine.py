@@ -77,8 +77,8 @@ class SMCEngine:
         swing_obs = create_order_blocks_from_events(df, parsed_high, parsed_low, swing_events, "swing")
         internal_obs = create_order_blocks_from_events(df, parsed_high, parsed_low, internal_events, "internal")
 
-        swing_obs = mitigate_order_blocks(swing_obs, df, self._config.ob_mitigation)
-        internal_obs = mitigate_order_blocks(internal_obs, df, self._config.ob_mitigation)
+        swing_obs = mitigate_order_blocks(swing_obs, df)
+        internal_obs = mitigate_order_blocks(internal_obs, df)
 
         fvgs = detect_fvg(df, self._config.atr_period, self._config.fvg_min_width_atr)
         fvgs = mitigate_fvg(fvgs, df)

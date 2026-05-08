@@ -9,7 +9,6 @@ class SMCConfig(BaseModel):
     equal_length: int = 3
     equal_threshold: float = 0.1
     ob_filter: str = "atr"
-    ob_mitigation: str = "high_low"
     max_obs: int = 5
     fvg_min_width_atr: float = 0.1
     atr_period: int = 200

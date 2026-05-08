@@ -3,7 +3,7 @@ import pandas as pd
 from strategies.smc.types import Bias, OBStatus, OrderBlock, StructureEvent
 
 
-def create_order_block(
+def _create_order_block(
     df: pd.DataFrame,
     parsed_highs: pd.Series,
     parsed_lows: pd.Series,
@@ -51,50 +51,44 @@ def create_order_blocks_from_events(
 ) -> list[OrderBlock]:
     blocks: list[OrderBlock] = []
     for i, event in enumerate(events):
-        ob = create_order_block(df, parsed_highs, parsed_lows, event, source, i + 1)
+        ob = _create_order_block(df, parsed_highs, parsed_lows, event, source, i + 1)
         blocks.append(ob)
     return blocks
 
 
-def mitigate_order_blocks(
-    order_blocks: list[OrderBlock],
-    df: pd.DataFrame,
-    mitigation: str = "high_low",
-) -> list[OrderBlock]:
+def _is_order_block_tested(ob: OrderBlock, bar_high: float, bar_low: float) -> bool:
+    if ob.bias == Bias.BULLISH:
+        return ob.low < bar_low < ob.high
+    else:
+        return ob.low < bar_high < ob.high
+
+
+def _is_order_block_mitigated(ob: OrderBlock, bar_high: float, bar_low: float) -> bool:
+    if ob.bias == Bias.BULLISH:
+        return bar_low <= ob.low
+    else:
+        return bar_high >= ob.high
+
+
+def mitigate_order_blocks(order_blocks: list[OrderBlock], df: pd.DataFrame) -> list[OrderBlock]:
     active = list(order_blocks)
 
     for bar in range(len(df)):
         bar_high = df["high"].iloc[bar]
         bar_low = df["low"].iloc[bar]
-        bar_close = df["close"].iloc[bar]
-
-        if mitigation == "close":
-            bull_source = bar_close
-            bear_source = bar_close
-        else:
-            bull_source = bar_low
-            bear_source = bar_high
 
         remaining: list[OrderBlock] = []
         for ob in active:
             if ob.formed_index >= bar:
                 remaining.append(ob)
-                continue
-
-            if ob.bias == Bias.BEARISH and bear_source > ob.high:
-                continue
-            if ob.bias == Bias.BULLISH and bull_source < ob.low:
-                continue
-
-            if _is_order_block_tested(ob, bar_high, bar_low):
-                remaining.append(ob.model_copy(update={"status": OBStatus.TESTED}))
-                continue
-            remaining.append(ob)
+            else:
+                if _is_order_block_mitigated(ob, bar_high, bar_low):
+                    pass
+                elif _is_order_block_tested(ob, bar_high, bar_low):
+                    remaining.append(ob.model_copy(update={"status": OBStatus.TESTED}))
+                else:
+                    remaining.append(ob)
 
         active = remaining
 
     return active
-
-
-def _is_order_block_tested(ob: OrderBlock, bar_high: float, bar_low: float) -> bool:
-    return bar_high >= ob.low and bar_low <= ob.high
