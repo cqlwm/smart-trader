@@ -80,11 +80,11 @@ def mitigate_order_blocks(order_blocks: list[OrderBlock], df: pd.DataFrame) -> l
 
         remaining: list[OrderBlock] = []
         for ob in active:
-            if ob.formed_index >= bar:
+            if ob.source_event and ob.source_event.bar_index >= bar:
                 remaining.append(ob)
             else:
                 if _is_order_block_mitigated(ob, bar_high, bar_low):
-                    pass
+                    pass # 忽略已经被缓解的OB
                 elif _is_order_block_tested(ob, bar_high, bar_low):
                     remaining.append(ob.model_copy(update={"status": OBStatus.TESTED}))
                 else:
