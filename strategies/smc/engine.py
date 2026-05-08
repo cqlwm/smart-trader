@@ -111,16 +111,7 @@ class SMCEngine:
             config=self._config,
         )
 
-    def to_json(self, result: SMCResult) -> dict:
+    @staticmethod
+    def to_json(result: SMCResult) -> dict:
         signal = compute_signal(result)
         return build_output(result, signal).model_dump()
-
-    def to_enriched_json(
-        self,
-        result: SMCResult,
-        *,
-        include_llm: bool = False,
-        llm_strict: bool = False,
-    ) -> dict:
-        output = self.to_json(result)
-        return output
