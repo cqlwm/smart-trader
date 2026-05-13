@@ -89,7 +89,7 @@ class GeneralStrategy(Strategy):
         return self.order_repo.find_history(self.strategy_id, since)
 
     def exchange_client(self) -> ExClient:
-        raise NotImplementedError()
+        return self.ex_client
 
     def klines(self, timeframe: str, symbol: Symbol) -> DataFrame:
         """将指定时间框架的klines转换为DataFrame进行分析"""
@@ -257,3 +257,9 @@ class Signal:
     def is_exit(self, df: DataFrame) -> bool:
         signal = self.run(df)
         return self.side.to_int() * signal == -1
+
+
+import strategies.smc.smc_strategy  # noqa: F401, E402 — trigger @register_strategy
+import strategies.signal_grid_strategy  # noqa: F401, E402 — trigger @register_strategy
+import strategies.daily_trend_strategy  # noqa: F401, E402 — trigger @register_strategy
+import strategies.simple_grid_strategy  # noqa: F401, E402 — trigger @register_strategy

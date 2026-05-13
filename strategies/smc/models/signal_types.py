@@ -30,7 +30,7 @@ class SMCStrategyConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
     symbol: Symbol
     timeframe: str
-    quantity: float = 0.001
+    quantity: float
     smc_config: SMCConfig = SMCConfig()
 
 

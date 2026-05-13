@@ -1,9 +1,9 @@
 strategies:
-  - type: smc_signal
+  - type: smc
     config:
       symbol: {base: DOGE, quote: USDC}
-      timeframe: 15m
-      quantity: 0.001
+      timeframe: 5m
+      quantity: 100
 
 #  - type: signal_grid
 #    config:
