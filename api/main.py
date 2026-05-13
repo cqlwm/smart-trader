@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from api.routes import system, account, strategy, orders, backtest
+from api.routes import system, account, strategy, orders, backtest, klines
 from bot_manager import BotManager
 from strategies.instance_manager import StrategyInstanceManager
 import logging
@@ -68,3 +68,4 @@ app.include_router(account.router)
 app.include_router(strategy.router)
 app.include_router(orders.router)
 app.include_router(backtest.router)
+app.include_router(klines.router)
