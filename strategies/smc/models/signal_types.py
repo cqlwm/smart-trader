@@ -2,6 +2,7 @@ from pydantic import BaseModel, ConfigDict
 from enum import Enum, auto
 
 from model import Symbol
+from strategies.smc.models.config import SMCConfig
 from strategies.smc.models.types import OrderBlock, StructureEvent, Bias
 
 
@@ -25,13 +26,14 @@ class Signal(BaseModel):
     status: SignalStatus
 
 
-class SMCSignalConfig(BaseModel):
+class SMCStrategyConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
     symbol: Symbol
     timeframe: str
     quantity: float = 0.001
     atr_multiplier: float = 1
     min_rr: float = 2.0
+    smc_config: SMCConfig = SMCConfig()
 
 
 class SignalState(BaseModel):

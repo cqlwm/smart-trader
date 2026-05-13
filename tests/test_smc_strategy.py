@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from model import OrderSide, PositionSide, Symbol
-from strategies.smc.models.signal_types import SMCSignalConfig, Signal, SignalState, SignalStatus
+from strategies.smc.models.signal_types import SMCStrategyConfig, Signal, SignalState, SignalStatus
 from strategies.smc.models.types import Bias, OBStatus, OrderBlock, StructureEvent, EventType, Pivot
 from strategies.smc.smc_strategy import SMCSignalStrategy
 
@@ -62,7 +62,7 @@ def _make_signal(
 
 class TestSMCSignalStrategyInit:
     def test_initial_state(self) -> None:
-        config = SMCSignalConfig(symbol="BTCUSDT", timeframe="15m")
+        config = SMCStrategyConfig(symbol="BTCUSDT", timeframe="15m")
         client = MagicMock()
         strategy = SMCSignalStrategy(config, client)
         assert strategy._signal_state.last_swing_event_time == ""
@@ -71,7 +71,7 @@ class TestSMCSignalStrategyInit:
         assert strategy.symbol == SYMBOL
 
     def test_symbol_parsing(self) -> None:
-        config = SMCSignalConfig(symbol="ETHUSDT", timeframe="1h")
+        config = SMCStrategyConfig(symbol="ETHUSDT", timeframe="1h")
         client = MagicMock()
         strategy = SMCSignalStrategy(config, client)
         assert strategy.symbol == Symbol(base="eth", quote="usdt")
@@ -79,7 +79,7 @@ class TestSMCSignalStrategyInit:
 
 class TestSMCSignalStrategyOnKline:
     def _make_strategy_with_df(self, df: pd.DataFrame | None = None) -> tuple[SMCSignalStrategy, MagicMock]:
-        config = SMCSignalConfig(symbol="BTCUSDT", timeframe="15m")
+        config = SMCStrategyConfig(symbol="BTCUSDT", timeframe="15m")
         client = MagicMock()
         strategy = SMCSignalStrategy(config, client)
         if df is None:

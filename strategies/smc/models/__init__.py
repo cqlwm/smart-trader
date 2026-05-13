@@ -1,5 +1,5 @@
 from strategies.smc.models.config import SMCConfig
-from strategies.smc.models.signal_types import SMCSignalConfig, Signal, SignalState, SignalStatus
+from strategies.smc.models.signal_types import SMCStrategyConfig, Signal, SignalState, SignalStatus
 from strategies.smc.models.schemas import (
     Entry,
     ExecutionInfo,
@@ -27,7 +27,7 @@ from strategies.smc.models.types import (
 
 __all__ = [
     "SMCConfig",
-    "SMCSignalConfig",
+    "SMCStrategyConfig",
     "Signal",
     "SignalState",
     "SignalStatus",

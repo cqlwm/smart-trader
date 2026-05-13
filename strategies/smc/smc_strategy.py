@@ -2,7 +2,7 @@ from client.ex_client import ExClient
 from strategies import SimpleStrategy
 from strategies.registry import register_strategy
 from strategies.smc.engine import SMCEngine
-from strategies.smc.models.signal_types import SMCSignalConfig, SignalState, SignalStatus
+from strategies.smc.models.signal_types import SMCStrategyConfig, SignalState, SignalStatus
 from strategies.smc.signal import compute_signals
 from model import OrderSide, PositionSide, Symbol
 import log
@@ -10,14 +10,14 @@ import log
 logger = log.getLogger(__name__)
 
 
-@register_strategy("smc_signal", SMCSignalConfig)
+@register_strategy("smc_signal", SMCStrategyConfig)
 class SMCSignalStrategy(SimpleStrategy):
 
-    def __init__(self, config: SMCSignalConfig, ex_client: ExClient) -> None:
+    def __init__(self, config: SMCStrategyConfig, ex_client: ExClient) -> None:
         super().__init__(symbol=config.symbol, timeframe=config.timeframe)
         self.config = config
         self.ex_client = ex_client
-        self._smc_engine = SMCEngine()
+        self._smc_engine = SMCEngine(self.config.smc_config)
         self._signal_state = SignalState(
             signals=[],
             last_swing_event_time="",
