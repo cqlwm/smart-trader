@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict
 from enum import Enum, auto
 
+from model import Symbol
 from strategies.smc.models.types import OrderBlock, StructureEvent, Bias
 
 
@@ -26,11 +27,11 @@ class Signal(BaseModel):
 
 class SMCSignalConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
-    symbol: str
+    symbol: Symbol
     timeframe: str
-    atr_multiplier: float = 0.5
-    min_rr: float = 2.0
     quantity: float = 0.001
+    atr_multiplier: float = 1
+    min_rr: float = 2.0
 
 
 class SignalState(BaseModel):

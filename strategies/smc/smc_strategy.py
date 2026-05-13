@@ -14,9 +14,7 @@ logger = log.getLogger(__name__)
 class SMCSignalStrategy(SimpleStrategy):
 
     def __init__(self, config: SMCSignalConfig, ex_client: ExClient) -> None:
-        base = config.symbol.lower().rstrip("usdt")
-        symbol = Symbol(base=base, quote="usdt")
-        super().__init__(symbol=symbol, timeframe=config.timeframe)
+        super().__init__(symbol=config.symbol, timeframe=config.timeframe)
         self.config = config
         self.ex_client = ex_client
         self._smc_engine = SMCEngine()

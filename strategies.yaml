@@ -1,9 +1,9 @@
 strategies:
   - type: smc_signal
     config:
-      symbol: BTCUSDT
+      symbol: {base: DOGE, quote: USDC}
       timeframe: 15m
-      atr_multiplier: 0.5
+      atr_multiplier: 1
       min_rr: 2.0
       quantity: 0.001
 
