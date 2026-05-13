@@ -4,16 +4,17 @@
 
 ## 一、依赖与环境管理
 
-1. 依赖管理工具：统一使用 `uv` 作为包管理工具，禁止混用 `pip`/`poetry` 等其他工具，避免依赖解析冲突。
-2. 依赖操作：新增/删除依赖必须使用 `uv add <包名>`/`uv remove <包名>` 命令，禁止直接修改 `pyproject.toml`；安装指定版本依赖需显式声明版本号（如 `uv add requests==2.31.0`）。
-3. 依赖版本：生产环境依赖锁定精确版本（通过 `uv lock` 生成 `uv.lock` 文件并纳入版本控制），开发环境可使用宽松版本约束（如 `>=2.31.0,<3.0.0`）。
-4. 依赖分组：区分开发依赖（`uv add -D pytest`）与生产依赖，避免开发工具包进入生产环境。
-5. 脚本执行：执行 Python 代码/脚本前必须使用 `uv run python` 命令；
+1. 依赖管理工具：使用 `uv` 作为包管理工具；
+2. 依赖操作：新增/删除依赖必须使用 `uv add <包名>`/`uv remove <包名>` 命令，禁止直接修改 `pyproject.toml`，安装指定版本依赖需显式声明版本号（如 `uv add requests==2.31.0`）；
+3. 依赖版本：生产环境依赖锁定精确版本（通过 `uv lock` 生成 `uv.lock` 文件并纳入版本控制），开发环境可使用宽松版本约束（如 `>=2.31.0,<3.0.0`）；
+4. 依赖分组：区分开发依赖（`uv add -D pytest`）与生产依赖，避免开发工具包进入生产环境；
+5. 脚本执行：执行 Python 代码/脚本/项目必须使用 `uv run python` / `uv run *` 等命令；
 6. 初始化与虚拟环境：
    - 虚拟环境默认存放于项目根目录的 `.venv` 文件夹，命名统一为 `.venv`；
    - 一般使用 `uv init` 初始化项目，使用 `uv venv` 自动创建虚拟环境；
    - 禁止在全局 Python 环境中安装项目依赖。
-7. 依赖更新：更新前需完成全量测试，避免版本兼容问题。
+7. 依赖更新：更新前需完成全量测试，避免版本兼容问题；
+8. 查找与搜索：可以使用 `pip3 search *` 在 PyPI 仓库中搜索软件包，索搜到期望软件包后必须使用 `uv add` 进行安装。
 
 ## 二、编码设计原则
 
@@ -34,15 +35,18 @@
 2. 禁用模糊类型：严格禁用 `any`/`Any`，确保类型检查可覆盖；字典包含多类型时，使用联合声明（如 `dict[str, str | int | float]`）。
 3. 可空类型：禁止使用 `Optional[Type]`，统一使用 `Type | None` 表示可空类型（如 `str | None` 而非 `Optional[str]`）。
 4. 容器类型：标注容器内元素类型，如 `list[int]`/`tuple[str, int]`/`set[float]`，禁止仅标注 `list`/`tuple`。
-5. 自定义类型：复杂类型使用 `TypeAlias` 定义别名，提升可读性，示例：
+5. 自定义类型：复杂类型使用 `TypeAlias` 定义别名，或使用 class ，提升可读性，示例：
 
    ```python
    from typing import TypeAlias
 
-   OrderData: TypeAlias = dict[str, str | int | list[dict[str, str]]]
-
-   def process_order(order: OrderData) -> bool:
-       ...
+   numbers: TypeAlias = list[int | float]
+   
+   class TradingSignalState(BaseModel):
+        model_config = ConfigDict(frozen=True)
+        signals: list[TradingSignal]
+        last_swing_event_time: str
+        last_internal_event_time: str
    ```
 
 6. 类型检查：提交代码前必须通过 `mypy` 检查，禁止忽略类型错误（特殊场景需备注原因）。
