@@ -23,3 +23,4 @@ class BacktestResult:
     trade_history: list[dict[str, Any]]
     final_balance: float
     report: str
+    chart_data: dict[str, Any] | None = None
