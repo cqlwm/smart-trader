@@ -2,7 +2,7 @@ import uuid
 
 from strategies.smc.models.types import OrderBlock, StructureEvent, Bias, OBStatus
 from strategies.smc.engine import SMCResult
-from strategies.smc.models.signal_types import Signal, SignalState, SignalStatus
+from strategies.smc.models.signal_types import TradingSignal, TradingSignalState, SignalStatus
 
 
 def find_entry_ob(
@@ -75,7 +75,7 @@ def _create_signal(
     min_rr: float,
     order_blocks: list[OrderBlock],
     bar_time: str,
-) -> Signal | None:
+) -> TradingSignal | None:
     stop_loss = calculate_stop_loss(ob, event.bias, atr, atr_multiplier)
     entry_price = ob.mid
     tp_ob = find_take_profit_ob(order_blocks, event.bias, entry_price, stop_loss, min_rr)
@@ -83,7 +83,7 @@ def _create_signal(
     if tp_ob is None:
         take_profit = None
 
-    return Signal(
+    return TradingSignal(
         id=uuid.uuid4().hex[:8],
         ob=ob,
         event=event,
@@ -97,11 +97,11 @@ def _create_signal(
 
 
 def _update_signal_statuses(
-    signals: list[Signal],
+    signals: list[TradingSignal],
     result: SMCResult,
     current_high: float,
     current_low: float,
-) -> list[Signal]:
+) -> list[TradingSignal]:
     mitigated_ids: set[str] = set()
     for ob in result.swing_order_blocks:
         if ob.status == OBStatus.MITIGATED:
@@ -110,7 +110,7 @@ def _update_signal_statuses(
         if ob.status == OBStatus.MITIGATED:
             mitigated_ids.add(ob.id)
 
-    updated: list[Signal] = []
+    updated: list[TradingSignal] = []
     for sig in signals:
         if sig.status == SignalStatus.PENDING:
             if sig.ob.id in mitigated_ids:
@@ -128,15 +128,15 @@ def _update_signal_statuses(
 
 def compute_signals(
     result: SMCResult,
-    prev_state: SignalState,
+    prev_state: TradingSignalState,
     current_bar_time: str,
     current_high: float,
     current_low: float,
-) -> SignalState:
+) -> TradingSignalState:
     new_swing_event = _detect_new_event(result.swing_state.last_event, prev_state.last_swing_event_time)
     new_internal_event = _detect_new_event(result.internal_state.last_event, prev_state.last_internal_event_time)
 
-    new_signals: list[Signal] = []
+    new_signals: list[TradingSignal] = []
 
     if new_swing_event is not None:
         ob = find_entry_ob(result.swing_order_blocks, new_swing_event)
@@ -185,7 +185,7 @@ def compute_signals(
         else prev_state.last_internal_event_time
     )
 
-    return SignalState(
+    return TradingSignalState(
         signals=all_signals,
         last_swing_event_time=new_swing_time,
         last_internal_event_time=new_internal_time,

@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from model import OrderSide, PositionSide, Symbol
-from strategies.smc.models.signal_types import SMCStrategyConfig, Signal, SignalState, SignalStatus
+from strategies.smc.models.signal_types import SMCStrategyConfig, TradingSignal, TradingSignalState, SignalStatus
 from strategies.smc.models.types import Bias, OBStatus, OrderBlock, StructureEvent, EventType, Pivot
 from strategies.smc.smc_strategy import SMCSignalStrategy
 
@@ -46,8 +46,8 @@ def _make_signal(
     entry_price: float = 100.0,
     status: SignalStatus = SignalStatus.PENDING,
     ob: OrderBlock | None = None,
-) -> Signal:
-    return Signal(
+) -> TradingSignal:
+    return TradingSignal(
         id=signal_id,
         ob=ob or _make_ob(bias=direction),
         event=_make_event(bias=direction),
@@ -102,7 +102,7 @@ class TestSMCSignalStrategyOnKline:
         mock_result = MagicMock()
         mock_engine.analyze.return_value = mock_result
 
-        empty_state = SignalState(signals=[], last_swing_event_time="", last_internal_event_time="")
+        empty_state = TradingSignalState(signals=[], last_swing_event_time="", last_internal_event_time="")
         mock_compute.return_value = empty_state
 
         strategy, client = self._make_strategy_with_df()
@@ -119,7 +119,7 @@ class TestSMCSignalStrategyOnKline:
         mock_engine.analyze.return_value = MagicMock()
 
         new_signal = _make_signal(direction=Bias.BULLISH, entry_price=100.0)
-        new_state = SignalState(
+        new_state = TradingSignalState(
             signals=[new_signal],
             last_swing_event_time="t010",
             last_internal_event_time="",
@@ -127,7 +127,7 @@ class TestSMCSignalStrategyOnKline:
         mock_compute.return_value = new_state
 
         strategy, client = self._make_strategy_with_df()
-        strategy._signal_state = SignalState(signals=[], last_swing_event_time="", last_internal_event_time="")
+        strategy._signal_state = TradingSignalState(signals=[], last_swing_event_time="", last_internal_event_time="")
         strategy._on_kline_finished()
 
         client.place_order_v2.assert_called_once()
@@ -144,14 +144,14 @@ class TestSMCSignalStrategyOnKline:
         mock_engine.analyze.return_value = MagicMock()
 
         pending_signal = _make_signal(signal_id="sig1", status=SignalStatus.PENDING)
-        prev_state = SignalState(
+        prev_state = TradingSignalState(
             signals=[pending_signal],
             last_swing_event_time="t005",
             last_internal_event_time="",
         )
 
         canceled_signal = _make_signal(signal_id="sig1", status=SignalStatus.CANCELED)
-        new_state = SignalState(
+        new_state = TradingSignalState(
             signals=[canceled_signal],
             last_swing_event_time="t005",
             last_internal_event_time="",
@@ -173,7 +173,7 @@ class TestSMCSignalStrategyOnKline:
         mock_engine.analyze.return_value = MagicMock()
 
         new_signal = _make_signal(direction=Bias.BEARISH, entry_price=100.0)
-        new_state = SignalState(
+        new_state = TradingSignalState(
             signals=[new_signal],
             last_swing_event_time="",
             last_internal_event_time="t010",
@@ -181,7 +181,7 @@ class TestSMCSignalStrategyOnKline:
         mock_compute.return_value = new_state
 
         strategy, client = self._make_strategy_with_df()
-        strategy._signal_state = SignalState(signals=[], last_swing_event_time="", last_internal_event_time="")
+        strategy._signal_state = TradingSignalState(signals=[], last_swing_event_time="", last_internal_event_time="")
         strategy._on_kline_finished()
 
         call_kwargs = client.place_order_v2.call_args

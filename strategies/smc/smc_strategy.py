@@ -2,7 +2,7 @@ from client.ex_client import ExClient
 from strategies import SimpleStrategy
 from strategies.registry import register_strategy
 from strategies.smc.engine import SMCEngine
-from strategies.smc.models.signal_types import SMCStrategyConfig, SignalState, SignalStatus
+from strategies.smc.models.signal_types import SMCStrategyConfig, TradingSignalState, SignalStatus
 from strategies.smc.signal import compute_signals
 from model import OrderSide, PositionSide, Symbol
 import log
@@ -18,7 +18,7 @@ class SMCSignalStrategy(SimpleStrategy):
         self.config = config
         self.ex_client = ex_client
         self._smc_engine = SMCEngine(self.config.smc_config)
-        self._signal_state = SignalState(
+        self._signal_state = TradingSignalState(
             signals=[],
             last_swing_event_time="",
             last_internal_event_time="",
@@ -49,7 +49,7 @@ class SMCSignalStrategy(SimpleStrategy):
 
         self._signal_state = new_state
 
-    def _handle_new_signals(self, new_state: SignalState) -> None:
+    def _handle_new_signals(self, new_state: TradingSignalState) -> None:
         prev_ids = {s.id for s in self._signal_state.signals}
         for signal in new_state.signals:
             if signal.id not in prev_ids and signal.status == SignalStatus.PENDING:
@@ -75,7 +75,7 @@ class SMCSignalStrategy(SimpleStrategy):
                 except Exception:
                     logger.exception("Failed to place order for signal %s", signal.id)
 
-    def _handle_canceled_signals(self, new_state: SignalState) -> None:
+    def _handle_canceled_signals(self, new_state: TradingSignalState) -> None:
         prev_pending = {
             s.id for s in self._signal_state.signals if s.status == SignalStatus.PENDING
         }

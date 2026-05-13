@@ -13,7 +13,7 @@ class SignalStatus(Enum):
     EXPIRED = auto()
 
 
-class Signal(BaseModel):
+class TradingSignal(BaseModel):
     model_config = ConfigDict(frozen=True)
     id: str
     ob: OrderBlock
@@ -36,8 +36,8 @@ class SMCStrategyConfig(BaseModel):
     smc_config: SMCConfig = SMCConfig()
 
 
-class SignalState(BaseModel):
+class TradingSignalState(BaseModel):
     model_config = ConfigDict(frozen=True)
-    signals: list[Signal]
+    signals: list[TradingSignal]
     last_swing_event_time: str
     last_internal_event_time: str

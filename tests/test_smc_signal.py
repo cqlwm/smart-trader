@@ -2,7 +2,7 @@ import pytest
 from strategies.smc.models.types import (
     Bias, EventType, OBStatus, OrderBlock, Pivot, StructureEvent, StructureState,
 )
-from strategies.smc.models.signal_types import Signal, SignalState, SignalStatus
+from strategies.smc.models.signal_types import TradingSignal, TradingSignalState, SignalStatus
 from strategies.smc.signal import (
     calculate_stop_loss,
     compute_signals,
@@ -178,7 +178,7 @@ class TestComputeSignals:
         ob = _make_ob(bias=Bias.BULLISH, formed_index=5)
         result = self._make_smc_result(swing_event=event, swing_obs=[ob])
 
-        prev_state = SignalState(
+        prev_state = TradingSignalState(
             signals=[], last_swing_event_time="t005", last_internal_event_time="",
         )
         new_state = compute_signals(result, prev_state, "t010", 105.0, 95.0)
@@ -193,7 +193,7 @@ class TestComputeSignals:
         ob = _make_ob(bias=Bias.BEARISH, formed_index=3)
         result = self._make_smc_result(internal_event=event, internal_obs=[ob])
 
-        prev_state = SignalState(
+        prev_state = TradingSignalState(
             signals=[], last_swing_event_time="", last_internal_event_time="t005",
         )
         new_state = compute_signals(result, prev_state, "t008", 105.0, 95.0)
@@ -205,7 +205,7 @@ class TestComputeSignals:
         event = _make_event(bar_index=5, bias=Bias.BULLISH)
         result = self._make_smc_result(swing_event=event)
 
-        prev_state = SignalState(
+        prev_state = TradingSignalState(
             signals=[], last_swing_event_time="t005", last_internal_event_time="",
         )
         new_state = compute_signals(result, prev_state, "t006", 105.0, 95.0)
@@ -214,7 +214,7 @@ class TestComputeSignals:
     def test_cancels_signal_when_ob_mitigated(self) -> None:
         ob = _make_ob(bias=Bias.BULLISH, formed_index=3, status=OBStatus.MITIGATED)
         event = _make_event(bar_index=5, bias=Bias.BULLISH)
-        existing_signal = Signal(
+        existing_signal = TradingSignal(
             id="sig1",
             ob=_make_ob(bias=Bias.BULLISH, formed_index=3, status=OBStatus.UNTESTED),
             event=event,
@@ -225,7 +225,7 @@ class TestComputeSignals:
             created_bar_time="t005",
             status=SignalStatus.PENDING,
         )
-        prev_state = SignalState(
+        prev_state = TradingSignalState(
             signals=[existing_signal],
             last_swing_event_time="t005",
             last_internal_event_time="",
@@ -241,7 +241,7 @@ class TestComputeSignals:
     def test_fills_signal_when_price_reaches_entry(self) -> None:
         event = _make_event(bar_index=5, bias=Bias.BULLISH)
         ob_untested = _make_ob(bias=Bias.BULLISH, formed_index=3, status=OBStatus.UNTESTED)
-        existing_signal = Signal(
+        existing_signal = TradingSignal(
             id="sig1",
             ob=ob_untested,
             event=event,
@@ -252,7 +252,7 @@ class TestComputeSignals:
             created_bar_time="t005",
             status=SignalStatus.PENDING,
         )
-        prev_state = SignalState(
+        prev_state = TradingSignalState(
             signals=[existing_signal],
             last_swing_event_time="t005",
             last_internal_event_time="",
@@ -268,7 +268,7 @@ class TestComputeSignals:
     def test_preserves_existing_signals(self) -> None:
         event = _make_event(bar_index=5, bias=Bias.BULLISH)
         ob_untested = _make_ob(bias=Bias.BULLISH, formed_index=3, status=OBStatus.UNTESTED)
-        existing = Signal(
+        existing = TradingSignal(
             id="sig1",
             ob=ob_untested,
             event=event,
@@ -279,7 +279,7 @@ class TestComputeSignals:
             created_bar_time="t005",
             status=SignalStatus.PENDING,
         )
-        prev_state = SignalState(
+        prev_state = TradingSignalState(
             signals=[existing],
             last_swing_event_time="t005",
             last_internal_event_time="",
@@ -299,7 +299,7 @@ class TestComputeSignals:
             swing_event=event, swing_obs=[ob], current_atr=100.0,
         )
 
-        prev_state = SignalState(
+        prev_state = TradingSignalState(
             signals=[], last_swing_event_time="t005", last_internal_event_time="",
         )
         new_state = compute_signals(result, prev_state, "t010", 105.0, 95.0)
@@ -310,7 +310,7 @@ class TestComputeSignals:
     def test_short_signal_fills_on_high_reaching_entry(self) -> None:
         event = _make_event(bar_index=5, bias=Bias.BEARISH)
         ob_untested = _make_ob(bias=Bias.BEARISH, formed_index=3, status=OBStatus.UNTESTED)
-        existing = Signal(
+        existing = TradingSignal(
             id="sig1",
             ob=ob_untested,
             event=event,
@@ -321,7 +321,7 @@ class TestComputeSignals:
             created_bar_time="t005",
             status=SignalStatus.PENDING,
         )
-        prev_state = SignalState(
+        prev_state = TradingSignalState(
             signals=[existing],
             last_swing_event_time="t005",
             last_internal_event_time="",
