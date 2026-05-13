@@ -53,7 +53,6 @@ def identify_pivots(df: pd.DataFrame, legs: pd.Series, size: int) -> tuple[list[
                 Pivot(
                     price=price,
                     bar_time=ts,
-                    bar_index=pivot_bar,
                     label=label,
                     is_high=True,
                 )
@@ -67,7 +66,6 @@ def identify_pivots(df: pd.DataFrame, legs: pd.Series, size: int) -> tuple[list[
                 Pivot(
                     price=price,
                     bar_time=ts,
-                    bar_index=pivot_bar,
                     label=label,
                     is_high=False,
                 )

@@ -16,15 +16,18 @@ def compute_trailing_extremes(
 
     high_idx = 0
     low_idx = 0
+    datetime_strs = df["datetime"].astype(str).tolist()
 
     for bar in range(len(df)):
-        while high_idx < len(swing_pivots_high) and swing_pivots_high[high_idx].bar_index <= bar:
+        bar_time = datetime_strs[bar]
+
+        while high_idx < len(swing_pivots_high) and swing_pivots_high[high_idx].bar_time <= bar_time:
             pivot = swing_pivots_high[high_idx]
             top = pivot.price
             top_time = pivot.bar_time
             high_idx += 1
 
-        while low_idx < len(swing_pivots_low) and swing_pivots_low[low_idx].bar_index <= bar:
+        while low_idx < len(swing_pivots_low) and swing_pivots_low[low_idx].bar_time <= bar_time:
             pivot = swing_pivots_low[low_idx]
             bottom = pivot.price
             bottom_time = pivot.bar_time

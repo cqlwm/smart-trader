@@ -1,5 +1,6 @@
 import pandas as pd
 
+from strategies.smc.core.utils import find_bar_position
 from strategies.smc.indicators.atr import compute_atr
 from strategies.smc.models import Bias, FVGStatus, FairValueGap
 
@@ -47,7 +48,6 @@ def detect_fvg(
                 bottom=bottom,
                 mid=(top + bottom) / 2,
                 formed_time=str(df["datetime"].iloc[i]),
-                formed_index=int(i),
                 status=FVGStatus.OPEN,
                 fill_pct=0.0,
                 width=width,
@@ -72,7 +72,6 @@ def detect_fvg(
                 bottom=bottom,
                 mid=(top + bottom) / 2,
                 formed_time=str(df["datetime"].iloc[i]),
-                formed_index=int(i),
                 status=FVGStatus.OPEN,
                 fill_pct=0.0,
                 width=width,
@@ -82,7 +81,7 @@ def detect_fvg(
             )
         )
 
-    fvgs.sort(key=lambda f: f.formed_index)
+    fvgs.sort(key=lambda f: f.formed_time)
     return fvgs
 
 
@@ -97,7 +96,8 @@ def mitigate_fvg(
         mitigation_depth = 0.0
 
         if fvg.width > 0:
-            for bar in range(fvg.formed_index + 1, len(df)):
+            formed_pos = find_bar_position(df, fvg.formed_time)
+            for bar in range(formed_pos + 1, len(df)):
                 if fvg.bias == Bias.BULLISH:
                     price = float(df["low"].iloc[bar])
                     if price <= fvg.top:
@@ -127,7 +127,6 @@ def mitigate_fvg(
                 bottom=fvg.bottom,
                 mid=fvg.mid,
                 formed_time=fvg.formed_time,
-                formed_index=fvg.formed_index,
                 status=status,
                 fill_pct=min(mitigation_depth, 1.0) * 100,
                 width=fvg.width,

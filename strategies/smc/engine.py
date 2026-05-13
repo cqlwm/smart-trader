@@ -83,7 +83,7 @@ class SMCEngine:
 
         equal_pivots_legs = detect_legs(df["high"], df["low"], self._config.equal_length)
         eq_pivots_h, eq_pivots_l = identify_pivots(df, equal_pivots_legs, self._config.equal_length)
-        equal_levels = detect_equal_levels(eq_pivots_h, eq_pivots_l, atr_series, self._config.equal_threshold)
+        equal_levels = detect_equal_levels(eq_pivots_h, eq_pivots_l, atr_series, df, self._config.equal_threshold)
 
         trailing = compute_trailing_extremes(df, swing_pivots_h, swing_pivots_l, swing_state.trend)
 

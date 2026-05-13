@@ -36,7 +36,6 @@ class Pivot(BaseModel):
     model_config = ConfigDict(frozen=True)
     price: float
     bar_time: str
-    bar_index: int
     label: str
     is_high: bool
 
@@ -47,7 +46,6 @@ class StructureEvent(BaseModel):
     bias: Bias
     price: float
     time: str
-    bar_index: int
     pivot: Pivot
 
 
@@ -68,7 +66,6 @@ class OrderBlock(BaseModel):
     low: float
     mid: float
     formed_time: str
-    formed_index: int
     status: OBStatus
     source: str
     source_event: StructureEvent | None = None
@@ -82,7 +79,6 @@ class FairValueGap(BaseModel):
     bottom: float
     mid: float
     formed_time: str
-    formed_index: int
     status: FVGStatus
     fill_pct: float
     width: float
@@ -96,7 +92,6 @@ class EqualLevel(BaseModel):
     level_type: str
     price: float
     time: str
-    bar_index: int
     touches: int
 
 

@@ -29,14 +29,17 @@ def detect_structure_breaks(
     current_swing_low: Pivot | None = None
 
     closes = df["close"]
+    datetime_strs = df["datetime"].astype(str).tolist()
 
     for bar in range(len(df)):
-        while high_idx < len(pivots_high) and pivots_high[high_idx].bar_index <= bar:
+        bar_time = datetime_strs[bar]
+
+        while high_idx < len(pivots_high) and pivots_high[high_idx].bar_time <= bar_time:
             current_pivot_high = pivots_high[high_idx]
             high_crossed = False
             high_idx += 1
 
-        while low_idx < len(pivots_low) and pivots_low[low_idx].bar_index <= bar:
+        while low_idx < len(pivots_low) and pivots_low[low_idx].bar_time <= bar_time:
             current_pivot_low = pivots_low[low_idx]
             low_crossed = False
             low_idx += 1
@@ -44,7 +47,7 @@ def detect_structure_breaks(
         if swing_pivots_high is not None:
             while (
                 swing_high_idx < len(swing_pivots_high)
-                and swing_pivots_high[swing_high_idx].bar_index <= bar
+                and swing_pivots_high[swing_high_idx].bar_time <= bar_time
             ):
                 current_swing_high = swing_pivots_high[swing_high_idx]
                 swing_high_idx += 1
@@ -52,7 +55,7 @@ def detect_structure_breaks(
         if swing_pivots_low is not None:
             while (
                 swing_low_idx < len(swing_pivots_low)
-                and swing_pivots_low[swing_low_idx].bar_index <= bar
+                and swing_pivots_low[swing_low_idx].bar_time <= bar_time
             ):
                 current_swing_low = swing_pivots_low[swing_low_idx]
                 swing_low_idx += 1
@@ -78,7 +81,6 @@ def detect_structure_breaks(
                     bias=Bias.BULLISH,
                     price=close_now,
                     time=str(df["datetime"].iloc[bar]),
-                    bar_index=bar,
                     pivot=current_pivot_high,
                 )
                 events.append(event)
@@ -100,7 +102,6 @@ def detect_structure_breaks(
                     bias=Bias.BEARISH,
                     price=close_now,
                     time=str(df["datetime"].iloc[bar]),
-                    bar_index=bar,
                     pivot=current_pivot_low,
                 )
                 events.append(event)

@@ -1,5 +1,6 @@
 import pandas as pd
 
+from strategies.smc.core.utils import find_bar_position
 from strategies.smc.models import Bias, OBStatus, OrderBlock, StructureEvent
 
 
@@ -12,8 +13,8 @@ def _create_order_block(
     ob_counter: int,
 ) -> OrderBlock:
     pivot = event.pivot
-    start = max(pivot.bar_index, 0)
-    end = min(event.bar_index, len(df))
+    start = max(find_bar_position(df, pivot.bar_time), 0)
+    end = min(find_bar_position(df, event.time), len(df))
 
     if start >= end:
         end = start + 1
@@ -36,7 +37,6 @@ def _create_order_block(
         low=float(ob_low),
         mid=float((ob_high + ob_low) / 2),
         formed_time=formed_time,
-        formed_index=int(target_idx),
         status=OBStatus.UNTESTED,
         source=source,
         source_event=event,
@@ -73,14 +73,16 @@ def _is_order_block_mitigated(ob: OrderBlock, bar_high: float, bar_low: float) -
 
 def mitigate_order_blocks(order_blocks: list[OrderBlock], df: pd.DataFrame) -> list[OrderBlock]:
     active = list(order_blocks)
+    datetime_strs = df["datetime"].astype(str).tolist()
 
     for bar in range(len(df)):
         bar_high = df["high"].iloc[bar]
         bar_low = df["low"].iloc[bar]
+        bar_time = datetime_strs[bar]
 
         remaining: list[OrderBlock] = []
         for ob in active:
-            if ob.source_event and ob.source_event.bar_index >= bar:
+            if ob.source_event and ob.source_event.time >= bar_time:
                 remaining.append(ob)
             else:
                 if _is_order_block_mitigated(ob, bar_high, bar_low):
