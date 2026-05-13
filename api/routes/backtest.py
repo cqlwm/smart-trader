@@ -13,7 +13,11 @@ from api.schemas.backtest import (
     BacktestTradeMetricsResponse,
     EquityPointResponse,
     CompletedTradeResponse,
+    ChartDataResponse,
+    OverlayItemResponse,
+    TradeMarkerResponse,
 )
+from backtest.chart_data import extract_trade_markers
 from api.schemas.strategy_schemas import StrategyTypeInfo
 from backtest.client import BacktestClient
 from backtest.event_loop import BacktestEventLoop
@@ -91,7 +95,7 @@ def _build_strategy_factory(
     raise ValueError(f"No backtest factory for strategy type: {strategy_type}")
 
 
-def _to_result_response(result: Any) -> BacktestResultResponse:
+def _to_result_response(result: Any, strategy: Any = None) -> BacktestResultResponse:
     analysis = result.analysis
     summary = analysis.get("summary", {})
     risk = analysis.get("risk_metrics", {})
@@ -148,13 +152,42 @@ def _to_result_response(result: Any) -> BacktestResultResponse:
             exit_time=str(trade.get("exit_time", "")),
         ))
 
+    chart_data_resp = _build_chart_data(result, strategy)
+
     return BacktestResultResponse(
         summary=summary_resp,
         risk_metrics=risk_resp,
         trade_metrics=trade_resp,
         equity_curve=equity_resp,
         completed_trades=completed_trades,
+        chart_data=chart_data_resp,
     )
+
+
+def _build_chart_data(result: Any, strategy: Any = None) -> ChartDataResponse | None:
+    trade_markers_raw = extract_trade_markers(result.trade_history)
+
+    marker_resp = [
+        TradeMarkerResponse(
+            type=m["type"],
+            side=m["side"],
+            price=m["price"],
+            time=m["time"],
+            order_id=m["order_id"],
+        )
+        for m in trade_markers_raw
+    ]
+
+    overlays: list[OverlayItemResponse] = []
+    if strategy is not None and hasattr(strategy, "get_chart_data"):
+        overlay_data = strategy.get_chart_data()
+        for category, items in overlay_data.items():
+            overlays.append(OverlayItemResponse(category=category, items=items))
+
+    if not marker_resp and not overlays:
+        return None
+
+    return ChartDataResponse(trade_markers=marker_resp, overlays=overlays)
 
 
 @router.post("/run", response_model=BaseResponse[BacktestResultResponse])
@@ -212,7 +245,7 @@ async def run_backtest(request: BacktestRequest):
         logger.error("Backtest failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Backtest execution failed: {str(e)}")
 
-    return BaseResponse(data=_to_result_response(result))
+    return BaseResponse(data=_to_result_response(result, strategy))
 
 
 @router.get("/strategies", response_model=BaseResponse[list[StrategyTypeInfo]])

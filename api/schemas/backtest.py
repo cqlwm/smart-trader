@@ -69,9 +69,28 @@ class CompletedTradeResponse(BaseModel):
     exit_time: str
 
 
+class TradeMarkerResponse(BaseModel):
+    type: str
+    side: str
+    price: float
+    time: int | str
+    order_id: str
+
+
+class OverlayItemResponse(BaseModel):
+    category: str
+    items: list[dict[str, Any]]
+
+
+class ChartDataResponse(BaseModel):
+    trade_markers: list[TradeMarkerResponse] = []
+    overlays: list[OverlayItemResponse] = []
+
+
 class BacktestResultResponse(BaseModel):
     summary: BacktestSummaryResponse
     risk_metrics: BacktestRiskMetricsResponse
     trade_metrics: BacktestTradeMetricsResponse
     equity_curve: list[EquityPointResponse]
     completed_trades: list[CompletedTradeResponse]
+    chart_data: ChartDataResponse | None = None
