@@ -155,3 +155,90 @@ class SMCSignalStrategy(SimpleStrategy):
             "Closed %s trade at market: entry=%.4f",
             trade.position_side.value, trade.entry_price,
         )
+
+    def get_chart_data(self) -> dict[str, list[dict]]:
+        """实现ChartDataProvider，返回SMC覆盖层数据"""
+        df = self.klines_df
+        if len(df) < 50:
+            return {}
+
+        result = self._smc_engine.analyze(df)
+
+        from strategies.smc.core.structure import detect_structure_breaks
+        from strategies.smc.core.legs import detect_legs, identify_pivots
+
+        structure_items = []
+
+        swing_legs = detect_legs(df["high"], df["low"], self._smc_engine.config.swing_length)
+        swing_pivots_h, swing_pivots_l = identify_pivots(df, swing_legs, self._smc_engine.config.swing_length)
+        swing_events, _ = detect_structure_breaks(df, swing_pivots_h, swing_pivots_l)
+
+        for event in swing_events:
+            structure_items.append({
+                "type": event.event_type.name,
+                "bias": event.bias.name,
+                "price": event.price,
+                "time": event.time,
+                "source": "swing",
+            })
+
+        internal_legs = detect_legs(df["high"], df["low"], self._smc_engine.config.internal_length)
+        internal_pivots_h, internal_pivots_l = identify_pivots(df, internal_legs, self._smc_engine.config.internal_length)
+        internal_events, _ = detect_structure_breaks(
+            df, internal_pivots_h, internal_pivots_l,
+            swing_pivots_high=swing_pivots_h,
+            swing_pivots_low=swing_pivots_l,
+            filter_confluence=self._smc_engine.config.internal_length != self._smc_engine.config.swing_length,
+        )
+
+        for event in internal_events:
+            structure_items.append({
+                "type": event.event_type.name,
+                "bias": event.bias.name,
+                "price": event.price,
+                "time": event.time,
+                "source": "internal",
+            })
+
+        ob_items = []
+        for ob in result.swing_order_blocks:
+            ob_items.append({
+                "id": ob.id,
+                "bias": ob.bias.name,
+                "high": ob.high,
+                "low": ob.low,
+                "formed_time": ob.formed_time,
+                "status": ob.status.name,
+                "source": ob.source,
+            })
+        for ob in result.internal_order_blocks:
+            ob_items.append({
+                "id": ob.id,
+                "bias": ob.bias.name,
+                "high": ob.high,
+                "low": ob.low,
+                "formed_time": ob.formed_time,
+                "status": ob.status.name,
+                "source": ob.source,
+            })
+
+        fvg_items = []
+        for fvg in result.fvgs:
+            fvg_items.append({
+                "id": fvg.id,
+                "bias": fvg.bias.name,
+                "top": fvg.top,
+                "bottom": fvg.bottom,
+                "formed_time": fvg.formed_time,
+                "status": fvg.status.name,
+            })
+
+        data: dict[str, list[dict]] = {}
+        if structure_items:
+            data["structure"] = structure_items
+        if ob_items:
+            data["order_block"] = ob_items
+        if fvg_items:
+            data["fvg"] = fvg_items
+
+        return data
