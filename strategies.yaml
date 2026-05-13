@@ -3,8 +3,6 @@ strategies:
     config:
       symbol: {base: DOGE, quote: USDC}
       timeframe: 15m
-      atr_multiplier: 1
-      min_rr: 2.0
       quantity: 0.001
 
 #  - type: signal_grid

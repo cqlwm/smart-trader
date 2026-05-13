@@ -31,8 +31,6 @@ class SMCStrategyConfig(BaseModel):
     symbol: Symbol
     timeframe: str
     quantity: float = 0.001
-    atr_multiplier: float = 1
-    min_rr: float = 2.0
     smc_config: SMCConfig = SMCConfig()
 
 
