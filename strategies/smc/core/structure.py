@@ -1,7 +1,7 @@
 import pandas as pd
 from pydantic import BaseModel
 
-from strategies.smc.models import Bias, EventType, Pivot, StructureBreak, StructureState
+from strategies.smc.models import Bias, EventType, OBStatus, OrderBlock, Pivot, StructureBreak, StructureState
 
 class StructureBreakResult(BaseModel):
     structure_breaks: list[StructureBreak]
@@ -31,14 +31,27 @@ def detect_structure_breaks_v2(df: pd.DataFrame, pivots: list[Pivot], initial_tr
                     cross = close_now > pivot.price >= close_prev
                     event_type = EventType.CHOCH if trend == Bias.BEARISH else EventType.BOS
                     _bias = Bias.BULLISH
-                    # 寻找[pivot.bar_time, bar_time]区间最低价格的K线用来构建OrderBlock
+                    target_idx = low_prices.iloc[range_slice].idxmin()
                 else:
                     cross = close_now < pivot.price <= close_prev
                     event_type = EventType.CHOCH if trend == Bias.BULLISH else EventType.BOS
                     _bias = Bias.BEARISH
-                    # 寻找[pivot.bar_time, bar_time]区间最高价格的K线用来构建OrderBlock
+                    target_idx = high_prices.iloc[range_slice].idxmax()
 
                 if cross:
+                    ob_high = float(high_prices[target_idx])
+                    ob_low = float(low_prices[target_idx])
+                    ob_time = datetime_strs[int(target_idx)]
+                    ob = OrderBlock(
+                        id=f"{event_type}_OB_{ob_time}",
+                        bias=_bias,
+                        high=ob_high,
+                        low=ob_low,
+                        mid=(ob_high + ob_low) / 2,
+                        formed_time=datetime_strs[int(target_idx)],
+                        status=OBStatus.UNTESTED,
+                        source="OB",
+                    )
                     sbs.append(
                         StructureBreak(
                             event_type=event_type,
@@ -46,7 +59,7 @@ def detect_structure_breaks_v2(df: pd.DataFrame, pivots: list[Pivot], initial_tr
                             price=close_now,
                             time=bar_time,
                             pivot=pivot,
-                            ob=None
+                            ob=ob,
                         )
                     )
                     filled_pivot_times.append(pivot.bar_time)
