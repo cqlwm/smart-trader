@@ -1,14 +1,14 @@
 import pandas as pd
 
 from strategies.smc.core.utils import find_bar_position
-from strategies.smc.models import Bias, OBStatus, OrderBlock, StructureEvent
+from strategies.smc.models import Bias, OBStatus, OrderBlock, StructureBreak
 
 
 def _create_order_block(
     df: pd.DataFrame,
     parsed_highs: pd.Series,
     parsed_lows: pd.Series,
-    event: StructureEvent,
+    event: StructureBreak,
     source: str,
     ob_counter: int,
 ) -> OrderBlock:
@@ -47,7 +47,7 @@ def create_order_blocks_from_events(
     df: pd.DataFrame,
     parsed_highs: pd.Series,
     parsed_lows: pd.Series,
-    events: list[StructureEvent],
+    events: list[StructureBreak],
     source: str,
 ) -> list[OrderBlock]:
     blocks: list[OrderBlock] = []

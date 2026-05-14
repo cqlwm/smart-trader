@@ -1,13 +1,13 @@
 import uuid
 
-from strategies.smc.models.types import OrderBlock, StructureEvent, Bias, OBStatus
+from strategies.smc.models.types import OrderBlock, StructureBreak, Bias, OBStatus
 from strategies.smc.engine import SMCResult
 from strategies.smc.models.signal_types import TradingSignal, TradingSignalState, SignalStatus
 
 
 def find_entry_ob(
     order_blocks: list[OrderBlock],
-    event: StructureEvent,
+    event: StructureBreak,
 ) -> OrderBlock | None:
     candidates = [
         ob for ob in order_blocks
@@ -57,9 +57,9 @@ def calculate_stop_loss(
 
 
 def _detect_new_event(
-    last_event: StructureEvent | None,
+    last_event: StructureBreak | None,
     prev_time: str,
-) -> StructureEvent | None:
+) -> StructureBreak | None:
     if last_event is None:
         return None
     if last_event.time > prev_time:
@@ -68,7 +68,7 @@ def _detect_new_event(
 
 
 def _create_signal(
-    event: StructureEvent,
+    event: StructureBreak,
     ob: OrderBlock,
     atr: float,
     atr_multiplier: float,

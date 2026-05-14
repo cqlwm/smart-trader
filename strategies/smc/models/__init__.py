@@ -19,10 +19,10 @@ from strategies.smc.models.types import (
     OrderBlock,
     Pivot,
     PremiumDiscount,
-    StructureEvent,
+    StructureBreak,
     StructureState,
     TrailingExtremes,
-    ZonePosition,
+    ZonePosition, Pivots,
 )
 
 __all__ = [
@@ -46,8 +46,9 @@ __all__ = [
     "OBStatus",
     "OrderBlock",
     "Pivot",
+    "Pivots",
     "PremiumDiscount",
-    "StructureEvent",
+    "StructureBreak",
     "StructureState",
     "TrailingExtremes",
     "ZonePosition",

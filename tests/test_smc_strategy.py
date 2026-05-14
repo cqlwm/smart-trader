@@ -4,7 +4,7 @@ import pytest
 
 from model import OrderSide, PositionSide, Symbol
 from strategies.smc.models.signal_types import SMCStrategyConfig, TradingSignal, TradingSignalState, SignalStatus
-from strategies.smc.models.types import Bias, OBStatus, OrderBlock, StructureEvent, EventType, Pivot
+from strategies.smc.models.types import Bias, OBStatus, OrderBlock, StructureBreak, EventType, Pivot
 from strategies.smc.smc_strategy import SMCSignalStrategy
 
 
@@ -30,8 +30,8 @@ def _make_ob(
     )
 
 
-def _make_event(bar_index: int = 5, bias: Bias = Bias.BULLISH) -> StructureEvent:
-    return StructureEvent(
+def _make_event(bar_index: int = 5, bias: Bias = Bias.BULLISH) -> StructureBreak:
+    return StructureBreak(
         event_type=EventType.CHOCH,
         bias=bias,
         price=105.0,

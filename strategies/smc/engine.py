@@ -4,9 +4,9 @@ import pandas as pd
 
 from strategies.smc.core.equal_levels import detect_equal_levels
 from strategies.smc.core.fvg import detect_fvg, mitigate_fvg
-from strategies.smc.core.legs import detect_legs, identify_pivots
+from strategies.smc.core.legs import pivots
 from strategies.smc.core.order_blocks import create_order_blocks_from_events, mitigate_order_blocks
-from strategies.smc.core.structure import detect_structure_breaks
+from strategies.smc.core.structure import detect_structure_breaks, detect_structure_breaks_v2
 from strategies.smc.core.trailing import compute_trailing_extremes
 from strategies.smc.core.zones import compute_premium_discount
 from strategies.smc.indicators.atr import (
@@ -56,19 +56,18 @@ class SMCEngine:
         volatility_measure = compute_volatility_measure(df, self._config.ob_filter, self._config.atr_period)
         parsed_high, parsed_low = compute_parsed_high_low(df, volatility_measure)
 
-        swing_legs = detect_legs(df["high"], df["low"], self._config.swing_length)
-        internal_legs = detect_legs(df["high"], df["low"], self._config.internal_length)
+        swing_pivots = pivots(df, self._config.swing_length)
+        internal_pivots = pivots(df, self._config.internal_length)
 
-        swing_pivots_h, swing_pivots_l = identify_pivots(df, swing_legs, self._config.swing_length)
-        internal_pivots_h, internal_pivots_l = identify_pivots(df, internal_legs, self._config.internal_length)
+        sbr = detect_structure_breaks_v2(df, swing_pivots.all)
 
-        swing_events, swing_state = detect_structure_breaks(df, swing_pivots_h, swing_pivots_l)
+        swing_events, swing_state = detect_structure_breaks_v2(df, swing_pivots.all)
         internal_events, internal_state = detect_structure_breaks(
             df,
-            internal_pivots_h,
-            internal_pivots_l,
-            swing_pivots_high=swing_pivots_h,
-            swing_pivots_low=swing_pivots_l,
+            internal_pivots.highs,
+            internal_pivots.lows,
+            swing_pivots_high=swing_pivots.highs,
+            swing_pivots_low=swing_pivots.lows,
             filter_confluence=self._config.internal_length != self._config.swing_length,
         )
 
@@ -81,7 +80,7 @@ class SMCEngine:
         fvgs = detect_fvg(df, self._config.atr_period, self._config.fvg_min_width_atr)
         fvgs = mitigate_fvg(fvgs, df)
 
-        equal_pivots_legs = detect_legs(df["high"], df["low"], self._config.equal_length)
+        equal_pivots_legs = _detect_legs(df["high"], df["low"], self._config.equal_length)
         eq_pivots_h, eq_pivots_l = identify_pivots(df, equal_pivots_legs, self._config.equal_length)
         equal_levels = detect_equal_levels(eq_pivots_h, eq_pivots_l, atr_series, df, self._config.equal_threshold)
 

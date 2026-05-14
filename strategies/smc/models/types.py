@@ -39,23 +39,11 @@ class Pivot(BaseModel):
     label: str
     is_high: bool
 
-
-class StructureEvent(BaseModel):
+class Pivots(BaseModel):
     model_config = ConfigDict(frozen=True)
-    event_type: EventType
-    bias: Bias
-    price: float
-    time: str
-    pivot: Pivot
-
-
-class StructureState(BaseModel):
-    model_config = ConfigDict(frozen=True)
-    trend: Bias
-    last_event: StructureEvent | None
-    pivot_high: Pivot | None
-    pivot_low: Pivot | None
-    swing_labels: list[str]
+    highs: list[Pivot]
+    lows: list[Pivot]
+    all: list[Pivot]
 
 
 class OrderBlock(BaseModel):
@@ -68,8 +56,23 @@ class OrderBlock(BaseModel):
     formed_time: str
     status: OBStatus
     source: str
-    source_event: StructureEvent | None = None
 
+class StructureBreak(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    event_type: EventType
+    bias: Bias
+    price: float
+    time: str
+    pivot: Pivot
+    ob: OrderBlock | None
+
+class StructureState(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    trend: Bias
+    last_event: StructureBreak | None
+    pivot_high: Pivot | None
+    pivot_low: Pivot | None
+    swing_labels: list[str]
 
 class FairValueGap(BaseModel):
     model_config = ConfigDict(frozen=True)

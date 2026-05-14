@@ -1,9 +1,9 @@
 import pandas as pd
 
-from strategies.smc.models import Pivot
+from strategies.smc.models import Pivot, Pivots
 
 
-def detect_legs(highs: pd.Series, lows: pd.Series, size: int) -> pd.Series:
+def _detect_legs(highs: pd.Series, lows: pd.Series, size: int) -> pd.Series:
     rolling_high = highs.rolling(size).max()
     rolling_low = lows.rolling(size).min()
 
@@ -30,7 +30,7 @@ def _label_pivot(current_price: float, last_price: float | None, is_high: bool) 
     return "LL" if current_price < last_price else "HL"
 
 
-def identify_pivots(df: pd.DataFrame, legs: pd.Series, size: int) -> tuple[list[Pivot], list[Pivot]]:
+def _identify_pivots(df: pd.DataFrame, legs: pd.Series, size: int) -> tuple[list[Pivot], list[Pivot]]:
     leg_changes = legs.diff()
     pivot_highs: list[Pivot] = []
     pivot_lows: list[Pivot] = []
@@ -55,7 +55,19 @@ def identify_pivots(df: pd.DataFrame, legs: pd.Series, size: int) -> tuple[list[
             ts = str(df["datetime"].iloc[pivot_bar])
             last_price = pivot_lows[-1].price if pivot_lows else None
             label = _label_pivot(price, last_price, is_high=False)
-            pivot_lows.append(
-                Pivot(price=price,bar_time=ts,label=label,is_high=False))
+            pivot_lows.append(Pivot(price=price,bar_time=ts,label=label,is_high=False))
 
     return pivot_highs, pivot_lows
+
+
+def pivots(df: pd.DataFrame, length: int) -> Pivots:
+    legs = _detect_legs(df["high"], df["low"], length)
+    pivot_highs, pivot_lows = _identify_pivots(df, legs, length)
+    combined_pivots = pivot_highs + pivot_lows
+    combined_pivots.sort(key=lambda x: x.bar_time)
+    return Pivots(
+        highs=pivot_highs,
+        lows=pivot_lows,
+        all=combined_pivots
+    )
+

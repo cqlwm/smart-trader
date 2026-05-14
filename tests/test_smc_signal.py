@@ -1,6 +1,6 @@
 import pytest
 from strategies.smc.models.types import (
-    Bias, EventType, OBStatus, OrderBlock, Pivot, StructureEvent, StructureState,
+    Bias, EventType, OBStatus, OrderBlock, Pivot, StructureBreak, StructureState,
 )
 from strategies.smc.models.signal_types import TradingSignal, TradingSignalState, SignalStatus
 from strategies.smc.signal import (
@@ -25,8 +25,8 @@ def _make_event(
     bias: Bias = Bias.BULLISH,
     event_type: EventType = EventType.CHOCH,
     price: float = 105.0,
-) -> StructureEvent:
-    return StructureEvent(
+) -> StructureBreak:
+    return StructureBreak(
         event_type=event_type,
         bias=bias,
         price=price,
@@ -127,8 +127,8 @@ class TestCalculateStopLoss:
 class TestComputeSignals:
     def _make_smc_result(
         self,
-        swing_event: StructureEvent | None = None,
-        internal_event: StructureEvent | None = None,
+        swing_event: StructureBreak | None = None,
+        internal_event: StructureBreak | None = None,
         swing_obs: list[OrderBlock] | None = None,
         internal_obs: list[OrderBlock] | None = None,
         current_atr: float = 10.0,

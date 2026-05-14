@@ -165,11 +165,11 @@ class SMCSignalStrategy(SimpleStrategy):
         result = self._smc_engine.analyze(df)
 
         from strategies.smc.core.structure import detect_structure_breaks
-        from strategies.smc.core.legs import detect_legs, identify_pivots
+        from strategies.smc.core.legs import _detect_legs, identify_pivots
 
         structure_items = []
 
-        swing_legs = detect_legs(df["high"], df["low"], self._smc_engine.config.swing_length)
+        swing_legs = _detect_legs(df["high"], df["low"], self._smc_engine.config.swing_length)
         swing_pivots_h, swing_pivots_l = identify_pivots(df, swing_legs, self._smc_engine.config.swing_length)
         swing_events, _ = detect_structure_breaks(df, swing_pivots_h, swing_pivots_l)
 
@@ -182,7 +182,7 @@ class SMCSignalStrategy(SimpleStrategy):
                 "source": "swing",
             })
 
-        internal_legs = detect_legs(df["high"], df["low"], self._smc_engine.config.internal_length)
+        internal_legs = _detect_legs(df["high"], df["low"], self._smc_engine.config.internal_length)
         internal_pivots_h, internal_pivots_l = identify_pivots(df, internal_legs, self._smc_engine.config.internal_length)
         internal_events, _ = detect_structure_breaks(
             df, internal_pivots_h, internal_pivots_l,

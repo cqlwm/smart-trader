@@ -3,7 +3,7 @@ from enum import Enum, auto
 
 from model import Symbol
 from strategies.smc.models.config import SMCConfig
-from strategies.smc.models.types import OrderBlock, StructureEvent, Bias
+from strategies.smc.models.types import OrderBlock, StructureBreak, Bias
 
 
 class SignalStatus(Enum):
@@ -17,7 +17,7 @@ class TradingSignal(BaseModel):
     model_config = ConfigDict(frozen=True)
     id: str
     ob: OrderBlock
-    event: StructureEvent
+    event: StructureBreak
     direction: Bias
     entry_price: float
     stop_loss: float

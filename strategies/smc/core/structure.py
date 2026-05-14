@@ -1,6 +1,60 @@
 import pandas as pd
+from pydantic import BaseModel
 
-from strategies.smc.models import Bias, EventType, Pivot, StructureEvent, StructureState
+from strategies.smc.models import Bias, EventType, Pivot, StructureBreak, StructureState
+
+class StructureBreakResult(BaseModel):
+    structure_breaks: list[StructureBreak]
+    undestroyed_pivots: list[Pivot]
+
+def detect_structure_breaks_v2(df: pd.DataFrame, pivots: list[Pivot], initial_trend: Bias = Bias.NEUTRAL) -> StructureBreakResult:
+    sbs: list[StructureBreak] = []
+    filled_pivot_times: list[str] = []
+    trend = initial_trend
+
+    closes = df["close"]
+    low_prices = df["low"]
+    high_prices = df["high"]
+    datetime_strs = df["datetime"].astype(str).tolist()
+
+    for bar_i in range(1, len(df)):
+        bar_time = datetime_strs[bar_i]
+        close_now = closes.iloc[bar_i]
+        close_prev = closes.iloc[bar_i - 1]
+
+        for pivot in pivots:
+            if pivot.bar_time <= bar_time and pivot.bar_time not in filled_pivot_times:
+                pivot_idx = datetime_strs.index(pivot.bar_time)
+                range_slice = slice(pivot_idx, bar_i + 1)
+
+                if pivot.is_high:
+                    cross = close_now > pivot.price >= close_prev
+                    event_type = EventType.CHOCH if trend == Bias.BEARISH else EventType.BOS
+                    _bias = Bias.BULLISH
+                    # 寻找[pivot.bar_time, bar_time]区间最低价格的K线用来构建OrderBlock
+                else:
+                    cross = close_now < pivot.price <= close_prev
+                    event_type = EventType.CHOCH if trend == Bias.BULLISH else EventType.BOS
+                    _bias = Bias.BEARISH
+                    # 寻找[pivot.bar_time, bar_time]区间最高价格的K线用来构建OrderBlock
+
+                if cross:
+                    sbs.append(
+                        StructureBreak(
+                            event_type=event_type,
+                            bias=_bias,
+                            price=close_now,
+                            time=bar_time,
+                            pivot=pivot,
+                            ob=None
+                        )
+                    )
+                    filled_pivot_times.append(pivot.bar_time)
+                    trend = _bias
+
+    undestroyed = [p for p in pivots if p.bar_time not in filled_pivot_times]
+
+    return StructureBreakResult(structure_breaks=sbs, undestroyed_pivots=undestroyed)
 
 
 def detect_structure_breaks(
@@ -11,8 +65,8 @@ def detect_structure_breaks(
     swing_pivots_high: list[Pivot] | None = None,
     swing_pivots_low: list[Pivot] | None = None,
     filter_confluence: bool = False,
-) -> tuple[list[StructureEvent], StructureState]:
-    events: list[StructureEvent] = []
+) -> tuple[list[StructureBreak], StructureState]:
+    events: list[StructureBreak] = []
     trend = initial_trend
 
     high_idx = 0
@@ -68,7 +122,7 @@ def detect_structure_breaks(
 
         if current_pivot_high is not None and not high_crossed:
             level = current_pivot_high.price
-            crossover = close_now > level and close_prev <= level
+            crossover = close_now > level >= close_prev
 
             extra = True
             if filter_confluence and current_swing_high is not None:
@@ -76,7 +130,7 @@ def detect_structure_breaks(
 
             if crossover and extra:
                 event_type = EventType.CHOCH if trend == Bias.BEARISH else EventType.BOS
-                event = StructureEvent(
+                event = StructureBreak(
                     event_type=event_type,
                     bias=Bias.BULLISH,
                     price=close_now,
@@ -89,7 +143,7 @@ def detect_structure_breaks(
 
         if current_pivot_low is not None and not low_crossed:
             level = current_pivot_low.price
-            crossunder = close_now < level and close_prev >= level
+            crossunder = close_now < level <= close_prev
 
             extra = True
             if filter_confluence and current_swing_low is not None:
@@ -97,7 +151,7 @@ def detect_structure_breaks(
 
             if crossunder and extra:
                 event_type = EventType.CHOCH if trend == Bias.BULLISH else EventType.BOS
-                event = StructureEvent(
+                event = StructureBreak(
                     event_type=event_type,
                     bias=Bias.BEARISH,
                     price=close_now,
