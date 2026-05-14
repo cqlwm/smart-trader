@@ -49,26 +49,13 @@ def identify_pivots(df: pd.DataFrame, legs: pd.Series, size: int) -> tuple[list[
             ts = str(df["datetime"].iloc[pivot_bar])
             last_price = pivot_highs[-1].price if pivot_highs else None
             label = _label_pivot(price, last_price, is_high=True)
-            pivot_highs.append(
-                Pivot(
-                    price=price,
-                    bar_time=ts,
-                    label=label,
-                    is_high=True,
-                )
-            )
+            pivot_highs.append(Pivot(price=price, bar_time=ts, label=label, is_high=True))
         elif change == 1:
             price = df["low"].iloc[pivot_bar]
             ts = str(df["datetime"].iloc[pivot_bar])
             last_price = pivot_lows[-1].price if pivot_lows else None
             label = _label_pivot(price, last_price, is_high=False)
             pivot_lows.append(
-                Pivot(
-                    price=price,
-                    bar_time=ts,
-                    label=label,
-                    is_high=False,
-                )
-            )
+                Pivot(price=price,bar_time=ts,label=label,is_high=False))
 
     return pivot_highs, pivot_lows

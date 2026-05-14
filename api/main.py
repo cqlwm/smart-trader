@@ -15,13 +15,19 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("Starting up FastAPI application...")
-    bot_mgr = BotManager()
-    _app.state.bot_manager = bot_mgr
-    _app.state.instance_manager = bot_mgr.instance_manager
-    bot_mgr.start_in_background()
+    try:
+        bot_mgr = BotManager()
+        _app.state.bot_manager = bot_mgr
+        _app.state.instance_manager = bot_mgr.instance_manager
+        bot_mgr.start_in_background()
+    except Exception:
+        logger.warning("BotManager not initialized (API-only mode)")
+        _app.state.bot_manager = None
+        _app.state.instance_manager = None
     yield
     logger.info("Shutting down FastAPI application...")
-    bot_mgr.stop()
+    if _app.state.bot_manager is not None:
+        _app.state.bot_manager.stop()
 
 app = FastAPI(
     title="Smart-Trader API",

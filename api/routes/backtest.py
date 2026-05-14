@@ -92,6 +92,22 @@ def _build_strategy_factory(
             return DailyTrendStrategy(cfg, client)
         return factory
 
+    if strategy_type == "smc":
+        from strategies.smc.smc_strategy import SMCSignalStrategy
+        from strategies.smc.models.signal_types import SMCStrategyConfig
+
+        def factory(client: BacktestClient) -> Any:
+            smc_config = {**config}
+            if "quantity" not in smc_config:
+                smc_config["quantity"] = 0.001
+            cfg = SMCStrategyConfig(
+                symbol=symbol,
+                timeframe=timeframe,
+                **smc_config,
+            )
+            return SMCSignalStrategy(cfg, client)
+        return factory
+
     raise ValueError(f"No backtest factory for strategy type: {strategy_type}")
 
 
