@@ -51,6 +51,9 @@ class SMCEngine:
     def config(self) -> SMCConfig:
         return self._config
 
+    def analyze_v2(self):
+        pass
+
     def analyze(self, df: pd.DataFrame) -> SMCResult:
         atr_series = compute_atr(df, self._config.atr_period)
         volatility_measure = compute_volatility_measure(df, self._config.ob_filter, self._config.atr_period)

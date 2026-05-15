@@ -1,13 +1,73 @@
 import pandas as pd
-from pydantic import BaseModel
+from pandas import DataFrame
 
-from strategies.smc.models import Bias, EventType, OBStatus, OrderBlock, Pivot, StructureBreak, StructureState
+from strategies.smc.models import Bias, EventType, OBStatus, OrderBlock, Pivot, Pivots, StructureBreak
+from strategies.smc.models.types import StructureInfo
 
-class StructureBreakResult(BaseModel):
-    structure_breaks: list[StructureBreak]
-    undestroyed_pivots: list[Pivot]
 
-def detect_structure_breaks_v2(df: pd.DataFrame, pivots: list[Pivot], initial_trend: Bias = Bias.NEUTRAL) -> StructureBreakResult:
+def _detect_legs(highs: pd.Series, lows: pd.Series, size: int) -> pd.Series:
+    rolling_high = highs.rolling(size).max()
+    rolling_low = lows.rolling(size).min()
+
+    shifted_high = highs.shift(size)
+    shifted_low = lows.shift(size)
+
+    legs = pd.Series(index=highs.index, dtype="Int64")
+
+    new_bearish = shifted_high > rolling_high
+    new_bullish = shifted_low < rolling_low
+
+    legs[new_bullish] = 1
+    legs[new_bearish] = 0
+
+    legs = legs.ffill().fillna(0).astype(int)
+    return legs
+
+
+def _label_pivot(current_price: float, last_price: float | None, is_high: bool) -> str:
+    if last_price is None:
+        return "HH" if is_high else "LL"
+    if is_high:
+        return "HH" if current_price > last_price else "LH"
+    return "LL" if current_price < last_price else "HL"
+
+
+def _identify_pivots(df: pd.DataFrame, legs: pd.Series, swing_length: int) -> Pivots:
+    leg_changes = legs.diff()
+    pivot_highs: list[Pivot] = []
+    pivot_lows: list[Pivot] = []
+
+    for i in range(1, len(legs)):
+        change = leg_changes.iloc[i]
+        if change == 0 or pd.isna(change):
+            continue
+
+        pivot_bar = i - swing_length
+        if pivot_bar < 0:
+            continue
+
+        if change == -1:
+            price = df["high"].iloc[pivot_bar]
+            ts = str(df["datetime"].iloc[pivot_bar])
+            last_price = pivot_highs[-1].price if pivot_highs else None
+            label = _label_pivot(price, last_price, is_high=True)
+            pivot_highs.append(Pivot(price=price, bar_time=ts, label=label, is_high=True))
+        elif change == 1:
+            price = df["low"].iloc[pivot_bar]
+            ts = str(df["datetime"].iloc[pivot_bar])
+            last_price = pivot_lows[-1].price if pivot_lows else None
+            label = _label_pivot(price, last_price, is_high=False)
+            pivot_lows.append(Pivot(price=price,bar_time=ts,label=label,is_high=False))
+
+    combined_pivots = pivot_highs + pivot_lows
+    combined_pivots.sort(key=lambda x: x.bar_time)
+    return Pivots(
+        highs=pivot_highs,
+        lows=pivot_lows,
+        all=combined_pivots
+    )
+
+def detect_structure_breaks(df: pd.DataFrame, _pivots: list[Pivot], initial_trend: Bias = Bias.NEUTRAL) -> StructureInfo:
     sbs: list[StructureBreak] = []
     filled_pivot_times: list[str] = []
     trend = initial_trend
@@ -21,8 +81,25 @@ def detect_structure_breaks_v2(df: pd.DataFrame, pivots: list[Pivot], initial_tr
         bar_time = datetime_strs[bar_i]
         close_now = closes.iloc[bar_i]
         close_prev = closes.iloc[bar_i - 1]
+        bar_low = low_prices.iloc[bar_i]
+        bar_high = high_prices.iloc[bar_i]
 
-        for pivot in pivots:
+        for sb_i, sb in enumerate(sbs):
+            ob = sb.ob
+            if ob is None or ob.status == OBStatus.MITIGATED:
+                continue
+            if bar_low > ob.high or bar_high < ob.low:
+                continue
+            if sb.bias == Bias.BULLISH and bar_low <= ob.low:
+                new_status = OBStatus.MITIGATED
+            elif sb.bias == Bias.BEARISH and bar_high >= ob.high:
+                new_status = OBStatus.MITIGATED
+            else:
+                new_status = OBStatus.TESTED
+            if new_status != ob.status:
+                sbs[sb_i] = sb.model_copy(update={"ob": ob.model_copy(update={"status": new_status})})
+
+        for pivot in _pivots:
             if pivot.bar_time <= bar_time and pivot.bar_time not in filled_pivot_times:
                 pivot_idx = datetime_strs.index(pivot.bar_time)
                 range_slice = slice(pivot_idx, bar_i + 1)
@@ -65,127 +142,13 @@ def detect_structure_breaks_v2(df: pd.DataFrame, pivots: list[Pivot], initial_tr
                     filled_pivot_times.append(pivot.bar_time)
                     trend = _bias
 
-    undestroyed = [p for p in pivots if p.bar_time not in filled_pivot_times]
+    unbreak_pivots = [p for p in _pivots if p.bar_time not in filled_pivot_times]
 
-    return StructureBreakResult(structure_breaks=sbs, undestroyed_pivots=undestroyed)
+    return StructureInfo(structure_breaks=sbs, unbreak_pivots=unbreak_pivots)
 
 
-def detect_structure_breaks(
-    df: pd.DataFrame,
-    pivots_high: list[Pivot],
-    pivots_low: list[Pivot],
-    initial_trend: Bias = Bias.NEUTRAL,
-    swing_pivots_high: list[Pivot] | None = None,
-    swing_pivots_low: list[Pivot] | None = None,
-    filter_confluence: bool = False,
-) -> tuple[list[StructureBreak], StructureState]:
-    events: list[StructureBreak] = []
-    trend = initial_trend
+def structure_info(df: DataFrame, swing_length: int) -> StructureInfo:
+    _legs = _detect_legs(df["high"], df["low"], swing_length)
+    _pivots = _identify_pivots(df, _legs, swing_length)
+    return detect_structure_breaks(df, _pivots.all)
 
-    high_idx = 0
-    low_idx = 0
-
-    current_pivot_high: Pivot | None = None
-    current_pivot_low: Pivot | None = None
-    high_crossed = False
-    low_crossed = False
-
-    swing_high_idx = 0
-    swing_low_idx = 0
-    current_swing_high: Pivot | None = None
-    current_swing_low: Pivot | None = None
-
-    closes = df["close"]
-    datetime_strs = df["datetime"].astype(str).tolist()
-
-    for bar in range(len(df)):
-        bar_time = datetime_strs[bar]
-
-        while high_idx < len(pivots_high) and pivots_high[high_idx].bar_time <= bar_time:
-            current_pivot_high = pivots_high[high_idx]
-            high_crossed = False
-            high_idx += 1
-
-        while low_idx < len(pivots_low) and pivots_low[low_idx].bar_time <= bar_time:
-            current_pivot_low = pivots_low[low_idx]
-            low_crossed = False
-            low_idx += 1
-
-        if swing_pivots_high is not None:
-            while (
-                swing_high_idx < len(swing_pivots_high)
-                and swing_pivots_high[swing_high_idx].bar_time <= bar_time
-            ):
-                current_swing_high = swing_pivots_high[swing_high_idx]
-                swing_high_idx += 1
-
-        if swing_pivots_low is not None:
-            while (
-                swing_low_idx < len(swing_pivots_low)
-                and swing_pivots_low[swing_low_idx].bar_time <= bar_time
-            ):
-                current_swing_low = swing_pivots_low[swing_low_idx]
-                swing_low_idx += 1
-
-        if bar == 0:
-            continue
-
-        close_now = closes.iloc[bar]
-        close_prev = closes.iloc[bar - 1]
-
-        if current_pivot_high is not None and not high_crossed:
-            level = current_pivot_high.price
-            crossover = close_now > level >= close_prev
-
-            extra = True
-            if filter_confluence and current_swing_high is not None:
-                extra = current_pivot_high.price != current_swing_high.price
-
-            if crossover and extra:
-                event_type = EventType.CHOCH if trend == Bias.BEARISH else EventType.BOS
-                event = StructureBreak(
-                    event_type=event_type,
-                    bias=Bias.BULLISH,
-                    price=close_now,
-                    time=str(df["datetime"].iloc[bar]),
-                    pivot=current_pivot_high,
-                )
-                events.append(event)
-                high_crossed = True
-                trend = Bias.BULLISH
-
-        if current_pivot_low is not None and not low_crossed:
-            level = current_pivot_low.price
-            crossunder = close_now < level <= close_prev
-
-            extra = True
-            if filter_confluence and current_swing_low is not None:
-                extra = current_pivot_low.price != current_swing_low.price
-
-            if crossunder and extra:
-                event_type = EventType.CHOCH if trend == Bias.BULLISH else EventType.BOS
-                event = StructureBreak(
-                    event_type=event_type,
-                    bias=Bias.BEARISH,
-                    price=close_now,
-                    time=str(df["datetime"].iloc[bar]),
-                    pivot=current_pivot_low,
-                )
-                events.append(event)
-                low_crossed = True
-                trend = Bias.BEARISH
-
-    last_labels: list[str] = []
-    for p in pivots_low[-3:]:
-        last_labels.append(p.label)
-    for p in pivots_high[-3:]:
-        last_labels.append(p.label)
-
-    state = StructureState(
-        trend=trend,
-        last_event=events[-1] if events else None,
-        pivot_high=current_pivot_high,
-        pivot_low=current_pivot_low,
-        swing_labels=last_labels,
-    )
-    return events, state

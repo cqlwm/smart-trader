@@ -4,8 +4,7 @@ from pydantic import BaseModel, ConfigDict
 class SMCConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
     lookback_bars: int = 500
-    swing_length: int = 50
-    internal_length: int = 5
+    swing_length: int = 10
     equal_length: int = 3
     equal_threshold: float = 0.1
     ob_filter: str = "atr"

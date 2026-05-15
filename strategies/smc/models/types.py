@@ -66,6 +66,11 @@ class StructureBreak(BaseModel):
     pivot: Pivot
     ob: OrderBlock | None
 
+class StructureInfo(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    structure_breaks: list[StructureBreak]
+    unbreak_pivots: list[Pivot]
+
 class StructureState(BaseModel):
     model_config = ConfigDict(frozen=True)
     trend: Bias
