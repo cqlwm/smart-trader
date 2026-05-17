@@ -4,9 +4,24 @@ from datetime import datetime, timezone, timedelta
 
 from persistence.kline_data_store import KlineDataStore
 from model import Symbol, Kline
-from strategies.smc.core.legs import pivots
-from strategies.smc.core.structure import detect_structure_breaks_v2
-from strategies.smc.models.types import Pivot
+from strategies.smc.models.types import Pivot, StructureInfo, StructureBreak, Bias, EventType, OrderBlock, OBStatus
+from strategies.smc.core.structure import get_structure_bias
+
+
+def test_get_structure_bias_returns_last_break_bias() -> None:
+    pivot = Pivot(price=100.0, bar_time="t001", label="HH", is_high=True)
+    ob = OrderBlock(id="ob1", bias=Bias.BULLISH, high=102.0, low=98.0, mid=100.0, formed_time="t001", status=OBStatus.UNTESTED, source="OB")
+    breaks = [
+        StructureBreak(event_type=EventType.BOS, bias=Bias.BEARISH, price=95.0, time="t001", pivot=pivot, ob=ob),
+        StructureBreak(event_type=EventType.CHOCH, bias=Bias.BULLISH, price=105.0, time="t002", pivot=pivot, ob=ob),
+    ]
+    info = StructureInfo(structure_breaks=breaks, unbreak_pivots=[])
+    assert get_structure_bias(info) == Bias.BULLISH
+
+
+def test_get_structure_bias_empty_returns_neutral() -> None:
+    info = StructureInfo(structure_breaks=[], unbreak_pivots=[])
+    assert get_structure_bias(info) == Bias.NEUTRAL
 
 
 SYMBOL = Symbol(base="BTC", quote="USDT")

@@ -1,14 +1,10 @@
 import uuid
 
-from strategies.smc.models.types import OrderBlock, StructureBreak, Bias, OBStatus
-from strategies.smc.engine import SMCResult
+from strategies.smc.models.types import OrderBlock, StructureBreak, Bias, OBStatus, StructureInfo
 from strategies.smc.models.signal_types import TradingSignal, TradingSignalState, SignalStatus
 
 
-def find_entry_ob(
-    order_blocks: list[OrderBlock],
-    event: StructureBreak,
-) -> OrderBlock | None:
+def find_entry_ob(order_blocks: list[OrderBlock], event: StructureBreak) -> OrderBlock | None:
     candidates = [
         ob for ob in order_blocks
         if ob.status != OBStatus.MITIGATED and ob.bias == event.bias
@@ -98,16 +94,14 @@ def _create_signal(
 
 def _update_signal_statuses(
     signals: list[TradingSignal],
-    result: SMCResult,
+    structure_info: StructureInfo,
     current_high: float,
     current_low: float,
 ) -> list[TradingSignal]:
     mitigated_ids: set[str] = set()
-    for ob in result.swing_order_blocks:
-        if ob.status == OBStatus.MITIGATED:
-            mitigated_ids.add(ob.id)
-    for ob in result.internal_order_blocks:
-        if ob.status == OBStatus.MITIGATED:
+    for sb in structure_info.structure_breaks:
+        ob = sb.ob
+        if ob is not None and ob.status == OBStatus.MITIGATED:
             mitigated_ids.add(ob.id)
 
     updated: list[TradingSignal] = []
@@ -127,66 +121,49 @@ def _update_signal_statuses(
 
 
 def compute_signals(
-    result: SMCResult,
+    structure_info: StructureInfo,
     prev_state: TradingSignalState,
     current_bar_time: str,
     current_high: float,
     current_low: float,
+    atr: float,
+    large_bias: Bias = Bias.NEUTRAL,
 ) -> TradingSignalState:
-    new_swing_event = _detect_new_event(result.swing_state.last_event, prev_state.last_swing_event_time)
-    new_internal_event = _detect_new_event(result.internal_state.last_event, prev_state.last_internal_event_time)
+    events = structure_info.structure_breaks
+    last_event = events[-1] if events else None
+
+    new_event = _detect_new_event(last_event, prev_state.last_swing_event_time)
 
     new_signals: list[TradingSignal] = []
 
-    if new_swing_event is not None:
-        ob = find_entry_ob(result.swing_order_blocks, new_swing_event)
-        if ob is not None:
-            signal = _create_signal(
-                event=new_swing_event,
-                ob=ob,
-                atr=result.current_atr,
-                atr_multiplier=0.5,
-                min_rr=2.0,
-                order_blocks=result.swing_order_blocks,
-                bar_time=current_bar_time,
-            )
-            if signal is not None:
-                new_signals.append(signal)
-
-    if new_internal_event is not None:
-        ob = find_entry_ob(result.internal_order_blocks, new_internal_event)
-        if ob is not None:
-            signal = _create_signal(
-                event=new_internal_event,
-                ob=ob,
-                atr=result.current_atr,
-                atr_multiplier=0.5,
-                min_rr=2.0,
-                order_blocks=result.internal_order_blocks,
-                bar_time=current_bar_time,
-            )
-            if signal is not None:
-                new_signals.append(signal)
+    if new_event is not None:
+        if large_bias == Bias.NEUTRAL or new_event.bias == large_bias:
+            ob = find_entry_ob([sb.ob for sb in events if sb.ob is not None], new_event)
+            if ob is not None:
+                signal = _create_signal(
+                    event=new_event,
+                    ob=ob,
+                    atr=atr,
+                    atr_multiplier=0.5,
+                    min_rr=2.0,
+                    order_blocks=[sb.ob for sb in events if sb.ob is not None],
+                    bar_time=current_bar_time,
+                )
+                if signal is not None:
+                    new_signals.append(signal)
 
     updated_existing = _update_signal_statuses(
-        prev_state.signals, result, current_high, current_low,
+        prev_state.signals, structure_info, current_high, current_low,
     )
 
     all_signals = updated_existing + new_signals
 
     new_swing_time = (
-        new_swing_event.time
-        if new_swing_event
-        else prev_state.last_swing_event_time
-    )
-    new_internal_time = (
-        new_internal_event.time
-        if new_internal_event
-        else prev_state.last_internal_event_time
+        new_event.time if new_event else prev_state.last_swing_event_time
     )
 
     return TradingSignalState(
         signals=all_signals,
         last_swing_event_time=new_swing_time,
-        last_internal_event_time=new_internal_time,
+        last_internal_event_time=prev_state.last_internal_event_time,
     )

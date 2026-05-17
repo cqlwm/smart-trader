@@ -152,3 +152,9 @@ def structure_info(df: DataFrame, swing_length: int) -> StructureInfo:
     _pivots = _identify_pivots(df, _legs, swing_length)
     return detect_structure_breaks(df, _pivots.all)
 
+
+def get_structure_bias(info: StructureInfo) -> Bias:
+    if not info.structure_breaks:
+        return Bias.NEUTRAL
+    return info.structure_breaks[-1].bias
+

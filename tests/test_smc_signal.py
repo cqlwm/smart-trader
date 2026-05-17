@@ -1,6 +1,6 @@
 import pytest
 from strategies.smc.models.types import (
-    Bias, EventType, OBStatus, OrderBlock, Pivot, StructureBreak, StructureState,
+    Bias, EventType, OBStatus, OrderBlock, Pivot, StructureBreak, StructureInfo,
 )
 from strategies.smc.models.signal_types import TradingSignal, TradingSignalState, SignalStatus
 from strategies.smc.signal import (
@@ -32,6 +32,7 @@ def _make_event(
         price=price,
         time=f"t{bar_index:03d}",
         pivot=_make_pivot(bar_index, price, is_high=(bias == Bias.BULLISH)),
+        ob=None,
     )
 
 
@@ -124,169 +125,137 @@ class TestCalculateStopLoss:
         assert result == 102.0 + 10.0 * 0.5
 
 
+def _make_structure_info(events: list[StructureBreak] | None = None) -> StructureInfo:
+    return StructureInfo(
+        structure_breaks=events or [],
+        unbreak_pivots=[],
+    )
+
+
 class TestComputeSignals:
-    def _make_smc_result(
-        self,
-        swing_event: StructureBreak | None = None,
-        internal_event: StructureBreak | None = None,
-        swing_obs: list[OrderBlock] | None = None,
-        internal_obs: list[OrderBlock] | None = None,
-        current_atr: float = 10.0,
-    ) -> object:
-        from unittest.mock import MagicMock
-        from strategies.smc.models.types import FairValueGap, EqualLevel, TrailingExtremes, PremiumDiscount, ZonePosition
-        import pandas as pd
-
-        swing_state = StructureState(
-            trend=Bias.BULLISH,
-            last_event=swing_event,
-            pivot_high=None,
-            pivot_low=None,
-            swing_labels=[],
-        )
-        internal_state = StructureState(
-            trend=Bias.BULLISH,
-            last_event=internal_event,
-            pivot_high=None,
-            pivot_low=None,
-            swing_labels=[],
-        )
-        result = MagicMock()
-        result.swing_state = swing_state
-        result.internal_state = internal_state
-        result.swing_order_blocks = swing_obs or []
-        result.internal_order_blocks = internal_obs or []
-        result.fvgs = []
-        result.equal_levels = []
-        result.trailing = TrailingExtremes(
-            top=110.0, bottom=90.0, top_time="t001", bottom_time="t000", top_label="TH", bottom_label="BL",
-        )
-        result.premium_discount = PremiumDiscount(
-            premium_zone_high=110.0, premium_zone_low=102.5,
-            equilibrium=100.0,
-            discount_zone_high=97.5, discount_zone_low=90.0,
-            current_position=ZonePosition.EQUILIBRIUM,
-        )
-        result.df = pd.DataFrame({"high": [105.0], "low": [95.0], "close": [100.0]})
-        result.atr_series = pd.Series([10.0])
-        result.current_atr = current_atr
-        result.volatility = "normal"
-        return result
-
-    def test_detects_new_swing_event_creates_signal(self) -> None:
+    def test_detects_new_event_creates_signal(self) -> None:
         event = _make_event(bar_index=10, bias=Bias.BULLISH)
         ob = _make_ob(bias=Bias.BULLISH, formed_index=5)
-        result = self._make_smc_result(swing_event=event, swing_obs=[ob])
+        event_with_ob = event.model_copy(update={"ob": ob})
+        si = _make_structure_info(events=[event_with_ob])
 
         prev_state = TradingSignalState(
             signals=[], last_swing_event_time="t005", last_internal_event_time="",
         )
-        new_state = compute_signals(result, prev_state, "t010", 105.0, 95.0)
+        new_state = compute_signals(si, prev_state, "t010", 105.0, 95.0, atr=10.0)
 
         assert len(new_state.signals) == 1
         assert new_state.signals[0].direction == Bias.BULLISH
         assert new_state.signals[0].status == SignalStatus.PENDING
         assert new_state.last_swing_event_time == "t010"
 
-    def test_detects_new_internal_event_creates_signal(self) -> None:
-        event = _make_event(bar_index=8, bias=Bias.BEARISH)
-        ob = _make_ob(bias=Bias.BEARISH, formed_index=3)
-        result = self._make_smc_result(internal_event=event, internal_obs=[ob])
-
-        prev_state = TradingSignalState(
-            signals=[], last_swing_event_time="", last_internal_event_time="t005",
-        )
-        new_state = compute_signals(result, prev_state, "t008", 105.0, 95.0)
-
-        assert len(new_state.signals) == 1
-        assert new_state.signals[0].direction == Bias.BEARISH
-
-    def test_no_new_events_no_new_signals(self) -> None:
-        event = _make_event(bar_index=5, bias=Bias.BULLISH)
-        result = self._make_smc_result(swing_event=event)
+    def test_filters_signal_against_large_bias(self) -> None:
+        bearish_event = _make_event(bar_index=10, bias=Bias.BEARISH)
+        ob = _make_ob(bias=Bias.BEARISH, formed_index=5)
+        bearish_event = bearish_event.model_copy(update={"ob": ob})
+        si = _make_structure_info(events=[bearish_event])
 
         prev_state = TradingSignalState(
             signals=[], last_swing_event_time="t005", last_internal_event_time="",
         )
-        new_state = compute_signals(result, prev_state, "t006", 105.0, 95.0)
+        new_state = compute_signals(si, prev_state, "t010", 105.0, 95.0, atr=10.0, large_bias=Bias.BULLISH)
+
+        assert len(new_state.signals) == 0
+
+    def test_large_bias_neutral_allows_all(self) -> None:
+        bearish_event = _make_event(bar_index=10, bias=Bias.BEARISH)
+        ob = _make_ob(bias=Bias.BEARISH, formed_index=5)
+        bearish_event = bearish_event.model_copy(update={"ob": ob})
+        si = _make_structure_info(events=[bearish_event])
+
+        prev_state = TradingSignalState(
+            signals=[], last_swing_event_time="t005", last_internal_event_time="",
+        )
+        new_state = compute_signals(si, prev_state, "t010", 105.0, 95.0, atr=10.0, large_bias=Bias.NEUTRAL)
+
+        assert len(new_state.signals) == 1
+
+    def test_large_bias_match_allows_signal(self) -> None:
+        bullish_event = _make_event(bar_index=10, bias=Bias.BULLISH)
+        ob = _make_ob(bias=Bias.BULLISH, formed_index=5)
+        bullish_event = bullish_event.model_copy(update={"ob": ob})
+        si = _make_structure_info(events=[bullish_event])
+
+        prev_state = TradingSignalState(
+            signals=[], last_swing_event_time="t005", last_internal_event_time="",
+        )
+        new_state = compute_signals(si, prev_state, "t010", 105.0, 95.0, atr=10.0, large_bias=Bias.BULLISH)
+
+        assert len(new_state.signals) == 1
+
+    def test_no_new_events_no_new_signals(self) -> None:
+        event = _make_event(bar_index=5, bias=Bias.BULLISH)
+        si = _make_structure_info(events=[event])
+
+        prev_state = TradingSignalState(
+            signals=[], last_swing_event_time="t005", last_internal_event_time="",
+        )
+        new_state = compute_signals(si, prev_state, "t006", 105.0, 95.0, atr=10.0)
         assert len(new_state.signals) == 0
 
     def test_cancels_signal_when_ob_mitigated(self) -> None:
-        ob = _make_ob(bias=Bias.BULLISH, formed_index=3, status=OBStatus.MITIGATED)
+        mitigated_ob = _make_ob(bias=Bias.BULLISH, formed_index=3, status=OBStatus.MITIGATED)
         event = _make_event(bar_index=5, bias=Bias.BULLISH)
+        event_with_ob = event.model_copy(update={"ob": mitigated_ob})
+        si = _make_structure_info(events=[event_with_ob])
+
         existing_signal = TradingSignal(
             id="sig1",
             ob=_make_ob(bias=Bias.BULLISH, formed_index=3, status=OBStatus.UNTESTED),
             event=event,
             direction=Bias.BULLISH,
-            entry_price=100.0,
-            stop_loss=95.0,
-            take_profit=None,
-            created_bar_time="t005",
-            status=SignalStatus.PENDING,
+            entry_price=100.0, stop_loss=95.0, take_profit=None,
+            created_bar_time="t005", status=SignalStatus.PENDING,
         )
         prev_state = TradingSignalState(
-            signals=[existing_signal],
-            last_swing_event_time="t005",
-            last_internal_event_time="",
+            signals=[existing_signal], last_swing_event_time="t005", last_internal_event_time="",
         )
-
-        result = self._make_smc_result(swing_event=event, swing_obs=[ob])
-        new_state = compute_signals(result, prev_state, "t006", 105.0, 95.0)
+        new_state = compute_signals(si, prev_state, "t006", 105.0, 95.0, atr=10.0)
 
         canceled = [s for s in new_state.signals if s.id == "sig1"]
         assert len(canceled) == 1
         assert canceled[0].status == SignalStatus.CANCELED
 
     def test_fills_signal_when_price_reaches_entry(self) -> None:
-        event = _make_event(bar_index=5, bias=Bias.BULLISH)
         ob_untested = _make_ob(bias=Bias.BULLISH, formed_index=3, status=OBStatus.UNTESTED)
+        event = _make_event(bar_index=5, bias=Bias.BULLISH)
+        event_with_ob = event.model_copy(update={"ob": ob_untested})
+        si = _make_structure_info(events=[event_with_ob])
+
         existing_signal = TradingSignal(
-            id="sig1",
-            ob=ob_untested,
-            event=event,
-            direction=Bias.BULLISH,
-            entry_price=96.0,
-            stop_loss=93.0,
-            take_profit=None,
-            created_bar_time="t005",
-            status=SignalStatus.PENDING,
+            id="sig1", ob=ob_untested, event=event, direction=Bias.BULLISH,
+            entry_price=96.0, stop_loss=93.0, take_profit=None,
+            created_bar_time="t005", status=SignalStatus.PENDING,
         )
         prev_state = TradingSignalState(
-            signals=[existing_signal],
-            last_swing_event_time="t005",
-            last_internal_event_time="",
+            signals=[existing_signal], last_swing_event_time="t005", last_internal_event_time="",
         )
-
-        result = self._make_smc_result(swing_event=event, swing_obs=[ob_untested])
-        new_state = compute_signals(result, prev_state, "t006", 105.0, 95.0)
+        new_state = compute_signals(si, prev_state, "t006", 105.0, 95.0, atr=10.0)
 
         filled = [s for s in new_state.signals if s.id == "sig1"]
         assert len(filled) == 1
         assert filled[0].status == SignalStatus.FILLED
 
     def test_preserves_existing_signals(self) -> None:
-        event = _make_event(bar_index=5, bias=Bias.BULLISH)
         ob_untested = _make_ob(bias=Bias.BULLISH, formed_index=3, status=OBStatus.UNTESTED)
+        event = _make_event(bar_index=5, bias=Bias.BULLISH)
+        event_with_ob = event.model_copy(update={"ob": ob_untested})
+        si = _make_structure_info(events=[event_with_ob])
+
         existing = TradingSignal(
-            id="sig1",
-            ob=ob_untested,
-            event=event,
-            direction=Bias.BULLISH,
-            entry_price=80.0,
-            stop_loss=75.0,
-            take_profit=None,
-            created_bar_time="t005",
-            status=SignalStatus.PENDING,
+            id="sig1", ob=ob_untested, event=event, direction=Bias.BULLISH,
+            entry_price=80.0, stop_loss=75.0, take_profit=None,
+            created_bar_time="t005", status=SignalStatus.PENDING,
         )
         prev_state = TradingSignalState(
-            signals=[existing],
-            last_swing_event_time="t005",
-            last_internal_event_time="",
+            signals=[existing], last_swing_event_time="t005", last_internal_event_time="",
         )
-
-        result = self._make_smc_result(swing_event=event, swing_obs=[ob_untested])
-        new_state = compute_signals(result, prev_state, "t006", 105.0, 95.0)
+        new_state = compute_signals(si, prev_state, "t006", 105.0, 95.0, atr=10.0)
 
         assert any(s.id == "sig1" for s in new_state.signals)
         preserved = [s for s in new_state.signals if s.id == "sig1"][0]
@@ -295,40 +264,32 @@ class TestComputeSignals:
     def test_no_take_profit_when_rr_below_min(self) -> None:
         event = _make_event(bar_index=10, bias=Bias.BULLISH)
         ob = _make_ob(bias=Bias.BULLISH, formed_index=5)
-        result = self._make_smc_result(
-            swing_event=event, swing_obs=[ob], current_atr=100.0,
-        )
+        event_with_ob = event.model_copy(update={"ob": ob})
+        si = _make_structure_info(events=[event_with_ob])
 
         prev_state = TradingSignalState(
             signals=[], last_swing_event_time="t005", last_internal_event_time="",
         )
-        new_state = compute_signals(result, prev_state, "t010", 105.0, 95.0)
+        new_state = compute_signals(si, prev_state, "t010", 105.0, 95.0, atr=100.0)
 
         assert len(new_state.signals) == 1
         assert new_state.signals[0].take_profit is None
 
     def test_short_signal_fills_on_high_reaching_entry(self) -> None:
-        event = _make_event(bar_index=5, bias=Bias.BEARISH)
         ob_untested = _make_ob(bias=Bias.BEARISH, formed_index=3, status=OBStatus.UNTESTED)
+        event = _make_event(bar_index=5, bias=Bias.BEARISH)
+        event_with_ob = event.model_copy(update={"ob": ob_untested})
+        si = _make_structure_info(events=[event_with_ob])
+
         existing = TradingSignal(
-            id="sig1",
-            ob=ob_untested,
-            event=event,
-            direction=Bias.BEARISH,
-            entry_price=104.0,
-            stop_loss=109.0,
-            take_profit=None,
-            created_bar_time="t005",
-            status=SignalStatus.PENDING,
+            id="sig1", ob=ob_untested, event=event, direction=Bias.BEARISH,
+            entry_price=104.0, stop_loss=109.0, take_profit=None,
+            created_bar_time="t005", status=SignalStatus.PENDING,
         )
         prev_state = TradingSignalState(
-            signals=[existing],
-            last_swing_event_time="t005",
-            last_internal_event_time="",
+            signals=[existing], last_swing_event_time="t005", last_internal_event_time="",
         )
-
-        result = self._make_smc_result(swing_event=event, swing_obs=[ob_untested])
-        new_state = compute_signals(result, prev_state, "t006", 105.0, 95.0)
+        new_state = compute_signals(si, prev_state, "t006", 105.0, 95.0, atr=10.0)
 
         filled = [s for s in new_state.signals if s.id == "sig1"]
         assert len(filled) == 1

@@ -2,7 +2,6 @@ from pydantic import BaseModel, ConfigDict
 from enum import Enum, auto
 
 from model import Symbol
-from strategies.smc.models.config import SMCConfig
 from strategies.smc.models.types import OrderBlock, StructureBreak, Bias
 
 
@@ -31,8 +30,14 @@ class SMCStrategyConfig(BaseModel):
     symbol: Symbol
     timeframe: str
     quantity: float
-    smc_config: SMCConfig = SMCConfig()
-
+    swing_length: int = 10
+    equal_length: int = 3
+    equal_threshold: float = 0.1
+    ob_filter: str = "atr"
+    fvg_min_width_atr: float = 0.1
+    atr_period: int = 200
+    account_balance: float = 100.0
+    risk_per_trade_pct: float = 1.0
 
 class TradingSignalState(BaseModel):
     model_config = ConfigDict(frozen=True)

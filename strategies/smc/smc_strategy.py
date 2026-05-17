@@ -1,11 +1,13 @@
+import pandas as pd
 from client.ex_client import ExClient
 from strategies import SimpleStrategy
 from strategies.registry import register_strategy
-from strategies.smc.engine import SMCEngine
 from strategies.smc.models.signal_types import SMCStrategyConfig, TradingSignalState, SignalStatus
+from strategies.smc.models.types import Bias
 from strategies.smc.signal import compute_signals
 from dataclasses import dataclass
-
+from strategies.smc.core.structure import structure_info, get_structure_bias
+from strategies.smc.indicators.atr import compute_atr
 from model import OrderSide, PositionSide, Symbol
 import log
 
@@ -29,7 +31,6 @@ class SMCSignalStrategy(SimpleStrategy):
         super().__init__(symbol=config.symbol, timeframe=config.timeframe)
         self.config = config
         self.ex_client = ex_client
-        self._smc_engine = SMCEngine(self.config.smc_config)
         self._signal_state = TradingSignalState(
             signals=[],
             last_swing_event_time="",
@@ -38,23 +39,34 @@ class SMCSignalStrategy(SimpleStrategy):
         self._signal_orders: dict[str, str] = {}
         self._active_trades: dict[str, _TradeInfo] = {}
 
+        self._large_bias = self.large_bias()
+
+    def large_bias(self):
+        large_klines = self.ex_client.fetch_ohlcv(self.config.symbol, '1d', limit=1000)
+        large_timeframe_df = pd.DataFrame([k.to_dict() for k in large_klines])
+        large_structure_info = structure_info(large_timeframe_df, self.config.swing_length)
+        return get_structure_bias(large_structure_info)
+
     def _on_kline_finished(self) -> None:
         df = self.klines_df
         if len(df) < 50:
             return
 
-        result = self._smc_engine.analyze(df)
+        si = structure_info(df, self.config.swing_length)
+        atr_value = float(compute_atr(df, self.config.atr_period).iloc[-1])
 
         current_bar_time = str(df["datetime"].iloc[-1])
         current_high = float(df["high"].iloc[-1])
         current_low = float(df["low"].iloc[-1])
 
         new_state = compute_signals(
-            result=result,
+            structure_info=si,
             prev_state=self._signal_state,
             current_bar_time=current_bar_time,
             current_high=current_high,
             current_low=current_low,
+            atr=atr_value,
+            large_bias=self._large_bias,
         )
 
         self._handle_new_signals(new_state)
@@ -63,14 +75,28 @@ class SMCSignalStrategy(SimpleStrategy):
         self._signal_state = new_state
 
         self._check_filled_orders(current_high, current_low)
+        self._close_against_trend_trades(large_bias)
+
+    def _close_against_trend_trades(self, large_bias: Bias) -> None:
+        if large_bias == Bias.NEUTRAL:
+            return
+        for signal_id, trade in list(self._active_trades.items()):
+            trade_bias = Bias.BULLISH if trade.position_side == PositionSide.LONG else Bias.BEARISH
+            if trade_bias != large_bias:
+                self._close_trade(trade)
+                del self._active_trades[signal_id]
+                logger.info(
+                    "Closed %s trade %s (opposes large structure bias %s)",
+                    trade.position_side.value, signal_id, large_bias.name,
+                )
 
     def _handle_new_signals(self, new_state: TradingSignalState) -> None:
         prev_ids = {s.id for s in self._signal_state.signals}
         for signal in new_state.signals:
             if signal.id not in prev_ids and signal.status == SignalStatus.PENDING:
                 order_id = f"smc_sig_{signal.id}"
-                side = OrderSide.BUY if signal.direction.value == 1 else OrderSide.SELL
-                pos_side = PositionSide.LONG if signal.direction.value == 1 else PositionSide.SHORT
+                side = OrderSide.BUY if signal.direction == Bias.BULLISH else OrderSide.SELL
+                pos_side = PositionSide.LONG if signal.direction == Bias.BULLISH else PositionSide.SHORT
                 try:
                     self.ex_client.place_order_v2(
                         strategy_id=self.strategy_id,
@@ -114,7 +140,7 @@ class SMCSignalStrategy(SimpleStrategy):
                 if signal:
                     self._active_trades[signal_id] = _TradeInfo(
                         order_id=order_id,
-                        position_side=PositionSide.LONG if signal.direction.value == 1 else PositionSide.SHORT,
+                        position_side=PositionSide.LONG if signal.direction == Bias.BULLISH else PositionSide.SHORT,
                         quantity=self.config.quantity,
                         entry_price=signal.entry_price,
                         stop_loss=signal.stop_loss,
@@ -157,88 +183,4 @@ class SMCSignalStrategy(SimpleStrategy):
         )
 
     def get_chart_data(self) -> dict[str, list[dict]]:
-        """实现ChartDataProvider，返回SMC覆盖层数据"""
-        df = self.klines_df
-        if len(df) < 50:
-            return {}
-
-        result = self._smc_engine.analyze(df)
-
-        from strategies.smc.core.structure import detect_structure_breaks
-        from strategies.smc.core.legs import _detect_legs, identify_pivots
-
-        structure_items = []
-
-        swing_legs = _detect_legs(df["high"], df["low"], self._smc_engine.config.swing_length)
-        swing_pivots_h, swing_pivots_l = identify_pivots(df, swing_legs, self._smc_engine.config.swing_length)
-        swing_events, _ = detect_structure_breaks(df, swing_pivots_h, swing_pivots_l)
-
-        for event in swing_events:
-            structure_items.append({
-                "type": event.event_type.name,
-                "bias": event.bias.name,
-                "price": event.price,
-                "time": event.time,
-                "source": "swing",
-            })
-
-        internal_legs = _detect_legs(df["high"], df["low"], self._smc_engine.config.internal_length)
-        internal_pivots_h, internal_pivots_l = identify_pivots(df, internal_legs, self._smc_engine.config.internal_length)
-        internal_events, _ = detect_structure_breaks(
-            df, internal_pivots_h, internal_pivots_l,
-            swing_pivots_high=swing_pivots_h,
-            swing_pivots_low=swing_pivots_l,
-            filter_confluence=self._smc_engine.config.internal_length != self._smc_engine.config.swing_length,
-        )
-
-        for event in internal_events:
-            structure_items.append({
-                "type": event.event_type.name,
-                "bias": event.bias.name,
-                "price": event.price,
-                "time": event.time,
-                "source": "internal",
-            })
-
-        ob_items = []
-        for ob in result.swing_order_blocks:
-            ob_items.append({
-                "id": ob.id,
-                "bias": ob.bias.name,
-                "high": ob.high,
-                "low": ob.low,
-                "formed_time": ob.formed_time,
-                "status": ob.status.name,
-                "source": ob.source,
-            })
-        for ob in result.internal_order_blocks:
-            ob_items.append({
-                "id": ob.id,
-                "bias": ob.bias.name,
-                "high": ob.high,
-                "low": ob.low,
-                "formed_time": ob.formed_time,
-                "status": ob.status.name,
-                "source": ob.source,
-            })
-
-        fvg_items = []
-        for fvg in result.fvgs:
-            fvg_items.append({
-                "id": fvg.id,
-                "bias": fvg.bias.name,
-                "top": fvg.top,
-                "bottom": fvg.bottom,
-                "formed_time": fvg.formed_time,
-                "status": fvg.status.name,
-            })
-
-        data: dict[str, list[dict]] = {}
-        if structure_items:
-            data["structure"] = structure_items
-        if ob_items:
-            data["order_block"] = ob_items
-        if fvg_items:
-            data["fvg"] = fvg_items
-
-        return data
+        return {}
