@@ -1,10 +1,10 @@
-from typing import List
-import log
 import os
-from data_event_loop import BinanceDataEventLoop
-from client.binance_client import BinanceSwapClient
+
 import dotenv
 
+import log
+from client.binance_client import BinanceSwapClient
+from data_event_loop import BinanceDataEventLoop
 from task.strategy_task import StrategyTask
 
 dotenv.load_dotenv()
@@ -36,15 +36,13 @@ def create_binance_client(client_type: str) -> BinanceSwapClient:
 main_binance_client: BinanceSwapClient = create_binance_client('main')
 
 def main():
-    from template import dogeusdc
+    from template import qqqusdt
 
-    tasks: list[StrategyTask] = []
+    tasks: list[StrategyTask] = [
+        qqqusdt.long_buy(main_binance_client)
+    ]
 
-    doge_task = dogeusdc.market_trend_task(main_binance_client)
-    if doge_task:
-        tasks.append(doge_task)
-
-    kline_subscribes: List[str] = []
+    kline_subscribes: list[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
 
     for task in tasks:
