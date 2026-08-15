@@ -11,8 +11,8 @@ from task.strategy_task import StrategyTask
 
 logger = log.getLogger(__name__)
 
-symbol_=Symbol(base="qqq", quote="usdt")
-timeframe_= '15m'
+symbol_=Symbol(base="xau", quote="usdt")
+timeframe_= '1m'
 today_utc = datetime.now(UTC).strftime("%Y%m%d")
 
 def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
@@ -21,7 +21,7 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         timeframe=timeframe_,
         position_side=PositionSide.LONG,
         master_side=OrderSide.BUY,
-        per_order_qty=3500,
+        per_order_qty=1,
         grid_spacing_rate=-0.1,
         max_order=3,
         enable_exit_signal=True,

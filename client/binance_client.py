@@ -23,7 +23,8 @@ class BinanceSwapClient(ExSwapClient):
                 "defaultType": "future",
             }
         ))
-        self.exchange.set_sandbox_mode(is_test)
+        if is_test:
+            self.exchange.enable_demo_trading(True)
         self.exchange.load_markets()
         self.exchange_info: Dict[str, Any] = {}
 
