@@ -1,9 +1,9 @@
 import json
-import log
 import re
-from typing import Any, Dict, List
+
+import log
 from data_event_loop import Task
-from model import Symbol, Kline
+from model import Kline, Symbol
 from strategy import MultiTimeframeStrategy
 
 logger = log.getLogger(__name__)
@@ -13,15 +13,15 @@ class StrategyTask(Task):
         super().__init__()
         self.name: str = 'StrategyTask'
         self.symbol: Symbol = symbol
-        self.timeframes: List[str] = strategy.timeframes
+        self.timeframes: list[str] = strategy.timeframes
         self.strategy: MultiTimeframeStrategy = strategy
 
     def run(self, data: str) -> None:
-        data_obj: Dict[str, Any] = json.loads(data)
+        data_obj: dict[str, any] = json.loads(data)
 
         kline_key: str = data_obj.get('stream', '')
         is_kline: bool = '@kline_' in kline_key
-        kline: Dict[str, Any] | None = data_obj.get('data', {}).get('k', None)
+        kline: dict[str, any] | None = data_obj.get('data', {}).get('k', None)
 
         if is_kline and kline:
             match = re.match(r'(\w+)(usdt|usdc|btc)@kline_(\d+\w)', kline_key)
