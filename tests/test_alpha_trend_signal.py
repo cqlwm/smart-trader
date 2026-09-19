@@ -8,8 +8,8 @@ import ccxt
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from model import OrderSide
-from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
+from smart_trader.model import OrderSide
+from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 
 
 def fetch_klines_from_ccxt(symbol: str = 'BTC/USDT', timeframe: str = '1m', limit: int = 1000) -> pd.DataFrame:
@@ -74,7 +74,7 @@ def test_alpha_trend_signal_basic():
         sell_result = sell_signal.run(current_data)
         
         # 计算alpha_trend值（需要重新计算来获取当前值）
-        from strategy.alpha_trend_signal.alpha_trend_signal import _alpha_trend_indicator
+        from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import _alpha_trend_indicator
         processed_data = _alpha_trend_indicator(current_data.copy())
         
         # 获取最新的数据
@@ -204,7 +204,7 @@ def test_alpha_trend_is_entry_is_exit():
         current_row = current_data.iloc[-1]
         
         # 计算alpha_trend值
-        from strategy.alpha_trend_signal.alpha_trend_signal import _alpha_trend_indicator
+        from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import _alpha_trend_indicator
         processed_data = _alpha_trend_indicator(current_data.copy())
         alpha_trend_value = processed_data.iloc[-1]['alpha_trend'] if pd.notna(processed_data.iloc[-1]['alpha_trend']) else None
         

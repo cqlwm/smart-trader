@@ -1,13 +1,13 @@
 from datetime import UTC, datetime
 
-import log
-from client.ex_client import ExSwapClient
-from config import DATA_PATH
-from model import OrderSide, PositionSide, Symbol
-from strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
-from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
-from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig
-from task.strategy_task import StrategyTask
+from smart_trader import log
+from smart_trader.client.ex_client import ExSwapClient
+from smart_trader.config import DATA_PATH
+from smart_trader.model import OrderSide, PositionSide, Symbol
+from smart_trader.strategy.alpha_trend_signal.alpha_trend_grids_signal import AlphaTrendGridsSignal
+from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
+from smart_trader.strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig
+from smart_trader.task.strategy_task import StrategyTask
 
 logger = log.getLogger(__name__)
 

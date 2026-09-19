@@ -6,8 +6,8 @@ import numpy as np
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from model import OrderSide
-from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal, _alpha_trend_indicator
+from smart_trader.model import OrderSide
+from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal, _alpha_trend_indicator
 
 
 def test_macd_calculation():

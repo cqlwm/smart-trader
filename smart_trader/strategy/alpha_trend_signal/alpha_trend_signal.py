@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame
 
-from model import OrderSide
-from strategy import Signal
+from smart_trader.model import OrderSide
+from smart_trader.strategy import Signal
 
 _datetime = 'datetime'
 _high = 'high'

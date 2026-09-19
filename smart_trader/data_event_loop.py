@@ -1,9 +1,9 @@
 import concurrent.futures
 import json
-from typing import Any, List
-import websocket
 import logging
 import random
+
+import websocket
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class Task:
 
 class DataEventLoop:
     def __init__(self):
-        self.tasks: List[Task] = []
+        self.tasks: list[Task] = []
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
     def add_task(self, task: Task):
@@ -37,7 +37,7 @@ class BinanceDataEventLoop(DataEventLoop):
     SET_PROPERTY_ID = 1
     SUBSCRIBE_KLINE_ID = 2
 
-    def __init__(self, kline_subscribes: List[str]):
+    def __init__(self, kline_subscribes: list[str]):
         super().__init__()
         self.kline_subscribes = kline_subscribes
 
@@ -53,7 +53,7 @@ class BinanceDataEventLoop(DataEventLoop):
         ws_session.run_forever(ping_interval=20, ping_timeout=15) # type: ignore[call-arg]
 
     def _subscribe(self, ws: websocket.WebSocket):
-        params: dict[str, Any] = {
+        params: dict[str, any] = {
             "method": "SUBSCRIBE",
             "params": self.kline_subscribes,
             "id": self.SUBSCRIBE_KLINE_ID
@@ -73,7 +73,7 @@ class BinanceDataEventLoop(DataEventLoop):
 
     def on_open(self, ws: websocket.WebSocket):
         logger.info("### BinanceDataEventLoop Opened ###")
-        params: dict[str, Any] = {
+        params: dict[str, any] = {
             "method": "SET_PROPERTY",
             "params": [
                 "combined",

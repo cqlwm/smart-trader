@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import Mock, patch
-from strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig, Order
-from model import Symbol, OrderSide, PlaceOrderBehavior
-from client.ex_client import ExSwapClient
+from smart_trader.strategy.grids_strategy_v2 import SignalGridStrategy, SignalGridStrategyConfig, Order
+from smart_trader.model import Symbol, OrderSide, PlaceOrderBehavior
+from smart_trader.client.ex_client import ExSwapClient
 
 
 def test_close_position_ratio():

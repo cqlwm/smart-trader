@@ -2,13 +2,13 @@ import os
 import secrets
 import threading
 from typing import Any, List, Callable, Dict
-from client.ex_client import ExSwapClient
-from strategy import SingleTimeframeStrategy
-from model import OrderSide, OrderStatus, PlaceOrderBehavior, PositionSide
+from smart_trader.client.ex_client import ExSwapClient
+from smart_trader.strategy import SingleTimeframeStrategy
+from smart_trader.model import OrderSide, OrderStatus, PlaceOrderBehavior, PositionSide
 import logging
 from pydantic import BaseModel, ConfigDict
-from model import Symbol
-from strategy import Signal
+from smart_trader.model import Symbol
+from smart_trader.strategy import Signal
 
 logger = logging.getLogger(__name__)
 

@@ -1,8 +1,8 @@
 import pandas as pd
 from pandas import DataFrame
 
-from strategy import Signal
-from strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
+from smart_trader.strategy import Signal
+from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 
 _close = 'close'
 _alpha_trend_cross_buy = 'alpha_trend_cross_buy'

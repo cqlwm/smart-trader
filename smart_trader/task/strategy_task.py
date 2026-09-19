@@ -1,10 +1,10 @@
 import json
 import re
 
-import log
-from data_event_loop import Task
-from model import Kline, Symbol
-from strategy import MultiTimeframeStrategy
+from smart_trader import log
+from smart_trader.data_event_loop import Task
+from smart_trader.model import Kline, Symbol
+from smart_trader.strategy import MultiTimeframeStrategy
 
 logger = log.getLogger(__name__)
 

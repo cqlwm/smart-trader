@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "ccxt>=4.3.61",
+    "ccxt>=4.5.81",
     "numpy>=2.2.3",
     "pandas>=2.2.2",
     "pydantic>=2.8.2",
@@ -18,8 +18,31 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "black>=25.1.0",
-    "flake8>=7.3.0",
-    "mypy>=1.17.1",
-    "pytest>=8.4.1",
+    
+    "pyright>=1.1.414",
+    "ruff>=0.16.7",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pandas-stubs>=3.0.5.260730",
+]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+ignore = ["**/type_wrapper/*_wrapper.py"]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+
+[tool.setuptools]
+packages = ["smart_trader"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "integration: 标记需要外部服务的集成测试（网络、API、数据库等）",
 ]

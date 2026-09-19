@@ -1,13 +1,13 @@
 import secrets
-from client.ex_client import ExSwapClient
+from smart_trader.client.ex_client import ExSwapClient
 
 import asyncio
 import websockets
 import json
 import ssl
-from model import OrderStatus, PlaceOrderBehavior, Symbol
-from model import OrderSide
-import log
+from smart_trader.model import OrderStatus, PlaceOrderBehavior, Symbol
+from smart_trader.model import OrderSide
+from smart_trader import log
 
 logger = log.getLogger(__name__)
 

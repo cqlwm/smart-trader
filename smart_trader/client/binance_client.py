@@ -1,13 +1,13 @@
 import ccxt
 from typing import Any, Dict, List, Optional
 
-from client.binance_chaser_order import LimitOrderChaser
-from client.ex_client import ExSwapClient
+from smart_trader.client.binance_chaser_order import LimitOrderChaser
+from smart_trader.client.ex_client import ExSwapClient
 
 import requests
-from model import PositionSide, Symbol, PlaceOrderBehavior, SymbolInfo
-from model import OrderSide
-import log
+from smart_trader.model import PositionSide, Symbol, PlaceOrderBehavior, SymbolInfo
+from smart_trader.model import OrderSide
+from smart_trader import log
 from ccxt.base.types import ConstructorArgs
 
 logger = log.getLogger('BinanceSwapClient')

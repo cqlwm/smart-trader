@@ -1,9 +1,9 @@
-from client.binance_chaser_order import LimitOrderChaser
+from smart_trader.client.binance_chaser_order import LimitOrderChaser
 import dotenv
 import os
-from client.binance_client import BinanceSwapClient
-import log
-from model import OrderSide, PlaceOrderBehavior, Symbol
+from smart_trader.client.binance_client import BinanceSwapClient
+from smart_trader import log
+from smart_trader.model import OrderSide, PlaceOrderBehavior, Symbol
 
 dotenv.load_dotenv()
 

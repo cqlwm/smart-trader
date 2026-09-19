@@ -1,6 +1,8 @@
 import os
+
 import dotenv
-import log
+
+from smart_trader import log
 
 dotenv.load_dotenv()
 
@@ -10,7 +12,7 @@ PROJECT_PATH = os.environ.get('PROJECT_PATH')
 if not PROJECT_PATH:
     raise ValueError('PROJECT_PATH must be set')
 
-DATA_PATH = f'{PROJECT_PATH}/data'
+DATA_PATH = f'{PROJECT_PATH}/.data'
 
 os.makedirs(DATA_PATH, exist_ok=True)
 

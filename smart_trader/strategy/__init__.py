@@ -5,9 +5,9 @@ import pandas as pd
 from pandas import DataFrame
 from typing import List, Dict, Optional
 
-from client.ex_client import ExClient
-from model import Kline, OrderSide
-import log
+from smart_trader.client.ex_client import ExClient
+from smart_trader.model import Kline, OrderSide
+from smart_trader import log
 from pydantic import BaseModel
 
 logger = log.getLogger(__name__)

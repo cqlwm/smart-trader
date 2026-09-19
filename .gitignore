@@ -10,6 +10,10 @@ data.parquet
 *.log
 backtest_report*.txt
 
+.venv
+.pytest_cache
 .claude
 .github
 .data
+
+smart_trader.egg-info

@@ -2,10 +2,10 @@ import time
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 
-from model import Symbol, SymbolInfo, Kline
+from smart_trader.model import Symbol, SymbolInfo, Kline
 from ccxt.base.exchange import Exchange
 
-from model import OrderSide
+from smart_trader.model import OrderSide
 
 
 

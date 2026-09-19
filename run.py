@@ -2,10 +2,10 @@ import os
 
 import dotenv
 
-import log
-from client.binance_client import BinanceSwapClient
-from data_event_loop import BinanceDataEventLoop
-from task.strategy_task import StrategyTask
+from smart_trader import log
+from smart_trader.client.binance_client import BinanceSwapClient
+from smart_trader.data_event_loop import BinanceDataEventLoop
+from smart_trader.task.strategy_task import StrategyTask
 
 dotenv.load_dotenv()
 
