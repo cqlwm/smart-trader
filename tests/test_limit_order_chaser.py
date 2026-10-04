@@ -1,36 +1,36 @@
-from smart_trader.client.binance_chaser_order import LimitOrderChaser
-import dotenv
 import os
-from smart_trader.client.binance_client import BinanceSwapClient
-from smart_trader import log
-from smart_trader.model import OrderSide, PlaceOrderBehavior, Symbol
 
-dotenv.load_dotenv()
+import pytest
+
+from smart_trader import log
+from smart_trader.client.binance_chaser_order import LimitOrderChaser
+from smart_trader.client.binance_client import BinanceSwapClient
+from smart_trader.model import OrderSide, PlaceOrderBehavior, Symbol
 
 logger = log.getLogger(__name__)
 
-api_key = os.environ.get('BINANCE_API_KEY')
-api_secret = os.environ.get('BINANCE_API_SECRET')
-is_test = os.environ.get('BINANCE_IS_TEST') == 'True'
-if not api_key or not api_secret:
-    raise ValueError('BINANCE_API_KEY and BINANCE_API_SECRET must be set')
-else:
-    logger.info(f'api_key: {api_key[:5]}*****, api_secret: {api_secret[:5]}*****, is_test: {is_test}')
 
-binance_client = BinanceSwapClient(api_key=api_key, api_secret=api_secret, is_test=is_test)
-
+@pytest.mark.integration
 def test_limit_order_chaser():
+    """集成测试：对 Binance 测试网执行一次追单"""
+    api_key = os.environ.get("BINANCE_API_KEY_MAIN")
+    api_secret = os.environ.get("BINANCE_API_SECRET_MAIN")
+    is_test = os.environ.get("BINANCE_IS_TEST_MAIN") == "True"
+    if not api_key or not api_secret:
+        pytest.skip("BINANCE_API_KEY_MAIN / BINANCE_API_SECRET_MAIN 未设置")
+    logger.info(
+        f"api_key: {api_key[:5]}*****, api_secret: {api_secret[:5]}*****, is_test: {is_test}"
+    )
+
+    binance_client = BinanceSwapClient(
+        api_key=api_key, api_secret=api_secret, is_test=is_test
+    )
     chaser = LimitOrderChaser(
         client=binance_client,
-        symbol=Symbol(base='DOGE', quote='USDT'),
+        symbol=Symbol(base="DOGE", quote="USDT"),
         side=OrderSide.BUY,
         quantity=102,
-        tick_size=0.0001,
-        position_side='Long',
+        position_side="Long",
         place_order_behavior=PlaceOrderBehavior.CHASER_OPEN,
     )
     chaser.run()
-
-
-if __name__ == '__main__':
-    test_limit_order_chaser()

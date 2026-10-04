@@ -1,8 +1,10 @@
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-import sys
 import os
+import sys
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import numpy as np
+import pandas as pd
 
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -13,13 +15,13 @@ from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTre
 
 def create_mock_klines(num_points: int = 100) -> pd.DataFrame:
     """创建模拟K线数据用于测试"""
-    base_time = datetime.now()
-    data = []
+    base_time = datetime.now(tz=UTC)
+    data: list[dict[str, Any]] = []
 
     # 生成模拟价格数据
     np.random.seed(42)  # 固定随机种子以获得一致的结果
     base_price = 50000.0
-    prices = []
+    prices: list[float] = []
     for i in range(num_points):
         # 随机游走价格
         change = np.random.normal(0, 100)  # 正态分布随机变动
@@ -28,25 +30,27 @@ def create_mock_klines(num_points: int = 100) -> pd.DataFrame:
         prices.append(base_price)
 
     for i in range(num_points):
-        dt = base_time + timedelta(minutes=i*5)  # 5分钟间隔
+        dt = base_time + timedelta(minutes=i * 5)  # 5分钟间隔
         price = prices[i]
 
         # 生成OHLCV数据
         high = price + abs(np.random.normal(0, 50))
         low = price - abs(np.random.normal(0, 50))
-        open_price = prices[i-1] if i > 0 else price
+        open_price = prices[i - 1] if i > 0 else price
         close = price
         volume = np.random.uniform(100, 1000)
 
-        data.append({
-            'datetime': dt.strftime('%Y-%m-%d %H:%M:%S'),
-            'open': open_price,
-            'high': high,
-            'low': low,
-            'close': close,
-            'volume': volume,
-            'finished': True
-        })
+        data.append(
+            {
+                "datetime": dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "open": open_price,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+                "finished": True,
+            }
+        )
 
     return pd.DataFrame(data)
 
@@ -77,7 +81,7 @@ def test_alpha_trend_signal_initialization():
         reverse=True,
         macd_fast_period=8,
         macd_slow_period=21,
-        macd_signal_period=5
+        macd_signal_period=5,
     )
     assert custom_signal.atr_multiple == 2.0
     assert custom_signal.period == 14
@@ -99,11 +103,11 @@ def test_alpha_trend_signal_run():
     sell_signal = AlphaTrendSignal(OrderSide.SELL)
 
     # 测试多次运行
-    results_buy = []
-    results_sell = []
+    results_buy: list[int] = []
+    results_sell: list[int] = []
 
     for i in range(30, len(klines)):  # 从更多数据开始
-        current_data = klines.iloc[:i+1].copy()
+        current_data = klines.iloc[: i + 1].copy()
         buy_result = buy_signal.run(current_data)
         sell_result = sell_signal.run(current_data)
 
@@ -121,7 +125,9 @@ def test_alpha_trend_signal_run():
     sell_signals_count = sum(1 for r in results_sell if r != 0)
 
     # 放松断言条件，至少验证方法能正常运行并返回有效值
-    print(f"✅ run方法测试通过，共测试{len(results_buy)}次调用，产生了{buy_signals_count}个买入信号，{sell_signals_count}个卖出信号")
+    print(
+        f"✅ run方法测试通过，共测试{len(results_buy)}次调用，产生了{buy_signals_count}个买入信号，{sell_signals_count}个卖出信号"
+    )
 
 
 def test_alpha_trend_signal_is_entry_exit():
@@ -135,7 +141,7 @@ def test_alpha_trend_signal_is_entry_exit():
 
     # 测试entry/exit逻辑
     for i in range(20, len(klines)):
-        current_data = klines.iloc[:i+1].copy()
+        current_data = klines.iloc[: i + 1].copy()
 
         # 测试买入信号的entry/exit
         buy_is_entry = buy_signal.is_entry(current_data)
@@ -175,18 +181,11 @@ def test_alpha_trend_signal_golden_dead_cross():
     dead_cross_count = 0
 
     for i in range(30, len(klines)):
-        current_data = klines.iloc[:i+1].copy()
+        current_data = klines.iloc[: i + 1].copy()
         signal.run(current_data)
 
         golden = signal.golden_cross()
         dead = signal.dead_cross()
-
-        # 调试输出
-        if not isinstance(golden, bool):
-            print(f"DEBUG: golden_cross返回了非布尔值: {golden}, 类型: {type(golden)}")
-            print(f"  previous_macd: {signal.previous_macd}, previous_macd_signal: {signal.previous_macd_signal}")
-            print(f"  current_macd: {signal.current_macd}, current_macd_signal: {signal.current_macd_signal}")
-            break
 
         if golden:
             golden_cross_count += 1
@@ -200,7 +199,9 @@ def test_alpha_trend_signal_golden_dead_cross():
         # 金叉和死叉不应该同时发生
         assert not (golden and dead), "金叉和死叉不应该同时发生"
 
-    print(f"✅ golden_cross/dead_cross方法测试通过，发现{golden_cross_count}个金叉，{dead_cross_count}个死叉")
+    print(
+        f"✅ golden_cross/dead_cross方法测试通过，发现{golden_cross_count}个金叉，{dead_cross_count}个死叉"
+    )
 
 
 def test_alpha_trend_signal_reverse():
@@ -213,11 +214,11 @@ def test_alpha_trend_signal_reverse():
     reverse_signal = AlphaTrendSignal(OrderSide.BUY, reverse=True)
 
     # 比较正常和反转信号的结果
-    normal_results = []
-    reverse_results = []
+    normal_results: list[int] = []
+    reverse_results: list[int] = []
 
     for i in range(20, len(klines)):
-        current_data = klines.iloc[:i+1].copy()
+        current_data = klines.iloc[: i + 1].copy()
 
         normal_result = normal_signal.run(current_data)
         reverse_result = reverse_signal.run(current_data)
@@ -227,7 +228,9 @@ def test_alpha_trend_signal_reverse():
 
         # 反转信号应该与正常信号相反（除了0值）
         if normal_result != 0:
-            assert reverse_result == -normal_result, f"反转信号应该与正常信号相反: {normal_result} vs {reverse_result}"
+            assert reverse_result == -normal_result, (
+                f"反转信号应该与正常信号相反: {normal_result} vs {reverse_result}"
+            )
 
     print("✅ reverse参数测试通过")
 
@@ -238,7 +241,9 @@ def test_alpha_trend_signal_edge_cases():
 
     # 测试空数据
     buy_signal = AlphaTrendSignal(OrderSide.BUY)
-    empty_df = pd.DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume', 'finished'])
+    empty_df = pd.DataFrame(
+        columns=["datetime", "open", "high", "low", "close", "volume", "finished"]
+    )
 
     try:
         result = buy_signal.run(empty_df)
@@ -247,7 +252,7 @@ def test_alpha_trend_signal_edge_cases():
     except IndexError as e:
         # IndexError是合理的，因为空DataFrame无法访问.iloc[-1]
         assert "single positional indexer is out-of-bounds" in str(e)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         # 如果抛出其他异常，应该是有意义的异常
         assert "empty" in str(e).lower() or "insufficient" in str(e).lower()
 
@@ -273,8 +278,9 @@ if __name__ == "__main__":
 
         print("\n🎉 所有单元测试通过！AlphaTrendSignal的各个方法工作正常。")
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"\n❌ 测试失败: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

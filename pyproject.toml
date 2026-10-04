@@ -30,7 +30,13 @@ dev = [
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
+reportMissingTypeStubs = false
 ignore = ["**/type_wrapper/*_wrapper.py"]
+
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["."]
+reportPrivateUsage = false
 
 [build-system]
 requires = ["setuptools>=75.0"]
@@ -43,6 +49,7 @@ packages = ["smart_trader"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+addopts = ["-m", "not integration"]
 markers = [
     "integration: 标记需要外部服务的集成测试（网络、API、数据库等）",
 ]

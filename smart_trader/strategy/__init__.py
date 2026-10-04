@@ -1,54 +1,61 @@
-from abc import ABC, abstractmethod
 import threading
+from abc import ABC, abstractmethod
 
 import pandas as pd
 from pandas import DataFrame
-from typing import List, Dict, Optional
-
-from smart_trader.client.ex_client import ExClient
-from smart_trader.model import Kline, OrderSide
-from smart_trader import log
 from pydantic import BaseModel
 
+from smart_trader import log
+from smart_trader.client.ex_client import ExClient
+from smart_trader.model import Kline, OrderSide
+
 logger = log.getLogger(__name__)
+
 
 class Strategy(ABC):
     def on_kline(self, timeframe: str):
         pass
+
     def on_kline_finished(self, timeframe: str):
         pass
+
     @abstractmethod
     def run(self, kline: Kline):
         pass
+
 
 class KlineData(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     timeframe: str
     klines: DataFrame
-    latest_kline: Optional[Kline]
+    latest_kline: Kline | None
+
 
 class MultiTimeframeStrategy(Strategy):
-    def __init__(self, timeframes: List[str]):
-        self.ex_client: ExClient
-        self.timeframes: List[str] = timeframes
-        self.kline_data_dict: Dict[str, KlineData] = {}
+    def __init__(self, timeframes: list[str]):
+        self.timeframes: list[str] = timeframes
+        self.kline_data_dict: dict[str, KlineData] = {}
         self.init_kline_nums = 300
         self.on_kline_finished_lock = threading.Lock()
         self.on_kline_lock = threading.Lock()
         self.data_lock = threading.Lock()
 
         for timeframe in timeframes:
-            empty_df = DataFrame({
-                'datetime': pd.Series(dtype='str'),
-                'open': pd.Series(dtype='float64'),
-                'high': pd.Series(dtype='float64'),
-                'low': pd.Series(dtype='float64'),
-                'close': pd.Series(dtype='float64'),
-                'volume': pd.Series(dtype='float64'),
-                'finished': pd.Series(dtype='boolean')
-            })
-            self.kline_data_dict[timeframe] = KlineData(timeframe=timeframe, klines=empty_df, latest_kline=None)
+            empty_df = DataFrame(
+                {
+                    "datetime": pd.Series(dtype="str"),
+                    "open": pd.Series(dtype="float64"),
+                    "high": pd.Series(dtype="float64"),
+                    "low": pd.Series(dtype="float64"),
+                    "close": pd.Series(dtype="float64"),
+                    "volume": pd.Series(dtype="float64"),
+                    "finished": pd.Series(dtype="boolean"),
+                }
+            )
+            self.kline_data_dict[timeframe] = KlineData(
+                timeframe=timeframe, klines=empty_df, latest_kline=None
+            )
 
     def exchange_client(self) -> ExClient:
         raise NotImplementedError()
@@ -59,7 +66,7 @@ class MultiTimeframeStrategy(Strategy):
             raise ValueError(f"Timeframe {timeframe} not found")
         return self.kline_data_dict[timeframe].klines
 
-    def latest_kline(self, timeframe: str) -> Optional[Kline]:
+    def latest_kline(self, timeframe: str) -> Kline | None:
         """获取指定时间框架的最新K线"""
         if timeframe not in self.kline_data_dict:
             raise ValueError(f"Timeframe {timeframe} not found")
@@ -67,17 +74,17 @@ class MultiTimeframeStrategy(Strategy):
 
     def on_kline(self, timeframe: str):
         """处理K线更新事件（多时间框架版本）"""
-        pass
 
     def on_kline_finished(self, timeframe: str):
         """处理K线完成事件（多时间框架版本）"""
-        pass
 
     def _initialize_klines_if_needed(self, kline: Kline):
         """Initialize klines with historical data if the DataFrame is empty"""
         timeframe = kline.timeframe
         if len(self.kline_data_dict[timeframe].klines) == 0:
-            ohlcv = self.exchange_client().fetch_ohlcv(kline.symbol, timeframe, self.init_kline_nums)
+            ohlcv = self.exchange_client().fetch_ohlcv(
+                kline.symbol, timeframe, self.init_kline_nums
+            )
             df = DataFrame([row.to_dict() for row in ohlcv])
             self.kline_data_dict[timeframe].klines = df
 
@@ -90,7 +97,7 @@ class MultiTimeframeStrategy(Strategy):
         df = self.kline_data_dict[timeframe].klines
 
         # 检查是否需要更新最后一个kline或添加新的kline
-        if len(df) > 0 and df['datetime'].iloc[-1] == kline.datetime:
+        if len(df) > 0 and df["datetime"].iloc[-1] == kline.datetime:
             # Update last row
             df.loc[df.index[-1]] = kline_dict
         else:
@@ -135,6 +142,7 @@ class MultiTimeframeStrategy(Strategy):
         if kline.finished:
             self._call_on_kline_finished(timeframe)
 
+
 class SingleTimeframeStrategy(MultiTimeframeStrategy):
     def __init__(self, timeframe: str):
         super().__init__([timeframe])
@@ -150,13 +158,13 @@ class SingleTimeframeStrategy(MultiTimeframeStrategy):
         return self.klines(self.timeframe)
 
     @property
-    def latest_kline_obj(self) -> Optional[Kline]:
+    def latest_kline_obj(self) -> Kline | None:
         """Get the latest Kline for the single timeframe"""
         return self.latest_kline(self.timeframe)
-    
+
     def _on_kline(self):
         pass
-    
+
     def _on_kline_finished(self):
         pass
 
@@ -165,8 +173,6 @@ class SingleTimeframeStrategy(MultiTimeframeStrategy):
 
     def on_kline_finished(self, timeframe: str):
         self._on_kline_finished()
-
-
 
 
 class Signal:

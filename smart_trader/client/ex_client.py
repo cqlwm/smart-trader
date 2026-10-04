@@ -1,17 +1,13 @@
 import time
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import Any
 
-from smart_trader.model import Symbol, SymbolInfo, Kline
-from ccxt.base.exchange import Exchange
-
-from smart_trader.model import OrderSide
-
+from smart_trader.model import Kline, OrderSide, Symbol, SymbolInfo
 
 
 class ExClient(ABC):
     exchange_name: str
-    exchange: Exchange
+    exchange: Any
 
     def symbol_info(self, symbol: Symbol) -> SymbolInfo:
         raise NotImplementedError()
@@ -21,27 +17,36 @@ class ExClient(ABC):
         pass
 
     @abstractmethod
-    def cancel(self, custom_id: str, symbol: Symbol) -> Dict[str, Any]:
+    def cancel(self, custom_id: str, symbol: Symbol) -> dict[str, Any]:
         pass
 
     @abstractmethod
-    def query_order(self, custom_id: str, symbol: Symbol) -> Dict[str, Any]:
+    def query_order(self, custom_id: str, symbol: Symbol) -> dict[str, Any] | None:
         pass
 
-    def place_order_v2(self, custom_id: str, symbol: Symbol, order_side: OrderSide, quantity: float, price: Optional[float] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def place_order_v2(
+        self,
+        custom_id: str,
+        symbol: Symbol,
+        order_side: OrderSide,
+        quantity: float,
+        price: float | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
         """
         kwargs:
             position_side
             time_in_force
         """
-        pass
 
-    def fetch_ohlcv(self, symbol: Symbol, timeframe: str, limit: int = 100) -> list[Kline]:
+    def fetch_ohlcv(
+        self, symbol: Symbol, timeframe: str, limit: int = 100
+    ) -> list[Kline]:
         if limit < 1:
             return []
 
         list_ohlcv = self.exchange.fetch_ohlcv(symbol.ccxt(), timeframe, limit=limit)
-        klines: list[Kline]= []
+        klines: list[Kline] = []
         for ohlcv in list_ohlcv:
             klines.append(
                 Kline(
@@ -53,29 +58,40 @@ class ExClient(ABC):
                     low=ohlcv[3],
                     close=ohlcv[4],
                     volume=ohlcv[5],
-                    finished=True
+                    finished=True,
                 )
             )
 
         # 比较单位是秒
         if klines:
             timeframe_ms = self.exchange.parse_timeframe(timeframe)
-            klines[-1].finished = klines[-1].timestamp + timeframe_ms * 1000 <= int(time.time() * 1000)
+            klines[-1].finished = klines[-1].timestamp + timeframe_ms * 1000 <= int(
+                time.time() * 1000
+            )
 
         return klines
 
-class ExSwapClient(ExClient):
 
+class ExSwapClient(ExClient):
     @abstractmethod
-    def close_position(self, symbol: str, position_side: str, auto_cancel: bool = True) -> None:
+    def close_position(
+        self, symbol: str, position_side: str, auto_cancel: bool = True
+    ) -> None:
         pass
 
     @abstractmethod
-    def positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+    def positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
         pass
 
 
 class ExSpotClient(ExClient):
     @abstractmethod
-    def place_order(self, custom_id, symbol, order_side, quantity, price=None):
+    def place_order(
+        self,
+        custom_id: str,
+        symbol: Symbol,
+        order_side: OrderSide,
+        quantity: float,
+        price: float | None = None,
+    ) -> dict[str, Any] | None:
         pass

@@ -1,16 +1,16 @@
-import pandas as pd
 from pandas import DataFrame
 
 from smart_trader.strategy import Signal
 from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 
-_close = 'close'
-_alpha_trend_cross_buy = 'alpha_trend_cross_buy'
-_alpha_trend_cross_sell = 'alpha_trend_cross_sell'
-_alpha_trend = 'alpha_trend'
+_close = "close"
+_alpha_trend_cross_buy = "alpha_trend_cross_buy"
+_alpha_trend_cross_sell = "alpha_trend_cross_sell"
+_alpha_trend = "alpha_trend"
 
 _long_trend = 1
 _short_trend = -1
+
 
 class AlphaTrendGridsSignal(Signal):
     """
@@ -29,10 +29,8 @@ class AlphaTrendGridsSignal(Signal):
         self.ats.run(klines)
         return 0
 
-    def is_entry(self, df) -> bool:
+    def is_entry(self, df: DataFrame) -> bool:
         return self.ats.is_entry(df) or self.ats.is_exit(df)
 
-    def is_exit(self, df) -> bool:
+    def is_exit(self, df: DataFrame) -> bool:
         return self.ats.is_entry(df) or self.ats.is_exit(df)
-
-
