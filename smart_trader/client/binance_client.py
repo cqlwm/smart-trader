@@ -28,6 +28,8 @@ class BinanceSwapClient(ExSwapClient):
                 secret=api_secret,
                 options={
                     "defaultType": "future",
+                    # ccxt 默认关闭该校正, 本机时钟略快时签名时间戳会超出币安 1s 限制(-1021)
+                    "adjustForTimeDifference": True,
                 },
             )
         )
