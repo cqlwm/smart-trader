@@ -65,9 +65,6 @@ def test_alpha_trend_signal_initialization():
     assert buy_signal.atr_multiple == 1.0
     assert buy_signal.period == 8
     assert buy_signal.reverse == False
-    assert buy_signal.macd_fast_period == 12
-    assert buy_signal.macd_slow_period == 26
-    assert buy_signal.macd_signal_period == 9
 
     # 测试卖出信号初始化
     sell_signal = AlphaTrendSignal(OrderSide.SELL)
@@ -79,16 +76,10 @@ def test_alpha_trend_signal_initialization():
         atr_multiple=2.0,
         period=14,
         reverse=True,
-        macd_fast_period=8,
-        macd_slow_period=21,
-        macd_signal_period=5,
     )
     assert custom_signal.atr_multiple == 2.0
     assert custom_signal.period == 14
     assert custom_signal.reverse == True
-    assert custom_signal.macd_fast_period == 8
-    assert custom_signal.macd_slow_period == 21
-    assert custom_signal.macd_signal_period == 5
 
     print("✅ 初始化测试通过")
 
@@ -168,42 +159,6 @@ def test_alpha_trend_signal_is_entry_exit():
     print("✅ is_entry/is_exit方法测试通过")
 
 
-def test_alpha_trend_signal_golden_dead_cross():
-    """测试golden_cross和dead_cross方法"""
-    print("测试golden_cross和dead_cross方法...")
-
-    klines = create_mock_klines(100)
-
-    signal = AlphaTrendSignal(OrderSide.BUY)
-
-    # 运行信号生成MACD数据
-    golden_cross_count = 0
-    dead_cross_count = 0
-
-    for i in range(30, len(klines)):
-        current_data = klines.iloc[: i + 1].copy()
-        signal.run(current_data)
-
-        golden = signal.golden_cross()
-        dead = signal.dead_cross()
-
-        if golden:
-            golden_cross_count += 1
-        if dead:
-            dead_cross_count += 1
-
-        # 验证返回值类型
-        assert isinstance(golden, bool)
-        assert isinstance(dead, bool)
-
-        # 金叉和死叉不应该同时发生
-        assert not (golden and dead), "金叉和死叉不应该同时发生"
-
-    print(
-        f"✅ golden_cross/dead_cross方法测试通过，发现{golden_cross_count}个金叉，{dead_cross_count}个死叉"
-    )
-
-
 def test_alpha_trend_signal_reverse():
     """测试reverse参数"""
     print("测试reverse参数...")
@@ -272,7 +227,6 @@ if __name__ == "__main__":
         test_alpha_trend_signal_initialization()
         test_alpha_trend_signal_run()
         test_alpha_trend_signal_is_entry_exit()
-        test_alpha_trend_signal_golden_dead_cross()
         test_alpha_trend_signal_reverse()
         test_alpha_trend_signal_edge_cases()
 
