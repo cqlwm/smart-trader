@@ -3,7 +3,6 @@ import os
 import pytest
 
 from smart_trader import log
-from smart_trader.client.binance_chaser_order import LimitOrderChaser
 from smart_trader.client.binance_client import BinanceSwapClient
 from smart_trader.model import OrderSide, PlaceOrderBehavior, Symbol
 
@@ -25,10 +24,9 @@ def test_limit_order_chaser():
     binance_client = BinanceSwapClient(
         api_key=api_key, api_secret=api_secret, is_test=is_test
     )
-    chaser = LimitOrderChaser(
-        client=binance_client,
+    chaser = binance_client.create_chaser(
         symbol=Symbol(base="DOGE", quote="USDT"),
-        side=OrderSide.BUY,
+        order_side=OrderSide.BUY,
         quantity=102,
         position_side="Long",
         place_order_behavior=PlaceOrderBehavior.CHASER_OPEN,

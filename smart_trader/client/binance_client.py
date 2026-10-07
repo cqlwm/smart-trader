@@ -5,7 +5,7 @@ import requests
 from ccxt.base.types import ConstructorArgs
 
 from smart_trader import log
-from smart_trader.client.binance_chaser_order import LimitOrderChaser
+from smart_trader.client.binance_chaser_order_v2 import LimitOrderChaserV2
 from smart_trader.client.ex_client import ExSwapClient
 from smart_trader.model import (
     OrderSide,
@@ -83,6 +83,10 @@ class BinanceSwapClient(ExSwapClient):
             max_qty=max_qty,
         )
 
+    def latest_price(self, symbol: Symbol) -> float:
+        ticker = self.exchange.fetch_ticker(symbol.ccxt())  # type: ignore
+        return float(ticker["last"])
+
     def create_chaser(
         self,
         symbol: Symbol,
@@ -90,9 +94,10 @@ class BinanceSwapClient(ExSwapClient):
         quantity: float,
         position_side: str,
         place_order_behavior: PlaceOrderBehavior,
-    ) -> LimitOrderChaser:
-        return LimitOrderChaser(
+    ) -> LimitOrderChaserV2:
+        return LimitOrderChaserV2(
             client=self,
+            price_provider=self,
             symbol=symbol,
             side=order_side,
             quantity=quantity,
@@ -161,11 +166,10 @@ class BinanceSwapClient(ExSwapClient):
             )
             order_chaser.first_price = kwargs.pop("first_price", None)
 
-            ok: bool = order_chaser.run()
-            if ok:
-                return order_chaser.order
-            else:
-                logger.error(f"追单失败, 执行常规订单, price: {price}")
+            if order_chaser.run() and order_chaser.custom_id:
+                return self.query_order(order_chaser.custom_id, symbol)
+
+            logger.error(f"追单失败, 执行常规订单, price: {price}")
 
         params: dict[str, Any] = {"newClientOrderId": custom_id}
         if position_side:
