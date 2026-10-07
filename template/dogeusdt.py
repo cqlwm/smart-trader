@@ -18,8 +18,8 @@ symbol_ = Symbol(base="doge", quote="usdc")
 timeframe_ = "1m"
 
 def grid(exchange_client: ExSwapClient) -> StrategyTask:
-    position_side=PositionSide.SHORT
-    master_side=OrderSide.SELL
+    position_side=PositionSide.LONG
+    master_side=OrderSide.BUY
 
     config = SignalGridStrategyConfig(
         symbol=symbol_,
