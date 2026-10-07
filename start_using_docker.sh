@@ -22,5 +22,5 @@ fi
 docker run --name "${CONTAINER_NAME}" --restart=always \
   -v /etc/localtime:/etc/localtime \
   -v ./.env:/usr/local/app/.env \
-  -v ./data:/usr/local/app/data \
+  -v ./.data:/usr/local/app/.data \
   -d "$IMAGE_NAME:$IMAGE_TAG"
