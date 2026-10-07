@@ -45,7 +45,7 @@ class BinanceDataEventLoop(DataEventLoop):
         self.kline_subscribes = kline_subscribes
 
     def start(self):
-        websocket_url = "wss://fstream.binance.com/stream"
+        websocket_url = "wss://fstream.binance.com/market/stream"
         ws_session = websocket.WebSocketApp(
             websocket_url,
             on_open=self.on_open,
@@ -66,6 +66,7 @@ class BinanceDataEventLoop(DataEventLoop):
         logger.info(f"### BinanceDataEventLoop Subscribed ### {self.kline_subscribes}")
 
     def on_message(self, ws: websocket.WebSocketApp, message: str):
+        logger.info(f"### BinanceDataEventLoop Message ### {message}")
         self.loop(message)
 
     def on_error(self, ws: websocket.WebSocketApp, error: Exception):
