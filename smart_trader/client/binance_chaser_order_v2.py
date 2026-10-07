@@ -2,8 +2,11 @@ import secrets
 import time
 from typing import Any, Protocol
 
+from ccxt.base.errors import InvalidOrder, OrderNotFillable
+
 from smart_trader import log
 from smart_trader.client.ex_client import ExSwapClient
+from smart_trader.exceptions import SmartTraderError
 from smart_trader.model import OrderSide, OrderStatus, PlaceOrderBehavior, Symbol
 
 logger = log.getLogger(__name__)
@@ -79,12 +82,16 @@ class LimitOrderChaserV2:
                 position_side=self.position_side,
                 time_in_force="GTX",
             )
-        except Exception as e:
-            if '"code":-5022' in str(e.args):
-                # {"code":-5022,"msg":"由于订单无法以挂单方式成交，此挂单将被拒绝，不会记录在订单历史记录中。"}
-                logger.info("价格将触发市价, GTX限价订单自动取消")
-            else:
-                logger.exception("下单时出错")
+        except OrderNotFillable:
+            # {"code":-5022,"msg":"由于订单无法以挂单方式成交，此挂单将被拒绝，不会记录在订单历史记录中。"}
+            logger.info("价格将触发市价, GTX限价订单自动取消")
+            return None
+        except (InvalidOrder, SmartTraderError) as e:
+            # 名义价值/精度等确定性拒绝, 递进价格重试无意义
+            logger.error("订单被拒绝, 停止追单: %s", e)
+            raise
+        except Exception:
+            logger.exception("下单时出错")
             return None
         logger.debug("下单返回：%s", result)
         if result and result.get("status") in [

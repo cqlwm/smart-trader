@@ -1,5 +1,6 @@
 from unittest.mock import Mock
 
+import ccxt
 import pytest
 
 from smart_trader.client.binance_chaser_order_v2 import (
@@ -7,11 +8,13 @@ from smart_trader.client.binance_chaser_order_v2 import (
     LimitOrderChaserV2,
 )
 from smart_trader.client.ex_client import ExSwapClient
+from smart_trader.exceptions import ErrorCode, SmartTraderError
 from smart_trader.model import OrderSide, PlaceOrderBehavior, Symbol, SymbolInfo
 
 SYMBOL = Symbol(base="DOGE", quote="USDT")
 TICK_SIZE = 0.001
-GTX_REJECTED = Exception('{"code":-5022,"msg":"挂单会被立即成交"}')
+# {"code":-5022,"msg":"由于订单无法以挂单方式成交，此挂单将被拒绝"}
+GTX_REJECTED = ccxt.OrderNotFillable("挂单会被立即成交")
 
 
 class FakePriceProvider:
@@ -113,6 +116,33 @@ def test_chase_open_only_keeps_going_on_unexpected_error():
 
     assert chaser.chase_open_only(0.5) is not None
     assert placed_prices(client) == pytest.approx([0.5, 0.499])
+
+
+def test_chase_open_only_stops_on_invalid_order():
+    """交易所确定性拒绝(如名义价值不足)时立刻失败, 不递进价格重试"""
+    chaser, client = build_chaser(
+        FakePriceProvider(0.5), PlaceOrderBehavior.CHASER_OPEN
+    )
+    client.place_order_v2.side_effect = ccxt.InvalidOrder("notional too small")
+
+    with pytest.raises(ccxt.InvalidOrder):
+        chaser.chase_open_only(0.5)
+
+    assert client.place_order_v2.call_count == 1
+
+
+def test_chase_open_only_stops_on_notional_error():
+    chaser, client = build_chaser(
+        FakePriceProvider(0.5), PlaceOrderBehavior.CHASER_OPEN
+    )
+    client.place_order_v2.side_effect = SmartTraderError(
+        ErrorCode.ORDER_NOTIONAL_TOO_SMALL, "名义价值不足"
+    )
+
+    with pytest.raises(SmartTraderError):
+        chaser.chase_open_only(0.5)
+
+    assert client.place_order_v2.call_count == 1
 
 
 def test_chase_closed_waits_until_filled():

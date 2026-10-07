@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from smart_trader.exceptions import ErrorCode, SmartTraderError
+
 
 class PositionSide(Enum):
     LONG = "long"
@@ -177,6 +179,14 @@ class SymbolInfo(BaseModel):
 
     def format_qty(self, qty: float | str):
         return self.format_precision(qty, self.qty_precision())
+
+    def check_notional(self, price: float, quantity: float) -> None:
+        notional = price * quantity
+        if notional < self.min_notional:
+            raise SmartTraderError(
+                ErrorCode.ORDER_NOTIONAL_TOO_SMALL,
+                f"{self.symbol.binance()} 订单名义价值 {notional} 低于交易所最小值 {self.min_notional}",
+            )
 
 
 class Kline:
