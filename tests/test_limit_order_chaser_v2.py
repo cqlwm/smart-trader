@@ -1,6 +1,6 @@
 from unittest.mock import Mock
 
-import ccxt
+import ccxt  # pyright: ignore[reportMissingTypeStubs]
 import pytest
 
 from smart_trader.client.binance_chaser_order_v2 import (

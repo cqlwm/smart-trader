@@ -2,7 +2,10 @@ import secrets
 import time
 from typing import Any, Protocol
 
-from ccxt.base.errors import InvalidOrder, OrderNotFillable
+from ccxt.base.errors import (  # pyright: ignore[reportMissingTypeStubs]
+    InvalidOrder,
+    OrderNotFillable,
+)
 
 from smart_trader import log
 from smart_trader.client.ex_client import ExSwapClient

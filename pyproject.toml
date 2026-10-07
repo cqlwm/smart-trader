@@ -29,7 +29,6 @@ dev = [
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
-ignore = ["**/type_wrapper/*_wrapper.py"]
 
 [[tool.pyright.executionEnvironments]]
 root = "tests"

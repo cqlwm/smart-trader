@@ -1,16 +1,10 @@
-from datetime import UTC
-from typing import Any
-
 import numpy as np
 import pandas as pd
 import talib as ta
 from pandas import DataFrame
 
-from smart_trader import log
 from smart_trader.model import OrderSide
 from smart_trader.strategy import Signal
-
-logger = log.getLogger(__name__)
 
 _datetime = "datetime"
 _high = "high"
@@ -150,55 +144,3 @@ class AlphaTrendSignal(Signal):
             signal = -signal
 
         return signal
-
-
-def test():
-    from datetime import datetime
-
-    import ccxt
-    import pandas as pd
-
-    try:
-        # Initialize Binance futures exchange
-        exchange: Any = ccxt.binance(
-            {
-                "options": {
-                    "defaultType": "future",
-                }
-            }
-        )
-
-        # Fetch ETH/USDT 15m OHLCV data (limit=1000 for recent data)
-        symbol = "ETH/USDC"
-        timeframe = "5m"
-        limit = 1000
-
-        logger.info("Fetching %s candles of %s %s data...", limit, symbol, timeframe)
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-
-        # Convert to DataFrame with required columns
-        data: list[dict[str, Any]] = []
-        for candle in ohlcv:
-            timestamp, open_price, high_price, low_price, close_price, volume = candle
-            dt = datetime.fromtimestamp(timestamp / 1000, tz=UTC).astimezone()
-
-            data.append(
-                {
-                    "datetime": dt.strftime("%Y-%m-%d %H:%M:%S"),
-                    "open": float(open_price),
-                    "high": float(high_price),
-                    "low": float(low_price),
-                    "close": float(close_price),
-                    "volume": float(volume),
-                }
-            )
-
-        df = pd.DataFrame(data)
-        result_df = _alpha_trend_indicator(df.copy())
-        result_df.to_csv("data/eth_usdt_5m_alpha_trend.csv", index=False)
-
-    except Exception as e:  # noqa: BLE001
-        logger.error("Error occurred: %s", e)
-        import traceback
-
-        traceback.print_exc()

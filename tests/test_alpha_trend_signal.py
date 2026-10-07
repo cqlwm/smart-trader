@@ -3,7 +3,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-import ccxt
+import ccxt  # pyright: ignore[reportMissingTypeStubs]
 import pandas as pd
 import pytest
 

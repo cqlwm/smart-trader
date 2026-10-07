@@ -1,8 +1,8 @@
 from typing import Any
 
-import ccxt
+import ccxt  # pyright: ignore[reportMissingTypeStubs]
 import requests
-from ccxt.base.types import ConstructorArgs
+from ccxt.base.types import ConstructorArgs  # pyright: ignore[reportMissingTypeStubs]
 
 from smart_trader import log
 from smart_trader.client.binance_chaser_order_v2 import LimitOrderChaserV2
