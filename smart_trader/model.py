@@ -1,10 +1,10 @@
 import builtins
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from smart_trader.exceptions import ErrorCode, SmartTraderError
 
@@ -79,49 +79,54 @@ class OrderStatus(Enum):
     REJECTED = "rejected"
     EXPIRED = "expired"
 
-    @staticmethod
-    def _normalize_status(status: Any) -> str | None:
-        """规范化订单状态值"""
-        if isinstance(status, str):
-            return status.lower()
-        if isinstance(status, OrderStatus):
-            return status.value
-        raise TypeError(f"Unsupported status type: {type(status)}")
+    @classmethod
+    def from_value(cls, value: "str | OrderStatus") -> "OrderStatus":
+        """
+        解析交易所统一订单状态, 未知状态抛出 ValueError
+        @param value: 交易所返回的状态字符串或枚举本身
+        """
+        if isinstance(value, OrderStatus):
+            return value
+        for status in cls:
+            if status.value == value.lower():
+                return status
+        raise ValueError(f"未知订单状态: {value}")
 
-    @staticmethod
-    def compare(
-        status1: "str | OrderStatus | None", status2: "str | OrderStatus | None"
-    ) -> bool:
-        """比较两个订单状态是否相等"""
-        try:
-            if status1 is None or status2 is None:
-                return False
+    def is_open(self) -> bool:
+        """订单在交易所仍可成交"""
+        return self is OrderStatus.OPEN
 
-            return OrderStatus._normalize_status(
-                status1
-            ) == OrderStatus._normalize_status(status2)
-        except TypeError:
-            return False
+    def is_closed(self) -> bool:
+        """订单已完全成交"""
+        return self is OrderStatus.CLOSED
 
-    @staticmethod
-    def is_open(status: "str | OrderStatus | None") -> bool:
-        return OrderStatus.compare(status, OrderStatus.OPEN)
+    def is_finished(self) -> bool:
+        """订单进入终态, 不会再有新的成交"""
+        return self in (
+            OrderStatus.CLOSED,
+            OrderStatus.CANCELED,
+            OrderStatus.REJECTED,
+            OrderStatus.EXPIRED,
+        )
 
-    @staticmethod
-    def is_closed(status: "str | OrderStatus | None") -> bool:
-        return OrderStatus.compare(status, OrderStatus.CLOSED)
 
-    @staticmethod
-    def is_canceled(status: "str | OrderStatus | None") -> bool:
-        return OrderStatus.compare(status, OrderStatus.CANCELED)
+class OrderType(Enum):
+    LIMIT = "limit"
+    MARKET = "market"
+
+
+class TimeInForce(Enum):
+    """订单有效期策略; GTX 表示只做 maker(post only)"""
+
+    GTC = "GTC"
+    IOC = "IOC"
+    FOK = "FOK"
+    GTX = "GTX"
 
 
 class PlaceOrderBehavior(Enum):
     CHASER = "chaser"  # 追单且成交
     CHASER_OPEN = "chaser_open"  # 追单只下单
-    # LIMIT = 'limit'  # 限价单
-    # MARKET = 'market'  # 市价单
-    # 常规
     NORMAL = "normal"  # 常规
 
 
@@ -141,13 +146,77 @@ class Symbol(BaseModel):
     def simple(self):
         return f"{self.base}{self.quote}"
 
-    def to_str(self, exchange_name: str | None = None):
-        if exchange_name is None:
-            return f"{self.base}{self.quote}"
-        elif exchange_name == "binance":
-            return self.binance()
-        else:
-            return self.ccxt()
+    @classmethod
+    def from_ccxt(cls, ccxt_symbol: str) -> "Symbol":
+        """
+        解析 ccxt 统一交易对(如 DOGE/USDT 或线性合约 DOGE/USDT:USDT)
+        @param ccxt_symbol: ccxt 格式交易对
+        """
+        base_with_quote = ccxt_symbol.split(":")[0]
+        parts = base_with_quote.split("/")
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            raise ValueError(f"无法解析 ccxt 交易对: {ccxt_symbol}")
+        return cls(base=parts[0], quote=parts[1])
+
+
+class OrderRequest(BaseModel):
+    """下单请求(领域对象), 是策略层与交易所适配器之间的唯一契约"""
+
+    custom_id: str
+    symbol: Symbol
+    side: OrderSide
+    type: OrderType
+    quantity: float
+    price: float | None = None
+    position_side: PositionSide
+    time_in_force: TimeInForce | None = None
+
+    @model_validator(mode="after")
+    def _validate_price(self) -> "OrderRequest":
+        if self.quantity <= 0:
+            raise ValueError(f"下单数量必须大于 0, 但 got {self.quantity}")
+
+        if self.type == OrderType.LIMIT:
+            if self.price is None or self.price <= 0:
+                raise ValueError(f"限价单必须指定大于 0 的价格, 但 got {self.price}")
+        elif self.price is not None:
+            raise ValueError(f"市价单不能指定价格, 但 got {self.price}")
+
+        return self
+
+
+class Position(BaseModel):
+    """持仓(领域对象)"""
+
+    symbol: Symbol
+    side: PositionSide
+    quantity: float
+    entry_price: float = 0.0
+
+
+class OrderResult(BaseModel):
+    """订单结果(领域对象), place/query/cancel 的统一返回"""
+
+    custom_id: str
+    symbol: Symbol
+    side: OrderSide | None = None
+    status: OrderStatus
+    quantity: float = 0.0
+    filled_qty: float = 0.0
+    price: float | None = None
+    avg_price: float | None = None
+
+    @property
+    def filled_ratio(self) -> float:
+        """已成交比例; 委托数量为 0 时返回 0"""
+        if self.quantity <= 0:
+            return 0.0
+        return self.filled_qty / self.quantity
+
+    @property
+    def is_filled(self) -> bool:
+        """是否完全成交"""
+        return self.status.is_closed()
 
 
 class SymbolInfo(BaseModel):
@@ -175,10 +244,22 @@ class SymbolInfo(BaseModel):
         return float(format_str.format(decimal_value))
 
     def format_price(self, price: float | str):
+        """价格按 tick_size 四舍五入到可交易精度"""
         return self.format_precision(price, self.price_precision())
 
     def format_qty(self, qty: float | str):
-        return self.format_precision(qty, self.qty_precision())
+        """数量按 step_size 向下取整, 保证不超出可用余额与交易所上限"""
+        decimal_value = Decimal(str(qty))
+        quantum = Decimal(str(self.step_size)).normalize()
+        return float(decimal_value.quantize(quantum, rounding=ROUND_DOWN))
+
+    def check_qty(self, quantity: float) -> None:
+        """校验数量是否满足交易所最小下单量"""
+        if quantity < self.min_qty:
+            raise SmartTraderError(
+                ErrorCode.ORDER_QUANTITY_TOO_SMALL,
+                f"{self.symbol.binance()} 下单数量 {quantity} 低于交易所最小值 {self.min_qty}",
+            )
 
     def check_notional(self, price: float, quantity: float) -> None:
         notional = price * quantity

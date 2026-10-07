@@ -36,17 +36,17 @@ extraPaths = ["."]
 reportPrivateUsage = false
 
 [build-system]
-requires = ["setuptools>=75.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-
-[tool.setuptools]
+[tool.hatch.build.targets.wheel]
 packages = ["smart_trader"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-addopts = ["-m", "not integration"]
+# basetemp 固定到项目内: 沙箱环境下系统临时目录已存在时无法重复创建
+addopts = ["-m", "not integration", "--basetemp=.pytest-tmp"]
 markers = [
     "integration: 标记需要外部服务的集成测试（网络、API、数据库等）",
 ]

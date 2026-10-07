@@ -34,8 +34,7 @@ logger = log.getLogger(__name__)
 
 class CountStreamTask(Task):
     def __init__(self) -> None:
-        super().__init__()
-        self.name = "CountStreamTask"
+        super().__init__("CountStreamTask")
         self.counts: dict[str, int] = {}
 
     def run(self, data: str) -> None:
@@ -53,7 +52,8 @@ class DemoDataEventLoop(BinanceDataEventLoop):
     """保留 ws 引用, 便于按时间主动关闭"""
 
     def __init__(self, kline_subscribes: list[str]) -> None:
-        super().__init__(kline_subscribes)
+        # demo 只跑一段时间, 不重连(重连语义由 test_binance_data_event_loop 覆盖)
+        super().__init__(kline_subscribes, max_connections=1)
         self.ws: websocket.WebSocketApp | None = None
 
     def on_open(self, ws: websocket.WebSocketApp) -> None:
@@ -66,6 +66,7 @@ class DemoDataEventLoop(BinanceDataEventLoop):
             logger.info("### 到达 %ss, 主动关闭连接 ###", seconds)
             if self.ws is not None:
                 self.ws.close()  # type: ignore[reportUnknownMemberType]
+            self.stop()
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -93,7 +94,7 @@ def main() -> None:
     loop.close_after(args.seconds)
 
     logger.info("### 开始订阅 %s, %ss 后自动退出 ###", streams, args.seconds)
-    loop.start()  # 阻塞直到连接关闭
+    loop.start()  # 阻塞直到连接关闭或 stop()
     logger.info("### 退出 ### 各流消息数: %s", task.counts)
 
 

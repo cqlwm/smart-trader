@@ -12,9 +12,11 @@ backtest_report*.txt
 
 .venv
 .pytest_cache
+.pytest-tmp
 .claude
 .github
 .data
 .vscode
+.workbuddy
 
 smart_trader.egg-info

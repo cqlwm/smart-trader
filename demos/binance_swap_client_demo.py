@@ -10,14 +10,12 @@
 
 注意:
     1. 下单默认关闭, 需显式传 --place-order, 避免误触发真实委托。
-    2. position_side 依赖币安的双向持仓(hedge)模式, 单向持仓账户需去掉该参数。
-    3. client.close_position() 目前只撤销该合约的挂单, 未实际平仓。
+    2. position_side 依赖币安的双向持仓(hedge)模式, 单向持仓账户需改用 BOTH。
 """
 
 import argparse
 import os
 import secrets
-from typing import Any
 
 import dotenv
 
@@ -25,10 +23,13 @@ from smart_trader import log
 from smart_trader.client.binance_client import BinanceSwapClient
 from smart_trader.model import (
     Kline,
+    OrderRequest,
     OrderSide,
-    PlaceOrderBehavior,
+    OrderType,
+    Position,
     PositionSide,
     Symbol,
+    TimeInForce,
 )
 
 dotenv.load_dotenv()
@@ -73,16 +74,15 @@ def demo_balance(client: BinanceSwapClient) -> None:
     logger.info("USDT 可用余额: %s", usdt_free)
 
 
-def demo_positions(client: BinanceSwapClient, symbol: Symbol) -> list[dict[str, Any]]:
-    # 注意: positions() 需要传 ccxt 统一格式的交易对, 例如 DOGE/USDT
-    positions = client.positions(symbol.ccxt())
+def demo_positions(client: BinanceSwapClient, symbol: Symbol) -> list[Position]:
+    positions = client.positions(symbol)
     for position in positions:
         logger.info(
             "持仓: %s, 方向=%s, 数量=%s, 入场价=%s",
-            position["symbol"],
-            position["side"],
-            position["contracts"],
-            position["entryPrice"],
+            position.symbol.ccxt(),
+            position.side.value,
+            position.quantity,
+            position.entry_price,
         )
     if not positions:
         logger.info("当前无持仓")
@@ -104,28 +104,30 @@ def demo_place_limit_order(
     price = symbol_info.format_price(last_price - symbol_info.tick_size)
 
     custom_id = f"demo{secrets.token_hex(nbytes=5)}"
-    order = client.place_order_v2(
-        custom_id=custom_id,
-        symbol=symbol,
-        order_side=OrderSide.BUY,
-        quantity=symbol_info.format_qty(quantity),
-        price=price,
-        position_side=PositionSide.LONG,
-        place_order_behavior=PlaceOrderBehavior.NORMAL,
-        time_in_force="GTX",
+    order = client.place(
+        OrderRequest(
+            custom_id=custom_id,
+            symbol=symbol,
+            side=OrderSide.BUY,
+            type=OrderType.LIMIT,
+            quantity=symbol_info.format_qty(quantity),
+            price=price,
+            position_side=PositionSide.LONG,
+            time_in_force=TimeInForce.GTX,
+        )
     )
     logger.info("限价单已提交: %s, price=%s, 返回=%s", custom_id, price, order)
-    return custom_id
+    return order.custom_id
 
 
 def demo_query_order(client: BinanceSwapClient, symbol: Symbol, custom_id: str) -> None:
-    order = client.query_order(custom_id, symbol)
-    if order:
+    order = client.query(custom_id, symbol)
+    if order is not None:
         logger.info(
             "查询订单 %s: status=%s, price=%s",
             custom_id,
-            order["status"],
-            order["price"],
+            order.status.value,
+            order.price,
         )
     else:
         logger.info("未查询到订单 %s", custom_id)
@@ -142,52 +144,49 @@ def demo_place_market_order(
     client: BinanceSwapClient, symbol: Symbol, quantity: float
 ) -> None:
     symbol_info = client.symbol_info(symbol)
-    order = client.place_order_v2(
-        custom_id="demomarket001",
-        symbol=symbol,
-        order_side=OrderSide.BUY,
-        quantity=symbol_info.format_qty(quantity),
-        price=None,
-        position_side=PositionSide.LONG,
-        place_order_behavior=PlaceOrderBehavior.NORMAL,
+    order = client.place(
+        OrderRequest(
+            custom_id="demomarket001",
+            symbol=symbol,
+            side=OrderSide.BUY,
+            type=OrderType.MARKET,
+            quantity=symbol_info.format_qty(quantity),
+            position_side=PositionSide.LONG,
+        )
     )
     logger.info("市价单已提交: %s", order)
 
 
 def demo_close_position(client: BinanceSwapClient, symbol: Symbol) -> None:
     """先撤掉该合约挂单, 再用反向市价单按实际持仓量平仓"""
-    positions = [
-        p for p in demo_positions(client, symbol) if float(p["contracts"] or 0) > 0
-    ]
+    positions = [p for p in demo_positions(client, symbol) if p.quantity > 0]
     if not positions:
         logger.info("无持仓, 跳过平仓")
         return
 
+    canceled = client.cancel_open_orders(symbol)
+    logger.info("已撤销挂单: %s 笔", len(canceled))
+
     for position in positions:
-        contracts = float(position["contracts"])
-        position_side = PositionSide(position["side"].lower())
         # 平仓方向与持仓方向相反
         close_side = (
-            OrderSide.SELL if position_side == PositionSide.LONG else OrderSide.BUY
+            OrderSide.SELL if position.side == PositionSide.LONG else OrderSide.BUY
         )
-
-        # close_position 只负责撤掉该合约的挂单(auto_cancel=True), 真正的平仓由下面的反向单完成
-        client.close_position(symbol.ccxt(), position_side.value)
-
-        order = client.place_order_v2(
-            custom_id=f"democlose{secrets.token_hex(nbytes=4)}",
-            symbol=symbol,
-            order_side=close_side,
-            quantity=contracts,
-            price=None,
-            position_side=position_side,
-            place_order_behavior=PlaceOrderBehavior.NORMAL,
+        order = client.place(
+            OrderRequest(
+                custom_id=f"democlose{secrets.token_hex(nbytes=4)}",
+                symbol=symbol,
+                side=close_side,
+                type=OrderType.MARKET,
+                quantity=position.quantity,
+                position_side=position.side,
+            )
         )
         logger.info(
             "平仓 %s: 下单方向=%s, 数量=%s, 返回=%s",
-            position_side.value,
+            position.side.value,
             close_side.value,
-            contracts,
+            position.quantity,
             order,
         )
 
@@ -197,7 +196,9 @@ def main() -> None:
     parser.add_argument("--base", default="BTC", help="交易对基础币, 默认 DOGE")
     parser.add_argument("--quote", default="USDT", help="交易对计价币, 默认 USDT")
     parser.add_argument("--timeframe", default="1m", help="K线周期, 默认 1m")
-    parser.add_argument("--quantity", type=float, default=0.001, help="下单数量, 默认 1")
+    parser.add_argument(
+        "--quantity", type=float, default=0.001, help="下单数量, 默认 1"
+    )
     parser.add_argument(
         "--place-order", action="store_true", help="开启真实下单流程(默认关闭)"
     )
@@ -223,8 +224,7 @@ def main() -> None:
         return
 
     logger.info("=== 下单流程 ===")
-    ticker = client.exchange.fetch_ticker(symbol.ccxt())
-    last_price = float(ticker["last"])
+    last_price = client.latest_price(symbol)
     logger.info("最新价: %s", last_price)
 
     custom_id = demo_place_limit_order(client, symbol, args.quantity, last_price)

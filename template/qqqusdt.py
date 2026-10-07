@@ -1,14 +1,14 @@
 from datetime import UTC, datetime
 
 from smart_trader import log
-from smart_trader.client.ex_client import ExSwapClient
-from smart_trader.config import DATA_PATH
+from smart_trader.client.binance_client import BinanceSwapClient
 from smart_trader.model import OrderSide, PositionSide, Symbol
+from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.strategy.alpha_trend_signal.alpha_trend_grids_signal import (
     AlphaTrendGridsSignal,
 )
 from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
-from smart_trader.strategy.grids_strategy_v2 import (
+from smart_trader.strategy.signal_grid_strategy import (
     SignalGridStrategy,
     SignalGridStrategyConfig,
 )
@@ -21,7 +21,7 @@ timeframe_ = "1m"
 today_utc = datetime.now(UTC).strftime("%Y%m%d")
 
 
-def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
+def long_buy(client: BinanceSwapClient, journal: OrderJournal) -> StrategyTask:
     config = SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
@@ -35,8 +35,10 @@ def long_buy(exchange_client: ExSwapClient) -> StrategyTask:
         exit_signal_take_profit_min_rate=0.03,
         fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.03,
-        order_file_path=f"{DATA_PATH}/signal_grid_long_buy_{symbol_.simple()}_{timeframe_}.json",
+        strategy_key=f"signal_grid_long_buy_{symbol_.simple()}_{timeframe_}",
     )
-    strategy = SignalGridStrategy(config, exchange_client)
+    strategy = SignalGridStrategy(
+        config, trading=client, market=client, journal=journal
+    )
 
     return StrategyTask(symbol=symbol_, strategy=strategy)

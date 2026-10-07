@@ -6,7 +6,7 @@ from pandas import DataFrame
 from pydantic import BaseModel
 
 from smart_trader import log
-from smart_trader.client.ex_client import ExClient
+from smart_trader.client.ports import MarketDataPort
 from smart_trader.model import Kline, OrderSide
 
 logger = log.getLogger(__name__)
@@ -33,8 +33,9 @@ class KlineData(BaseModel):
 
 
 class MultiTimeframeStrategy(Strategy):
-    def __init__(self, timeframes: list[str]):
+    def __init__(self, timeframes: list[str], market: MarketDataPort):
         self.timeframes: list[str] = timeframes
+        self.market: MarketDataPort = market
         self.kline_data_dict: dict[str, KlineData] = {}
         self.init_kline_nums = 300
         self.on_kline_finished_lock = threading.Lock()
@@ -56,9 +57,6 @@ class MultiTimeframeStrategy(Strategy):
             self.kline_data_dict[timeframe] = KlineData(
                 timeframe=timeframe, klines=empty_df, latest_kline=None
             )
-
-    def exchange_client(self) -> ExClient:
-        raise NotImplementedError()
 
     def klines(self, timeframe: str) -> DataFrame:
         """将指定时间框架的klines转换为DataFrame进行分析"""
@@ -82,7 +80,7 @@ class MultiTimeframeStrategy(Strategy):
         """Initialize klines with historical data if the DataFrame is empty"""
         timeframe = kline.timeframe
         if len(self.kline_data_dict[timeframe].klines) == 0:
-            ohlcv = self.exchange_client().fetch_ohlcv(
+            ohlcv = self.market.fetch_ohlcv(
                 kline.symbol, timeframe, self.init_kline_nums
             )
             df = DataFrame([row.to_dict() for row in ohlcv])
@@ -144,8 +142,8 @@ class MultiTimeframeStrategy(Strategy):
 
 
 class SingleTimeframeStrategy(MultiTimeframeStrategy):
-    def __init__(self, timeframe: str):
-        super().__init__([timeframe])
+    def __init__(self, timeframe: str, market: MarketDataPort):
+        super().__init__([timeframe], market)
 
     @property
     def timeframe(self) -> str:

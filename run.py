@@ -46,9 +46,12 @@ main_binance_client: BinanceSwapClient = create_binance_client("main")
 
 
 def main():
+    from smart_trader.config import DB_PATH
+    from smart_trader.storage.order_journal import OrderJournal
     from template import dogeusdt
 
-    tasks: list[StrategyTask] = [dogeusdt.grid(main_binance_client)]
+    journal = OrderJournal(DB_PATH)
+    tasks: list[StrategyTask] = [dogeusdt.grid(main_binance_client, journal)]
 
     kline_subscribes: list[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
@@ -60,7 +63,13 @@ def main():
                 kline_subscribes.append(sub_key)
         data_event_loop.add_task(task)
 
-    data_event_loop.start()
+    try:
+        # 阻塞运行; 连接断开时由 start() 内部自动重连
+        data_event_loop.start()
+    except KeyboardInterrupt:
+        logger.info("收到退出信号, 停止事件循环")
+    finally:
+        data_event_loop.stop()
 
 
 if __name__ == "__main__":
