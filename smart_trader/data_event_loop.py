@@ -66,7 +66,6 @@ class BinanceDataEventLoop(DataEventLoop):
         logger.info(f"### BinanceDataEventLoop Subscribed ### {self.kline_subscribes}")
 
     def on_message(self, ws: websocket.WebSocketApp, message: str):
-        logger.info(f"### BinanceDataEventLoop Message ### {message}")
         self.loop(message)
 
     def on_error(self, ws: websocket.WebSocketApp, error: Exception):
