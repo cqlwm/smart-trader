@@ -33,6 +33,8 @@ from smart_trader.model import (
 
 dotenv.load_dotenv()
 
+log.init_logging()
+
 logger = log.getLogger(__name__)
 
 
@@ -43,25 +45,32 @@ def create_client() -> BinanceSwapClient:
     if not api_key or not api_secret:
         raise ValueError("BINANCE_API_KEY_MAIN / BINANCE_API_SECRET_MAIN 未设置")
 
-    logger.info(f"is_test(测试网): {is_test}")
+    logger.info("is_test(测试网): %s", is_test)
     return BinanceSwapClient(api_key=api_key, api_secret=api_secret, is_test=is_test)
 
 
 def demo_symbol_info(client: BinanceSwapClient, symbol: Symbol) -> None:
     info = client.symbol_info(symbol)
     logger.info(
-        f"交易规则: tick_size={info.tick_size}, step_size={info.step_size}, "
-        f"min_qty={info.min_qty}, min_price={info.min_price}, max_price={info.max_price}"
+        "交易规则: tick_size=%s, step_size=%s, min_qty=%s, min_price=%s, max_price=%s",
+        info.tick_size,
+        info.step_size,
+        info.min_qty,
+        info.min_price,
+        info.max_price,
     )
     logger.info(
-        f"价格精度={info.price_precision()}, 数量精度={info.qty_precision()}, "
-        f"格式化价格={info.format_price(1.23456789)}, 格式化数量={info.format_qty(1.23456789)}"
+        "价格精度=%s, 数量精度=%s, 格式化价格=%s, 格式化数量=%s",
+        info.price_precision(),
+        info.qty_precision(),
+        info.format_price(1.23456789),
+        info.format_qty(1.23456789),
     )
 
 
 def demo_balance(client: BinanceSwapClient) -> None:
     usdt_free = client.balance("USDT")
-    logger.info(f"USDT 可用余额: {usdt_free}")
+    logger.info("USDT 可用余额: %s", usdt_free)
 
 
 def demo_positions(client: BinanceSwapClient, symbol: Symbol) -> list[dict[str, Any]]:
@@ -69,8 +78,11 @@ def demo_positions(client: BinanceSwapClient, symbol: Symbol) -> list[dict[str, 
     positions = client.positions(symbol.ccxt())
     for position in positions:
         logger.info(
-            f"持仓: {position['symbol']}, 方向={position['side']}, "
-            f"数量={position['contracts']}, 入场价={position['entryPrice']}"
+            "持仓: %s, 方向=%s, 数量=%s, 入场价=%s",
+            position["symbol"],
+            position["side"],
+            position["contracts"],
+            position["entryPrice"],
         )
     if not positions:
         logger.info("当前无持仓")
@@ -102,7 +114,7 @@ def demo_place_limit_order(
         place_order_behavior=PlaceOrderBehavior.NORMAL,
         time_in_force="GTX",
     )
-    logger.info(f"限价单已提交: {custom_id}, price={price}, 返回={order}")
+    logger.info("限价单已提交: %s, price=%s, 返回=%s", custom_id, price, order)
     return custom_id
 
 
@@ -110,17 +122,20 @@ def demo_query_order(client: BinanceSwapClient, symbol: Symbol, custom_id: str) 
     order = client.query_order(custom_id, symbol)
     if order:
         logger.info(
-            f"查询订单 {custom_id}: status={order['status']}, price={order['price']}"
+            "查询订单 %s: status=%s, price=%s",
+            custom_id,
+            order["status"],
+            order["price"],
         )
     else:
-        logger.info(f"未查询到订单 {custom_id}")
+        logger.info("未查询到订单 %s", custom_id)
 
 
 def demo_cancel_order(
     client: BinanceSwapClient, symbol: Symbol, custom_id: str
 ) -> None:
     result = client.cancel(custom_id, symbol)
-    logger.info(f"撤单 {custom_id}: {result}")
+    logger.info("撤单 %s: %s", custom_id, result)
 
 
 def demo_place_market_order(
@@ -136,7 +151,7 @@ def demo_place_market_order(
         position_side=PositionSide.LONG,
         place_order_behavior=PlaceOrderBehavior.NORMAL,
     )
-    logger.info(f"市价单已提交: {order}")
+    logger.info("市价单已提交: %s", order)
 
 
 def demo_close_position(client: BinanceSwapClient, symbol: Symbol) -> None:
@@ -169,7 +184,11 @@ def demo_close_position(client: BinanceSwapClient, symbol: Symbol) -> None:
             place_order_behavior=PlaceOrderBehavior.NORMAL,
         )
         logger.info(
-            f"平仓 {position_side.value}: 下单方向={close_side.value}, 数量={contracts}, 返回={order}"
+            "平仓 %s: 下单方向=%s, 数量=%s, 返回=%s",
+            position_side.value,
+            close_side.value,
+            contracts,
+            order,
         )
 
 
@@ -206,7 +225,7 @@ def main() -> None:
     logger.info("=== 下单流程 ===")
     ticker = client.exchange.fetch_ticker(symbol.ccxt())
     last_price = float(ticker["last"])
-    logger.info(f"最新价: {last_price}")
+    logger.info("最新价: %s", last_price)
 
     custom_id = demo_place_limit_order(client, symbol, args.quantity, last_price)
     demo_query_order(client, symbol, custom_id)

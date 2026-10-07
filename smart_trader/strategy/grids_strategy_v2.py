@@ -1,4 +1,3 @@
-import logging
 import os
 import secrets
 import threading
@@ -6,6 +5,7 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict
 
+from smart_trader import log
 from smart_trader.client.ex_client import ExSwapClient
 from smart_trader.model import (
     OrderSide,
@@ -16,7 +16,7 @@ from smart_trader.model import (
 )
 from smart_trader.strategy import Signal, SingleTimeframeStrategy
 
-logger = logging.getLogger(__name__)
+logger = log.getLogger(__name__)
 
 
 def build_order_id(side: OrderSide):
@@ -130,7 +130,9 @@ class OrderRecorder(BaseModel):
                 _recorder = OrderRecorder.model_validate_json(f.read())
                 if _recorder.is_reload or force:
                     logger.info(
-                        f"Reload orders from {self.order_file_path}, force={force}"
+                        "Reload orders from %s, force=%s",
+                        self.order_file_path,
+                        force,
                     )
                     return _recorder.orders
         return None

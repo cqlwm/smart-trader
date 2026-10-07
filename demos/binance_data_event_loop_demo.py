@@ -27,6 +27,8 @@ from smart_trader import log
 from smart_trader.data_event_loop import BinanceDataEventLoop, Task
 from smart_trader.model import Symbol
 
+log.init_logging()
+
 logger = log.getLogger(__name__)
 
 
@@ -44,7 +46,7 @@ class CountStreamTask(Task):
         self.counts[stream] = self.counts.get(stream, 0) + 1
         count = self.counts[stream]
         if count <= 3:
-            logger.info(f"[Task] {stream} 第 {count} 条: {data}")
+            logger.info("[Task] %s 第 %s 条: %s", stream, count, data)
 
 
 class DemoDataEventLoop(BinanceDataEventLoop):
@@ -61,7 +63,7 @@ class DemoDataEventLoop(BinanceDataEventLoop):
     def close_after(self, seconds: float) -> None:
         def _worker() -> None:
             time.sleep(seconds)
-            logger.info(f"### 到达 {seconds}s, 主动关闭连接 ###")
+            logger.info("### 到达 %ss, 主动关闭连接 ###", seconds)
             if self.ws is not None:
                 self.ws.close()  # type: ignore[reportUnknownMemberType]
 
@@ -90,9 +92,9 @@ def main() -> None:
     loop.add_task(task)
     loop.close_after(args.seconds)
 
-    logger.info(f"### 开始订阅 {streams}, {args.seconds}s 后自动退出 ###")
+    logger.info("### 开始订阅 %s, %ss 后自动退出 ###", streams, args.seconds)
     loop.start()  # 阻塞直到连接关闭
-    logger.info(f"### 退出 ### 各流消息数: {task.counts}")
+    logger.info("### 退出 ### 各流消息数: %s", task.counts)
 
 
 if __name__ == "__main__":

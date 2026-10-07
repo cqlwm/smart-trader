@@ -6,8 +6,11 @@ import pandas as pd
 import talib as ta
 from pandas import DataFrame
 
+from smart_trader import log
 from smart_trader.model import OrderSide
 from smart_trader.strategy import Signal
+
+logger = log.getLogger(__name__)
 
 _datetime = "datetime"
 _high = "high"
@@ -170,7 +173,7 @@ def test():
         timeframe = "5m"
         limit = 1000
 
-        print(f"Fetching {limit} candles of {symbol} {timeframe} data...")
+        logger.info("Fetching %s candles of %s %s data...", limit, symbol, timeframe)
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
 
         # Convert to DataFrame with required columns
@@ -195,7 +198,7 @@ def test():
         result_df.to_csv("data/eth_usdt_5m_alpha_trend.csv", index=False)
 
     except Exception as e:  # noqa: BLE001
-        print(f"Error occurred: {e}")
+        logger.error("Error occurred: %s", e)
         import traceback
 
         traceback.print_exc()

@@ -9,6 +9,8 @@ from smart_trader.task.strategy_task import StrategyTask
 
 dotenv.load_dotenv()
 
+log.init_logging()
+
 logger = log.getLogger(__name__)
 
 

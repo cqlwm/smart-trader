@@ -1,12 +1,13 @@
 import concurrent.futures
 import json
-import logging
 import random
 from typing import Any
 
 import websocket
 
-logger = logging.getLogger(__name__)
+from smart_trader import log
+
+logger = log.getLogger(__name__)
 
 
 class Task:
@@ -63,7 +64,7 @@ class BinanceDataEventLoop(DataEventLoop):
             "id": self.SUBSCRIBE_KLINE_ID,
         }
         ws.send(json.dumps(params))
-        logger.info(f"### BinanceDataEventLoop Subscribed ### {self.kline_subscribes}")
+        logger.info("### BinanceDataEventLoop Subscribed ### %s", self.kline_subscribes)
 
     def on_message(self, ws: websocket.WebSocketApp, message: str):
         self.loop(message)
@@ -75,7 +76,9 @@ class BinanceDataEventLoop(DataEventLoop):
         self, ws: websocket.WebSocketApp, close_status_code: int | str, close_msg: str
     ):
         logger.warning(
-            f"### BinanceDataEventLoop Closed ### {close_status_code}: {close_msg}"
+            "### BinanceDataEventLoop Closed ### %s: %s",
+            close_status_code,
+            close_msg,
         )
         self.stop()
 

@@ -16,8 +16,8 @@ DATA_PATH = f"{PROJECT_PATH}/.data"
 
 os.makedirs(DATA_PATH, exist_ok=True)
 
-logger.info(f"PROJECT_PATH: {PROJECT_PATH}")
-logger.info(f"DATA_PATH: {DATA_PATH}")
+logger.info("PROJECT_PATH: %s", PROJECT_PATH)
+logger.info("DATA_PATH: %s", DATA_PATH)
 
 if __name__ == "__main__":
     logger.info("config")

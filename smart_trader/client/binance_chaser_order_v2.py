@@ -41,7 +41,11 @@ class LimitOrderChaserV2:
         wait_timeout: float = 3.0,
     ):
         logger.info(
-            f"Init Chaser : {symbol.ccxt()}, {side.name}, {quantity}, {position_side}"
+            "Init Chaser : %s, %s, %s, %s",
+            symbol.ccxt(),
+            side.name,
+            quantity,
+            position_side,
         )
         self.client: ExSwapClient = client
         self.price_provider: LatestPriceProvider = price_provider
@@ -105,7 +109,7 @@ class LimitOrderChaserV2:
         try:
             result = self.client.query_order(custom_id, self.symbol)
         except Exception as _:
-            logger.exception(f"查询订单时出错: {custom_id}")
+            logger.exception("查询订单时出错: %s", custom_id)
             return None
         logger.debug("查询订单返回：%s", result)
         return result
@@ -117,7 +121,7 @@ class LimitOrderChaserV2:
         try:
             result = self.client.cancel(custom_id, self.symbol)
         except Exception as _:
-            logger.exception(f"撤单时出错: {custom_id}")
+            logger.exception("撤单时出错: %s", custom_id)
             return None
         logger.debug("撤单返回：%s", result)
         return result
@@ -136,7 +140,7 @@ class LimitOrderChaserV2:
                 return custom_id
             limit_price += step
 
-        logger.warning(f"递进 {self.max_retry} 次仍未挂单成功")
+        logger.warning("递进 %d 次仍未挂单成功", self.max_retry)
         return None
 
     def chase_closed(self, custom_id: str) -> bool:
@@ -149,18 +153,18 @@ class LimitOrderChaserV2:
             order = self.query_order(custom_id)
             if order:
                 if float(order["info"]["executedQty"]) > 0:
-                    logger.info(f"订单 {custom_id} 已成交")
+                    logger.info("订单 %s 已成交", custom_id)
                     return True
                 if order["status"] in [
                     OrderStatus.CANCELED.value,
                     OrderStatus.REJECTED.value,
                     OrderStatus.EXPIRED.value,
                 ]:
-                    logger.info(f"订单 {custom_id} 已取消")
+                    logger.info("订单 %s 已取消", custom_id)
                     return False
             time.sleep(self.poll_interval)
 
-        logger.info(f"订单 {custom_id} 等待 {self.wait_timeout}s 未成交, 撤单")
+        logger.info("订单 %s 等待 %ss 未成交, 撤单", custom_id, self.wait_timeout)
         self.cancel_order(custom_id)
         order = self.query_order(custom_id)
         return bool(order) and float(order["info"]["executedQty"]) > 0
@@ -184,10 +188,10 @@ class LimitOrderChaserV2:
 
             self.chase_result = self.chase(price)
             if self.chase_result:
-                logger.info(f"第 {i + 1} 轮追单结束, custom_id: {self.custom_id}")
+                logger.info("第 %d 轮追单结束, custom_id: %s", i + 1, self.custom_id)
                 return
 
-        logger.warning(f"追单 {self.max_iterations} 轮仍未成功")
+        logger.warning("追单 %d 轮仍未成功", self.max_iterations)
 
     def run(self) -> bool:
         self.start()

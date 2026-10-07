@@ -15,7 +15,7 @@ from smart_trader.model import (
     SymbolInfo,
 )
 
-logger = log.getLogger("BinanceSwapClient")
+logger = log.getLogger(__name__)
 
 
 def parse_symbol_info(exchange_info: dict[str, Any], symbol: Symbol) -> SymbolInfo:
@@ -179,7 +179,7 @@ class BinanceSwapClient(ExSwapClient):
             if order_chaser.run() and order_chaser.custom_id:
                 return self.query_order(order_chaser.custom_id, symbol)
 
-            logger.error(f"追单失败, 执行常规订单, price: {price}")
+            logger.error("追单失败, 执行常规订单, price: %s", price)
 
         params: dict[str, Any] = {"newClientOrderId": custom_id}
         if position_side:
@@ -213,7 +213,15 @@ class BinanceSwapClient(ExSwapClient):
             return order
         except Exception as e:
             logger.debug(
-                f"下单失败: symbol: {symbol.binance()}, type: {order_type}, side: {order_side.value}, quantity: {quantity}, price: {price}, params: {params}, error: {e!s}"
+                "下单失败: symbol: %s, type: %s, side: %s, quantity: %s, "
+                "price: %s, params: %s, error: %s",
+                symbol.binance(),
+                order_type,
+                order_side.value,
+                quantity,
+                price,
+                params,
+                e,
             )
             raise
 
