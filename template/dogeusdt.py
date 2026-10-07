@@ -26,7 +26,7 @@ def grid(exchange_client: ExSwapClient) -> StrategyTask:
         timeframe=timeframe_,
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
-        per_order_qty=1000,
+        per_order_qty=500,
         grid_spacing_rate=-0.1,
         max_order=20,
         enable_exit_signal=True,
