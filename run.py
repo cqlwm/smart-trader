@@ -44,9 +44,9 @@ main_binance_client: BinanceSwapClient = create_binance_client("main")
 
 
 def main():
-    from template import qqqusdt
+    from template import dogeusdt
 
-    tasks: list[StrategyTask] = [qqqusdt.long_buy(main_binance_client)]
+    tasks: list[StrategyTask] = [dogeusdt.grid(main_binance_client)]
 
     kline_subscribes: list[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
@@ -60,10 +60,6 @@ def main():
 
     data_event_loop.start()
 
-
-# def test():
-#     from template import dogeusdc
-#     t = dogeusdc.market_trend_task(main_binance_client)
 
 if __name__ == "__main__":
     main()
