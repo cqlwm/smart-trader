@@ -24,19 +24,20 @@ def grid(exchange_client: ExSwapClient) -> StrategyTask:
     config = SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
-        position_side=PositionSide.SHORT,
-        master_side=OrderSide.SELL,
+        position_side=position_side,
+        master_side=master_side,
         per_order_qty=500,
-        grid_spacing_rate=-0.1,
-        max_order=20,
+        grid_spacing_rate=0.0001,
+        max_order=50,
         enable_exit_signal=True,
         signal=AlphaTrendGridsSignal(AlphaTrendSignal(OrderSide.BUY)),
-        exit_signal_take_profit_min_rate=0.05,
+        exit_signal_take_profit_min_rate=0.002,
         fixed_rate_take_profit=True,
-        fixed_take_profit_rate=0.1,
+        fixed_take_profit_rate=0.005,
         order_file_path=f"{DATA_PATH}/signal_grid_{position_side}_{master_side}_{symbol_.simple()}_{timeframe_}.json",
         enable_order_stop_loss=True,
-        order_stop_loss_rate=0.005
+        order_stop_loss_rate=0.05,
+        position_reverse=True,
     )
     strategy = SignalGridStrategy(config, exchange_client)
 
