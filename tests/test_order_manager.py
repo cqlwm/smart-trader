@@ -9,7 +9,7 @@ from smart_trader.strategy.signal_grid_strategy import (
     GridPosition,
     GridPositionManager,
 )
-from tests.fakes import DEFAULT_STRATEGY_KEY, make_order_row
+from tests.fakes import DEFAULT_STRATEGY_KEY, make_position_row
 
 STRATEGY_KEY = DEFAULT_STRATEGY_KEY
 
@@ -30,7 +30,9 @@ def build_position(
 
 def seed_journal(journal: OrderJournal, entry_id: str = "e1") -> None:
     """把一行订单直接放进账本（模拟上次运行留下的状态）"""
-    journal.sync_orders(STRATEGY_KEY, [make_order_row(entry_id)], removed_ids=[])
+    journal.sync_positions(
+        STRATEGY_KEY, [make_position_row(entry_id)], removed_ids=[]
+    )
 
 
 class TestLoadPositions:
@@ -61,7 +63,7 @@ class TestRecordPositions:
 
         manager.record_positions(refresh_orders=True)
 
-        rows = journal.load_orders(STRATEGY_KEY)
+        rows = journal.load_positions(STRATEGY_KEY)
         assert [row.entry_id for row in rows] == ["e1"]
 
     def test_record_is_lazy_without_changes(self):
@@ -73,12 +75,12 @@ class TestRecordPositions:
 
         manager.positions[0].filled_quantity = 50.0
         manager.record_positions()
-        assert journal.load_orders(STRATEGY_KEY)[0].filled_quantity == 0.0, (
+        assert journal.load_positions(STRATEGY_KEY)[0].filled_quantity == 0.0, (
             "未声明确认变化时不得写账"
         )
 
         manager.record_positions(refresh_orders=True)
-        assert journal.load_orders(STRATEGY_KEY)[0].filled_quantity == 50.0
+        assert journal.load_positions(STRATEGY_KEY)[0].filled_quantity == 50.0
 
     def test_closed_orders_are_removed_and_archived(self):
         journal = OrderJournal(":memory:")
@@ -90,4 +92,4 @@ class TestRecordPositions:
         manager.record_positions([closed])
 
         assert manager.positions == [], "已平仓订单不应留在当前持仓"
-        assert journal.load_orders(STRATEGY_KEY) == [], "账本中不再作为活跃订单加载"
+        assert journal.load_positions(STRATEGY_KEY) == [], "账本中不再作为活跃订单加载"

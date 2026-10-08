@@ -17,7 +17,7 @@ from smart_trader.model import (
     OrderType,
     PositionSide,
 )
-from smart_trader.storage.order_journal import OrderIntent, OrderJournal
+from smart_trader.storage.order_journal import OrderIntent, OrderJournal, OrderRole
 from tests.fakes import (
     DEFAULT_STRATEGY_KEY,
     DEFAULT_SYMBOL,
@@ -72,7 +72,7 @@ def open_result(custom_id: str = "BUYexchange1") -> OrderResult:
 
 
 class TestPlaceSuccess:
-    def test_success_writes_order_and_settles_id(
+    def test_success_writes_position_and_record_and_settles_id(
         self, journal: OrderJournal
     ) -> None:
         trading = FakeTradingPort()
@@ -82,12 +82,16 @@ class TestPlaceSuccess:
         result = placer.place(build_request())
 
         assert result.status is OrderStatus.OPEN
-        orders = journal.load_orders(DEFAULT_STRATEGY_KEY)
-        assert len(orders) == 1, "挂上成功的订单必须落库"
-        assert orders[0].entry_id == "BUYexchange1", "以交易所返回的订单号为准"
-        assert orders[0].fixed_take_profit_rate == pytest.approx(0.01), (
+        positions = journal.load_positions(DEFAULT_STRATEGY_KEY)
+        assert len(positions) == 1, "挂上成功的仓位必须落库"
+        assert positions[0].entry_id == "BUYexchange1", "以交易所返回的订单号为准"
+        assert positions[0].fixed_take_profit_rate == pytest.approx(0.01), (
             "策略参数来自意图快照"
         )
+        records = journal.load_order_records(DEFAULT_STRATEGY_KEY)
+        assert len(records) == 1, "订单流水必须同步记录"
+        assert records[0].order_id == "BUYexchange1"
+        assert records[0].role is OrderRole.ENTRY
         assert journal.pending_ids(DEFAULT_STRATEGY_KEY) == [], "成功即核销"
 
     def test_preferred_id_is_registered_before_place(self, journal: OrderJournal) -> None:
@@ -126,9 +130,9 @@ class TestPlaceSuccess:
 
         placer.place(build_request())
 
-        orders = journal.load_orders(DEFAULT_STRATEGY_KEY)
-        assert orders[0].status is OrderStatus.CLOSED
-        assert orders[0].filled_quantity == pytest.approx(100.0)
+        positions = journal.load_positions(DEFAULT_STRATEGY_KEY)
+        assert positions[0].status is OrderStatus.CLOSED
+        assert positions[0].filled_quantity == pytest.approx(100.0)
 
     def test_exit_success_backfills_entry_rows(self, journal: OrderJournal) -> None:
         trading = FakeTradingPort()
@@ -151,9 +155,13 @@ class TestPlaceSuccess:
         )
         exit_placer.place(build_request("SELLpreferred"))
 
-        orders = journal.load_orders(DEFAULT_STRATEGY_KEY)
-        assert orders[0].exit_id == "SELLexit1"
-        assert orders[0].exit_price == pytest.approx(0.55)
+        positions = journal.load_positions(DEFAULT_STRATEGY_KEY)
+        assert positions[0].exit_id == "SELLexit1"
+        assert positions[0].exit_price == pytest.approx(0.55)
+        roles = [
+            record.role for record in journal.load_order_records(DEFAULT_STRATEGY_KEY)
+        ]
+        assert roles == [OrderRole.ENTRY, OrderRole.EXIT], "入场与出场的流水都要记录"
         assert journal.pending_ids(DEFAULT_STRATEGY_KEY) == []
 
 
@@ -180,7 +188,8 @@ class TestPlaceRejection:
             placer.place(build_request())
 
         assert journal.pending_ids(DEFAULT_STRATEGY_KEY) == []
-        assert journal.load_orders(DEFAULT_STRATEGY_KEY) == []
+        assert journal.load_positions(DEFAULT_STRATEGY_KEY) == []
+        assert journal.load_order_records(DEFAULT_STRATEGY_KEY) == [], "被拒不入流水"
 
     def test_rejected_result_without_exception_settles(self, journal: OrderJournal):
         """交易所未抛异常但直接回 rejected: 同样核销"""
@@ -200,7 +209,8 @@ class TestPlaceRejection:
 
         assert result.status is OrderStatus.REJECTED
         assert journal.pending_ids(DEFAULT_STRATEGY_KEY) == []
-        assert journal.load_orders(DEFAULT_STRATEGY_KEY) == []
+        assert journal.load_positions(DEFAULT_STRATEGY_KEY) == []
+        assert journal.load_order_records(DEFAULT_STRATEGY_KEY) == [], "被拒不入流水"
 
 
 class TestPlaceIndeterminate:

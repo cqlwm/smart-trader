@@ -12,13 +12,15 @@ from smart_trader.model import (
     OrderResult,
     OrderSide,
     OrderStatus,
+    OrderType,
     Symbol,
     SymbolInfo,
 )
 from smart_trader.storage.order_journal import (
-    IntentKind,
+    GridPositionRow,
     OrderIntent,
-    OrderRow,
+    OrderRecord,
+    OrderRole,
 )
 
 DEFAULT_SYMBOL = Symbol(base="DOGE", quote="USDT")
@@ -35,8 +37,8 @@ DEFAULT_SYMBOL_INFO = SymbolInfo(
 DEFAULT_STRATEGY_KEY = "dogeusdt_long_buy_1m"
 
 
-def make_order_row(entry_id: str = "e1", **overrides: object) -> OrderRow:
-    """构造测试用 order 行"""
+def make_position_row(entry_id: str = "e1", **overrides: object) -> GridPositionRow:
+    """构造测试用逻辑仓位行"""
     fields: dict[str, object] = {
         "entry_id": entry_id,
         "strategy_key": DEFAULT_STRATEGY_KEY,
@@ -48,23 +50,45 @@ def make_order_row(entry_id: str = "e1", **overrides: object) -> OrderRow:
         "status": OrderStatus.OPEN,
     }
     fields.update(overrides)
-    return OrderRow.model_validate(fields)
+    return GridPositionRow.model_validate(fields)
 
 
-def make_entry_intent(entry_order: OrderRow | None = None) -> OrderIntent:
+def make_order_record(
+    order_id: str = "BUYexchange1",
+    role: OrderRole = OrderRole.ENTRY,
+    **overrides: object,
+) -> OrderRecord:
+    """构造测试用订单流水记录"""
+    fields: dict[str, object] = {
+        "order_id": order_id,
+        "strategy_key": DEFAULT_STRATEGY_KEY,
+        "role": role,
+        "symbol": DEFAULT_SYMBOL.ccxt(),
+        "side": OrderSide.BUY,
+        "type": OrderType.LIMIT,
+        "price": 0.5,
+        "quantity": 100.0,
+        "filled_qty": 0.0,
+        "status": OrderStatus.OPEN,
+    }
+    fields.update(overrides)
+    return OrderRecord.model_validate(fields)
+
+
+def make_entry_intent(entry_position: GridPositionRow | None = None) -> OrderIntent:
     """构造测试用入场意图"""
     return OrderIntent(
-        kind=IntentKind.ENTRY,
+        kind=OrderRole.ENTRY,
         symbol=DEFAULT_SYMBOL,
         side=OrderSide.BUY,
-        entry_order=entry_order or make_order_row(),
+        entry_position=entry_position or make_position_row(),
     )
 
 
 def make_exit_intent(entry_ids: list[str] | None = None) -> OrderIntent:
     """构造测试用出场意图"""
     return OrderIntent(
-        kind=IntentKind.EXIT,
+        kind=OrderRole.EXIT,
         symbol=DEFAULT_SYMBOL,
         side=OrderSide.SELL,
         entry_ids=entry_ids if entry_ids is not None else ["e1", "e2"],

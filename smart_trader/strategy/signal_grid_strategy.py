@@ -20,10 +20,10 @@ from smart_trader.model import (
     Symbol,
 )
 from smart_trader.storage.order_journal import (
-    IntentKind,
+    GridPositionRow,
     OrderIntent,
     OrderJournal,
-    OrderRow,
+    OrderRole,
 )
 from smart_trader.strategy import Signal, SingleTimeframeStrategy
 
@@ -112,9 +112,9 @@ class GridPosition(BaseModel):
             rate_base = -1
         return self.price * (1 + rate * rate_base)
 
-    def to_row(self, strategy_key: str) -> OrderRow:
+    def to_row(self, strategy_key: str) -> GridPositionRow:
         """转换为账本行"""
-        return OrderRow(
+        return GridPositionRow(
             entry_id=self.entry_id,
             strategy_key=strategy_key,
             side=self.side,
@@ -137,7 +137,7 @@ class GridPosition(BaseModel):
         )
 
     @classmethod
-    def from_row(cls, row: OrderRow) -> "GridPosition":
+    def from_row(cls, row: GridPositionRow) -> "GridPosition":
         """从账本行还原"""
         return cls(
             entry_id=row.entry_id,
@@ -198,7 +198,7 @@ class GridPositionManager:
             return False
 
         with self._lock:
-            rows = self._journal.load_orders(self._strategy_key)
+            rows = self._journal.load_positions(self._strategy_key)
             logger.info("从账本加载逻辑仓位: %s 笔", len(rows))
             for row in rows:
                 position = GridPosition.from_row(row)
@@ -229,7 +229,7 @@ class GridPositionManager:
                 for position in self._positions.values()
             ]
             removed = [position.entry_id for position in closed_positions]
-            self._journal.sync_orders(self._strategy_key, rows, removed)
+            self._journal.sync_positions(self._strategy_key, rows, removed)
 
 
 class SignalGridStrategyConfig(BaseModel):
@@ -474,10 +474,10 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                     close_price,
                     first_price=close_price,
                     intent=OrderIntent(
-                        kind=IntentKind.ENTRY,
+                        kind=OrderRole.ENTRY,
                         symbol=self.config.symbol,
                         side=self.config.master_side,
-                        entry_order=position.to_row(self.config.strategy_key),
+                        entry_position=position.to_row(self.config.strategy_key),
                     ),
                 )
                 if entry_order_result is not None:
@@ -531,31 +531,54 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                     entry_order_query_result = self.trading.query(
                         position.entry_id, self.config.symbol
                     )
-                    position.status = (
-                        OrderStatus.EXPIRED
-                        if entry_order_query_result is None
-                        else entry_order_query_result.status
-                    )
-                    if not position.status.is_closed():
+                    if entry_order_query_result is None:
+                        position.status = OrderStatus.EXPIRED
+                    else:
+                        position.status = entry_order_query_result.status
+                        position.filled_quantity = entry_order_query_result.filled_qty
+
+                    if position.status.is_open():
+                        # 未成交完的入场单: 先撤掉剩余挂单防止继续建仓,
+                        # 撤单后再复查终态(撤单前可能又有成交)
+                        refreshed = self._cancel_and_refresh(position.entry_id)
+                        if refreshed is not None:
+                            position.status = refreshed.status
+                            position.filled_quantity = refreshed.filled_qty
+
+                    # 只有零成交才直接丢弃; 已成交的部分是真持仓, 必须纳入平仓
+                    if (
+                        not position.status.is_closed()
+                        and position.effective_filled_quantity <= 0
+                    ):
                         remove_positions.append(position)
-                        if position.status.is_open():
-                            self.trading.cancel(position.entry_id, self.config.symbol)
                         continue
 
+                remaining_qty = position.effective_filled_quantity
                 if position.exit_id and position.exit_price:
                     exit_order_query_result = self.trading.query(
                         position.exit_id, self.config.symbol
                     )
                     if exit_order_query_result is not None:
-                        exit_status = exit_order_query_result.status
-                        if exit_status.is_closed():
+                        if exit_order_query_result.status.is_closed():
                             remove_positions.append(position)
                             continue
-                        if exit_status.is_open():
-                            self.trading.cancel(position.exit_id, self.config.symbol)
+                        if exit_order_query_result.status.is_open():
+                            # 撤掉未成交完的旧出场单, 撤单后再复查终态
+                            refreshed = self._cancel_and_refresh(position.exit_id)
+                            if refreshed is not None:
+                                exit_order_query_result = refreshed
+                        # 出场单已成交的部分不能重复平: 从待平量中扣除
+                        remaining_qty = max(
+                            0.0,
+                            remaining_qty - exit_order_query_result.filled_qty,
+                        )
 
-                # 只按实际成交的数量平仓: 部分成交的入场单不能按委托量平仓
-                exit_qty += position.effective_filled_quantity
+                if remaining_qty <= 0:
+                    # 出场单实际已全部成交(仅本地状态未刷新): 平仓已完成, 直接归档
+                    remove_positions.append(position)
+                    continue
+
+                exit_qty += remaining_qty
                 position.exit_price = self.latest_kline_obj.close
                 exit_positions.append(position)
 
@@ -568,7 +591,7 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                 actual_exit_qty,
                 self.latest_kline_obj.close,
                 intent=OrderIntent(
-                    kind=IntentKind.EXIT,
+                    kind=OrderRole.EXIT,
                     symbol=self.config.symbol,
                     side=exit_order_side,
                     entry_ids=[position.entry_id for position in exit_positions],
@@ -589,6 +612,16 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                 self.is_running = False
 
         return exit_positions + remove_positions
+
+    def _cancel_and_refresh(self, custom_id: str) -> OrderResult | None:
+        """
+        撤掉未成交完的挂单并复查终态
+
+        撤单请求发出前可能又有成交, 因此复查一次拿最终的成交量与状态;
+        复查失败(返回 None)时由调用方沿用已知状态。
+        """
+        self.trading.cancel(custom_id, self.config.symbol)
+        return self.trading.query(custom_id, self.config.symbol)
 
     def _on_kline_finished(self):
         if not self.is_running or self.latest_kline_obj is None:
@@ -689,7 +722,7 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                             exit_price,
                             first_price=exit_price,
                             intent=OrderIntent(
-                                kind=IntentKind.EXIT,
+                                kind=OrderRole.EXIT,
                                 symbol=self.config.symbol,
                                 side=exit_order_side,
                                 entry_ids=[position.entry_id],

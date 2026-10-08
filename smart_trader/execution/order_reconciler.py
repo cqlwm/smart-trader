@@ -7,7 +7,7 @@
 - 查询失败 → 保留, 留给下一次对账;
 - 距预留时间过近的记录先跳过（可能尚未在交易所 settle）。
 
-单条记录的失败不会中断整体对账; 对账完成后策略再加载订单（load_orders）。
+单条记录的失败不会中断整体对账; 对账完成后策略再加载仓位（load_positions）。
 """
 
 from datetime import UTC, datetime, timedelta
@@ -19,8 +19,10 @@ from smart_trader.client.ports import TradingPort
 from smart_trader.model import OrderResult
 from smart_trader.storage.order_journal import (
     IdRecord,
-    IntentKind,
+    OrderIntent,
     OrderJournal,
+    OrderRecord,
+    OrderRole,
 )
 
 logger = log.getLogger(__name__)
@@ -114,13 +116,13 @@ class OrderReconciler:
         return order.filled_qty > 0
 
     def _recover(self, record: IdRecord, order: OrderResult) -> None:
-        """用意图快照 + 交易所事实重建订单行并核销"""
+        """用意图快照 + 交易所事实重建仓位与流水, 并核销"""
         intent = record.intent
-        if intent.kind is IntentKind.ENTRY:
-            template = intent.entry_order
+        if intent.kind is OrderRole.ENTRY:
+            template = intent.entry_position
             if template is None:
-                raise ValueError(f"ENTRY 意图缺少 entry_order 快照: {record.id}")
-            row = template.model_copy(
+                raise ValueError(f"ENTRY 意图缺少 entry_position 快照: {record.id}")
+            position = template.model_copy(
                 update={
                     "entry_id": order.custom_id,
                     "strategy_key": self.strategy_key,
@@ -131,7 +133,9 @@ class OrderReconciler:
                     "filled_quantity": order.filled_qty,
                 }
             )
-            self.journal.confirm(record.id, row)
+            self.journal.confirm_entry(
+                record.id, position, self._record_from_query(intent, order)
+            )
             return
 
         self.journal.confirm_exit(
@@ -139,4 +143,23 @@ class OrderReconciler:
             intent.entry_ids,
             exit_id=order.custom_id,
             exit_price=order.price if order.price is not None else 0.0,
+            order=self._record_from_query(intent, order),
+        )
+
+    def _record_from_query(
+        self, intent: OrderIntent, result: OrderResult
+    ) -> OrderRecord:
+        """从意图快照 + 交易所查询事实构造订单流水"""
+        return OrderRecord(
+            order_id=result.custom_id,
+            strategy_key=self.strategy_key,
+            role=intent.kind,
+            symbol=intent.symbol.ccxt(),
+            side=result.side if result.side is not None else intent.side,
+            type=intent.order_type,
+            price=result.price,
+            quantity=result.quantity,
+            filled_qty=result.filled_qty,
+            avg_price=result.avg_price,
+            status=result.status,
         )

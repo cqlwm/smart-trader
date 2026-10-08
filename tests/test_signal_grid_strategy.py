@@ -1,5 +1,6 @@
 
 import pytest
+from pydantic import ValidationError
 
 from smart_trader.exceptions import ErrorCode, SmartTraderError
 from smart_trader.model import (
@@ -136,6 +137,16 @@ class TestClosePositionRatio:
         strategy.check_close_position()
 
         assert trading.placed[0].quantity == pytest.approx(100.0)
+
+    def test_ratio_bounds_are_enforced(self):
+        """close_position_ratio 约束: 0 < ratio <= 1"""
+        with pytest.raises(ValidationError):
+            build_config(close_position_ratio=0.0)
+        with pytest.raises(ValidationError):
+            build_config(close_position_ratio=1.01)
+
+        assert build_config(close_position_ratio=0.5).close_position_ratio == 0.5
+        assert build_config(close_position_ratio=1.0).close_position_ratio == 1.0
 
     def test_multiple_orders_are_summed(self):
         strategy, trading, _ = build_strategy(build_config(close_position_ratio=0.95))
@@ -375,6 +386,202 @@ class TestOrderStatusHandling:
         assert trading.placed == [], "已成交的止盈单不应再次下单"
 
 
+class TestPartialFillEntry:
+    """入场单部分成交的处理: 撤剩余挂单后, 已成交部分照样平仓"""
+
+    def test_partial_filled_entry_is_closed_by_filled_amount(self):
+        strategy, trading, _ = build_strategy()
+        position = GridPosition(
+            entry_id="p1",
+            side=OrderSide.BUY,
+            price=100.0,
+            quantity=100.0,
+            fixed_take_profit_rate=0.01,
+            signal_min_take_profit_rate=0.002,
+            status=OrderStatus.OPEN,
+        )
+        strategy.position_manager.add_position(position)
+        set_latest_kline(strategy, 101.1)
+        trading.queue_query(
+            OrderResult(
+                custom_id="p1",
+                symbol=SYMBOL,
+                side=OrderSide.BUY,
+                status=OrderStatus.OPEN,
+                quantity=100.0,
+                filled_qty=40.0,
+                price=100.0,
+            ),
+            OrderResult(
+                custom_id="p1",
+                symbol=SYMBOL,
+                side=OrderSide.BUY,
+                status=OrderStatus.CANCELED,
+                quantity=100.0,
+                filled_qty=40.0,
+                price=100.0,
+            ),
+        )
+
+        closed_positions = strategy.check_close_position()
+
+        assert trading.canceled == ["p1"], "必须先撤掉剩余挂单, 防止继续建仓"
+        assert closed_positions == [position]
+        assert position.filled_quantity == pytest.approx(40.0), "查询结果必须回写成交量"
+        assert len(trading.placed) == 1, "已成交部分必须挂出平仓单, 不能丢敞口"
+        exit_request = trading.placed[0]
+        assert exit_request.side is OrderSide.SELL
+        assert exit_request.quantity == pytest.approx(40.0), "平仓量 = 实际成交量"
+
+    def test_zero_filled_entry_is_still_dropped(self):
+        """零成交入场单: 撤单后直接丢弃, 不产生平仓单"""
+        strategy, trading, _ = build_strategy()
+        position = GridPosition(
+            entry_id="p1",
+            side=OrderSide.BUY,
+            price=100.0,
+            quantity=100.0,
+            fixed_take_profit_rate=0.01,
+            signal_min_take_profit_rate=0.002,
+            status=OrderStatus.OPEN,
+        )
+        strategy.position_manager.add_position(position)
+        set_latest_kline(strategy, 101.1)
+        trading.queue_query(
+            OrderResult(
+                custom_id="p1",
+                symbol=SYMBOL,
+                side=OrderSide.BUY,
+                status=OrderStatus.OPEN,
+                quantity=100.0,
+                filled_qty=0.0,
+                price=100.0,
+            ),
+            OrderResult(
+                custom_id="p1",
+                symbol=SYMBOL,
+                side=OrderSide.BUY,
+                status=OrderStatus.CANCELED,
+                quantity=100.0,
+                filled_qty=0.0,
+                price=100.0,
+            ),
+        )
+
+        closed_positions = strategy.check_close_position()
+
+        assert trading.canceled == ["p1"]
+        assert closed_positions == [position]
+        assert trading.placed == [], "零成交没有可平仓位"
+
+
+class TestExitOrderReplacement:
+    """出场单部分成交后的重挂: 必须扣除已成交部分"""
+
+    def build_position_with_exit(self) -> GridPosition:
+        position = build_position("p1", 100.0, 100.0)
+        position.exit_id = "x1"
+        position.exit_price = 101.0
+        return position
+
+    def test_replacement_subtracts_filled_amount(self):
+        strategy, trading, _ = build_strategy()
+        position = self.build_position_with_exit()
+        strategy.position_manager.add_position(position)
+        set_latest_kline(strategy, 101.1)
+        trading.queue_query(
+            OrderResult(
+                custom_id="x1",
+                symbol=SYMBOL,
+                side=OrderSide.SELL,
+                status=OrderStatus.OPEN,
+                quantity=100.0,
+                filled_qty=30.0,
+                price=101.0,
+            ),
+            OrderResult(
+                custom_id="x1",
+                symbol=SYMBOL,
+                side=OrderSide.SELL,
+                status=OrderStatus.CANCELED,
+                quantity=100.0,
+                filled_qty=30.0,
+                price=101.0,
+            ),
+        )
+
+        strategy.check_close_position()
+
+        assert trading.canceled == ["x1"], "未成交完的旧出场单必须先撤"
+        assert len(trading.placed) == 1
+        assert trading.placed[0].quantity == pytest.approx(70.0), (
+            "重挂量必须扣除已成交的 30"
+        )
+
+    def test_replacement_keeps_full_quantity_when_unfilled(self):
+        """旧出场单零成交被撤: 按原量重挂"""
+        strategy, trading, _ = build_strategy()
+        position = self.build_position_with_exit()
+        strategy.position_manager.add_position(position)
+        set_latest_kline(strategy, 101.1)
+        trading.queue_query(
+            OrderResult(
+                custom_id="x1",
+                symbol=SYMBOL,
+                side=OrderSide.SELL,
+                status=OrderStatus.OPEN,
+                quantity=100.0,
+                filled_qty=0.0,
+                price=101.0,
+            ),
+            OrderResult(
+                custom_id="x1",
+                symbol=SYMBOL,
+                side=OrderSide.SELL,
+                status=OrderStatus.CANCELED,
+                quantity=100.0,
+                filled_qty=0.0,
+                price=101.0,
+            ),
+        )
+
+        strategy.check_close_position()
+
+        assert trading.placed[0].quantity == pytest.approx(100.0)
+
+    def test_stale_fully_filled_exit_is_archived_not_replaced(self):
+        """出场单实际已全部成交(撤单复查才发现): 直接归档, 不重复下单"""
+        strategy, trading, _ = build_strategy()
+        position = self.build_position_with_exit()
+        strategy.position_manager.add_position(position)
+        set_latest_kline(strategy, 101.1)
+        trading.queue_query(
+            OrderResult(
+                custom_id="x1",
+                symbol=SYMBOL,
+                side=OrderSide.SELL,
+                status=OrderStatus.OPEN,
+                quantity=100.0,
+                filled_qty=100.0,
+                price=101.0,
+            ),
+            OrderResult(
+                custom_id="x1",
+                symbol=SYMBOL,
+                side=OrderSide.SELL,
+                status=OrderStatus.CANCELED,
+                quantity=100.0,
+                filled_qty=100.0,
+                price=101.0,
+            ),
+        )
+
+        closed_positions = strategy.check_close_position()
+
+        assert closed_positions == [position]
+        assert trading.placed == [], "实际已全平, 不能再挂单"
+
+
 class TestRealTimeTakeProfit:
     """take_profit_use_limit_order: 入场成交后立刻挂出反向限价止盈单"""
 
@@ -467,7 +674,7 @@ class TestJournalIntegration:
 
         assert strategy.check_open_position() is True
 
-        rows = journal.load_orders(STRATEGY_KEY)
+        rows = journal.load_positions(STRATEGY_KEY)
         assert len(rows) == 1, "挂上的入场单必须落账"
         assert rows[0].status is OrderStatus.OPEN
         assert rows[0].fixed_take_profit_rate == pytest.approx(0.01), (

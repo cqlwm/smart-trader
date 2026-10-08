@@ -14,14 +14,15 @@ from smart_trader.model import (
     OrderSide,
     OrderStatus,
 )
-from smart_trader.storage.order_journal import OrderJournal
+from smart_trader.storage.order_journal import OrderJournal, OrderRole
 from tests.fakes import (
     DEFAULT_STRATEGY_KEY,
     DEFAULT_SYMBOL,
     FakeTradingPort,
     make_entry_intent,
     make_exit_intent,
-    make_order_row,
+    make_order_record,
+    make_position_row,
 )
 
 OTHER_KEY = "qqqusdt_long_buy_1m"
@@ -74,12 +75,15 @@ class TestRecoverEntry:
         summary = reconciler.reconcile()
 
         assert summary.recovered == 1
-        orders = journal.load_orders(DEFAULT_STRATEGY_KEY)
+        orders = journal.load_positions(DEFAULT_STRATEGY_KEY)
         assert len(orders) == 1, "对账必须把交易所已存在的订单补回账本"
         assert orders[0].filled_quantity == pytest.approx(30.0), "实际成交量以交易所为准"
         assert orders[0].fixed_take_profit_rate == pytest.approx(0.01), (
             "策略参数来自意图快照"
         )
+        records = journal.load_order_records(DEFAULT_STRATEGY_KEY)
+        assert len(records) == 1, "恢复的订单必须补录流水"
+        assert records[0].role is OrderRole.ENTRY
         assert journal.pending_ids(DEFAULT_STRATEGY_KEY) == []
         assert trading.queries == [custom_id], "必须用预留订单号去查"
 
@@ -91,7 +95,7 @@ class TestRecoverEntry:
 
         reconciler.reconcile()
 
-        orders = journal.load_orders(DEFAULT_STRATEGY_KEY)
+        orders = journal.load_positions(DEFAULT_STRATEGY_KEY)
         assert orders[0].entry_id == "BUYrewritten"
 
     def test_partial_fill_on_canceled_still_recovers(self, journal: OrderJournal) -> None:
@@ -106,7 +110,7 @@ class TestRecoverEntry:
         summary = reconciler.reconcile()
 
         assert summary.recovered == 1
-        orders = journal.load_orders(DEFAULT_STRATEGY_KEY)
+        orders = journal.load_positions(DEFAULT_STRATEGY_KEY)
         assert orders[0].filled_quantity == pytest.approx(40.0)
 
     def test_settles_when_order_not_found(self, journal: OrderJournal) -> None:
@@ -119,7 +123,7 @@ class TestRecoverEntry:
 
         assert summary.settled == 1
         assert journal.pending_ids(DEFAULT_STRATEGY_KEY) == [], "查不到即核销"
-        assert journal.load_orders(DEFAULT_STRATEGY_KEY) == []
+        assert journal.load_positions(DEFAULT_STRATEGY_KEY) == []
         assert trading.queries == [custom_id]
 
     def test_settles_when_rejected_without_fill(self, journal: OrderJournal) -> None:
@@ -131,13 +135,17 @@ class TestRecoverEntry:
         summary = reconciler.reconcile()
 
         assert summary.settled == 1
-        assert journal.load_orders(DEFAULT_STRATEGY_KEY) == []
+        assert journal.load_positions(DEFAULT_STRATEGY_KEY) == []
 
 
 class TestRecoverExit:
     def test_recovers_exit_into_entry_rows(self, journal: OrderJournal) -> None:
         first = journal.reserve(DEFAULT_STRATEGY_KEY, make_entry_intent())
-        journal.confirm(first, make_order_row("BUYentry1"))
+        journal.confirm_entry(
+            first,
+            make_position_row("BUYentry1"),
+            make_order_record("in-BUYentry1"),
+        )
         journal.reserve(DEFAULT_STRATEGY_KEY, make_exit_intent(["BUYentry1"]))
         trading = FakeTradingPort()
         trading.queue_query(
@@ -155,9 +163,13 @@ class TestRecoverExit:
         summary = reconciler.reconcile()
 
         assert summary.recovered == 1
-        orders = journal.load_orders(DEFAULT_STRATEGY_KEY)
+        orders = journal.load_positions(DEFAULT_STRATEGY_KEY)
         assert orders[0].exit_id == "SELLexit1"
         assert orders[0].exit_price == pytest.approx(0.55)
+        roles = [
+            record.role for record in journal.load_order_records(DEFAULT_STRATEGY_KEY)
+        ]
+        assert roles.count(OrderRole.EXIT) == 1, "出场单恢复必须补录流水"
         assert journal.pending_ids(DEFAULT_STRATEGY_KEY) == []
 
 

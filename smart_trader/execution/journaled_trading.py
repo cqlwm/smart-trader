@@ -15,10 +15,11 @@ from smart_trader.client.ports import TradingPort
 from smart_trader.exceptions import ErrorCode, SmartTraderError
 from smart_trader.model import OrderRequest, OrderResult, Symbol
 from smart_trader.storage.order_journal import (
-    IntentKind,
+    GridPositionRow,
     OrderIntent,
     OrderJournal,
-    OrderRow,
+    OrderRecord,
+    OrderRole,
 )
 
 logger = log.getLogger(__name__)
@@ -108,8 +109,12 @@ class JournaledTradingPort:
     def _confirm(
         self, custom_id: str, request: OrderRequest, result: OrderResult
     ) -> None:
-        if self.intent.kind is IntentKind.ENTRY:
-            self.journal.confirm(custom_id, self._build_entry_row(request, result))
+        if self.intent.kind is OrderRole.ENTRY:
+            self.journal.confirm_entry(
+                custom_id,
+                self._build_entry_position(request, result),
+                self._build_order_record(request, result, OrderRole.ENTRY),
+            )
             return
 
         exit_price = result.price if result.price is not None else request.price
@@ -118,12 +123,15 @@ class JournaledTradingPort:
             self.intent.entry_ids,
             exit_id=result.custom_id,
             exit_price=exit_price or 0.0,
+            order=self._build_order_record(request, result, OrderRole.EXIT),
         )
 
-    def _build_entry_row(self, request: OrderRequest, result: OrderResult) -> OrderRow:
-        template = self.intent.entry_order
+    def _build_entry_position(
+        self, request: OrderRequest, result: OrderResult
+    ) -> GridPositionRow:
+        template = self.intent.entry_position
         if template is None:
-            raise ValueError("ENTRY 意图缺少 entry_order 快照, 无法重建订单行")
+            raise ValueError("ENTRY 意图缺少 entry_position 快照, 无法重建仓位行")
         return template.model_copy(
             update={
                 "entry_id": result.custom_id,
@@ -136,4 +144,21 @@ class JournaledTradingPort:
                 "status": result.status,
                 "filled_quantity": result.filled_qty,
             }
+        )
+
+    def _build_order_record(
+        self, request: OrderRequest, result: OrderResult, role: OrderRole
+    ) -> OrderRecord:
+        return OrderRecord(
+            order_id=result.custom_id,
+            strategy_key=self.strategy_key,
+            role=role,
+            symbol=request.symbol.ccxt(),
+            side=result.side if result.side is not None else request.side,
+            type=request.type,
+            price=result.price if result.price is not None else request.price,
+            quantity=request.quantity,
+            filled_qty=result.filled_qty,
+            avg_price=result.avg_price,
+            status=result.status,
         )
