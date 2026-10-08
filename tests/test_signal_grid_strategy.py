@@ -1,6 +1,5 @@
 
 import pytest
-from pydantic import ValidationError
 
 from smart_trader.exceptions import ErrorCode, SmartTraderError
 from smart_trader.model import (
@@ -113,43 +112,25 @@ def build_strategy(
     )
 
 
-class TestClosePositionRatio:
-    def test_partial_close_uses_ratio(self):
-        strategy, trading, _ = build_strategy(build_config(close_position_ratio=0.99))
+class TestCloseFullQuantity:
+    """平仓恒定按实际成交量全额执行 (平仓比例参数已移除)"""
+
+    def test_config_no_longer_exposes_close_position_ratio(self):
+        """平仓比例参数必须已从配置中移除"""
+        assert "close_position_ratio" not in SignalGridStrategyConfig.model_fields
+
+    def test_closes_full_quantity(self):
+        strategy, trading, _ = build_strategy()
         strategy.position_manager.add_position(build_position("test1", 100.0, 100.0))
         set_latest_kline(strategy, 101.1)
 
         closed_positions = strategy.check_close_position()
 
         assert len(closed_positions) == 1
-        assert len(trading.placed) == 1
-        # 平仓数量 = 原数量 * 平仓比例
-        assert trading.placed[0].quantity == pytest.approx(100.0 * 0.99)
-
-    def test_default_ratio_closes_fully(self):
-        config = build_config()
-        assert config.close_position_ratio == 1.0
-
-        strategy, trading, _ = build_strategy(config)
-        strategy.position_manager.add_position(build_position("test1", 100.0, 100.0))
-        set_latest_kline(strategy, 101.1)
-
-        strategy.check_close_position()
-
         assert trading.placed[0].quantity == pytest.approx(100.0)
 
-    def test_ratio_bounds_are_enforced(self):
-        """close_position_ratio 约束: 0 < ratio <= 1"""
-        with pytest.raises(ValidationError):
-            build_config(close_position_ratio=0.0)
-        with pytest.raises(ValidationError):
-            build_config(close_position_ratio=1.01)
-
-        assert build_config(close_position_ratio=0.5).close_position_ratio == 0.5
-        assert build_config(close_position_ratio=1.0).close_position_ratio == 1.0
-
     def test_multiple_orders_are_summed(self):
-        strategy, trading, _ = build_strategy(build_config(close_position_ratio=0.95))
+        strategy, trading, _ = build_strategy()
         strategy.position_manager.add_position(build_position("test1", 100.0, 100.0))
         strategy.position_manager.add_position(build_position("test2", 99.0, 50.0))
         set_latest_kline(strategy, 101.1)
@@ -157,8 +138,8 @@ class TestClosePositionRatio:
         closed_positions = strategy.check_close_position()
 
         assert len(closed_positions) == 2
-        # 总数量 = 100 + 50 = 150, 平仓数量 = 150 * 0.95
-        assert trading.placed[0].quantity == pytest.approx(150.0 * 0.95)
+        # 总数量 = 100 + 50 = 150
+        assert trading.placed[0].quantity == pytest.approx(150.0)
 
     def test_exit_order_is_reversal_side(self):
         strategy, trading, _ = build_strategy()
@@ -233,9 +214,7 @@ class TestExitQuantityUsesFilledAmount:
         assert trading.placed == [], "未成交的订单不应触发平仓"
 
     def test_real_time_take_profit_uses_filled_quantity(self):
-        config = build_config(
-            take_profit_use_limit_order=True, close_position_ratio=0.5
-        )
+        config = build_config(take_profit_use_limit_order=True)
         strategy, trading, _ = build_strategy(config)
         strategy.position_manager.add_position(
             build_position(
@@ -250,8 +229,8 @@ class TestExitQuantityUsesFilledAmount:
 
         strategy._on_kline()
 
-        assert trading.placed[0].quantity == pytest.approx(20.0), (
-            "止盈数量 = 实际成交量 * 平仓比例"
+        assert trading.placed[0].quantity == pytest.approx(40.0), (
+            "止盈数量 = 实际成交量"
         )
 
 
@@ -588,9 +567,7 @@ class TestRealTimeTakeProfit:
     def build_limit_tp_strategy(
         self,
     ) -> tuple[SignalGridStrategy, FakeTradingPort]:
-        config = build_config(
-            take_profit_use_limit_order=True, close_position_ratio=0.5
-        )
+        config = build_config(take_profit_use_limit_order=True)
         strategy, trading, _ = build_strategy(config)
         position = build_position("entry1", 100.0, 100.0)
         position.status = OrderStatus.OPEN
@@ -617,7 +594,7 @@ class TestRealTimeTakeProfit:
         request = trading.placed[0]
         assert request.side is OrderSide.SELL
         assert request.price == pytest.approx(101.0), "止盈价 = 入场价 * (1 + 1%)"
-        assert request.quantity == pytest.approx(50.0), "按平仓比例下单"
+        assert request.quantity == pytest.approx(100.0), "全额止盈"
         assert strategy.position_manager.positions[0].exit_id == request.custom_id
 
     def test_tracks_filled_exit_order(self):
@@ -633,8 +610,8 @@ class TestRealTimeTakeProfit:
                 symbol=SYMBOL,
                 side=OrderSide.SELL,
                 status=OrderStatus.CLOSED,
-                quantity=50.0,
-                filled_qty=50.0,
+                quantity=100.0,
+                filled_qty=100.0,
             )
         )
         # 价格区间必须覆盖止盈价, 否则不会去查询止盈单状态

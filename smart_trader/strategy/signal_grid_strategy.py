@@ -2,7 +2,7 @@ import secrets
 import threading
 from collections.abc import Callable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from smart_trader import log
 from smart_trader.client.ports import MarketDataPort, TradingPort
@@ -255,9 +255,6 @@ class SignalGridStrategyConfig(BaseModel):
     take_profit_use_limit_order: bool = False
     # 固定比例止盈率
     fixed_take_profit_rate: float = 0.006
-
-    # 平仓比例, 大于 1 会反向加仓
-    close_position_ratio: float = Field(default=1.0, gt=0, le=1)
 
     place_order_behavior: PlaceOrderBehavior = (
         PlaceOrderBehavior.CHASER_OPEN
@@ -580,11 +577,9 @@ class SignalGridStrategy(SingleTimeframeStrategy):
 
         if exit_qty > 0:
             exit_order_side = self.config.master_side.reversal()
-            # 精度按 step_size 由交易所适配器向下取整, 这里只做比例换算
-            actual_exit_qty = exit_qty * self.config.close_position_ratio
             execute_exit_order_result = self.place_order(
                 exit_order_side,
-                actual_exit_qty,
+                exit_qty,
                 self.latest_kline_obj.close,
                 intent=OrderIntent(
                     kind=OrderRole.EXIT,
@@ -707,10 +702,7 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                             + self.config.master_side.to_int()
                             * self.config.fixed_take_profit_rate
                         )
-                        exit_qty = (
-                            position.effective_filled_quantity
-                            * self.config.close_position_ratio
-                        )
+                        exit_qty = position.effective_filled_quantity
 
                         exit_order_result = self.place_order(
                             exit_order_side,
