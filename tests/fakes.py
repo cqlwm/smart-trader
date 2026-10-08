@@ -16,7 +16,7 @@ from smart_trader.model import (
     Symbol,
     SymbolInfo,
 )
-from smart_trader.storage.order_journal import (
+from smart_trader.storage.records import (
     GridPositionRow,
     OrderIntent,
     OrderRecord,

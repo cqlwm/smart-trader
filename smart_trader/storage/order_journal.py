@@ -1,4 +1,4 @@
-"""订单日志（sqlite）
+"""订单日志（sqlite, SQLAlchemy Core）
 
 三张表:
 
@@ -7,285 +7,106 @@
   结果未知保持 used=0, 由对账器去交易所确认。语义见 .memory/01-system-architecture.md 第十一节。
 - `grid_positions`: 逻辑仓位（GridPosition）的持久化, 以 strategy_key 归属, active 标记当前/归档。
 - `orders`: 订单流水, 一次"交易所确认存在过"的委托一行（append 为主, 被拒尝试只留在 id 表）。
+
+实现约定（设计见 .memory/03-coding-design.md）:
+
+- 表结构来自 `schema.py`（单一来源）, 记录模型来自 `records.py`;
+- 语句全部用 SQLAlchemy Core 构造, 不手写 SQL 字符串
+  （唯一例外是 `_migrate_legacy_schema`, 它面对未知的历史结构）;
+- 每个方法通过 engine 独占一次连接与事务, 天然线程安全;
+  文件库依赖 SQLite WAL + busy_timeout 串行化并发写, 内存库（测试）用 StaticPool 单连接。
 """
 
 import secrets
-import sqlite3
-import threading
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
+from sqlalchemy import (
+    Engine,
+    Table,
+    create_engine,
+    event,
+    insert,
+    inspect,
+    select,
+    text,
+    update,
+)
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import Connection, RowMapping
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.pool import StaticPool
 
 from smart_trader import log
-from smart_trader.model import OrderSide, OrderStatus, OrderType, Symbol
+from smart_trader.model import OrderSide
+from smart_trader.storage import schema
+from smart_trader.storage.records import (
+    GridPositionRow,
+    IdRecord,
+    OrderIntent,
+    OrderRecord,
+)
 
 logger = log.getLogger(__name__)
 
-
-class OrderRole(Enum):
-    """下单意图 / 订单流水角色"""
-
-    ENTRY = "entry"
-    EXIT = "exit"
-
-
-class GridPositionRow(BaseModel):
-    """grid_positions 表的一行, `GridPosition`（逻辑仓位）的持久化形态"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    entry_id: str
-    strategy_key: str
-    side: OrderSide
-    price: float
-    quantity: float
-    filled_quantity: float = 0.0
-    fixed_take_profit_rate: float
-    signal_min_take_profit_rate: float
-    exit_price: float | None = None
-    status: OrderStatus | None = None
-    exit_id: str | None = None
-
-    # 止损字段
-    stop_loss_rate: float = 0.0
-    enable_stop_loss: bool = False
-    trailing_stop_rate: float = 0.0
-    enable_trailing_stop: bool = False
-    trailing_stop_activation_profit_rate: float = 0.0
-    current_stop_price: float | None = None
-
-    active: bool = True
-    created_at: str = ""
-    updated_at: str = ""
-
-
-class OrderRecord(BaseModel):
-    """orders 表的一行: 一次真实委托的流水记录（审计/统计）"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    order_id: str
-    strategy_key: str
-    role: OrderRole
-    symbol: str
-    side: OrderSide
-    type: OrderType
-    price: float | None = None
-    quantity: float = 0.0
-    filled_qty: float = 0.0
-    avg_price: float | None = None
-    status: OrderStatus
-    created_at: str = ""
-    updated_at: str = ""
-
-
-class OrderIntent(BaseModel):
-    """下单意图快照: 崩溃后对账重建仓位与流水所需的最小上下文"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    kind: OrderRole
-    symbol: Symbol
-    side: OrderSide
-    # 网格下单恒为 LIMIT; 保留字段供对账重建流水使用
-    order_type: OrderType = OrderType.LIMIT
-    # kind=ENTRY: 重建仓位行的模板（策略参数来自这里）
-    entry_position: GridPositionRow | None = None
-    # kind=EXIT: 该出场单关联的入场单号
-    entry_ids: list[str] = []
-
-
-class IdRecord(BaseModel):
-    """order_ids 表的一行"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    used: bool
-    type: str
-    strategy_key: str
-    intent: OrderIntent
-    created_at: str
-    updated_at: str = ""
+_MAX_ID_RETRY = 5
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-_CREATE_ORDER_IDS = """
-CREATE TABLE IF NOT EXISTS order_ids (
-    id TEXT PRIMARY KEY,
-    used INTEGER NOT NULL DEFAULT 0,
-    type TEXT NOT NULL DEFAULT 'ORDER',
-    strategy_key TEXT NOT NULL,
-    intent TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_order_ids_pending ON order_ids(strategy_key, used);
-"""
+def _on_connect(dbapi_connection: Any, _connection_record: Any) -> None:
+    """每个物理连接建立时设置: WAL（内存库自动忽略）+ 写锁等待 30s"""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=30000")
+    cursor.close()
 
-_CREATE_GRID_POSITIONS = """
-CREATE TABLE IF NOT EXISTS grid_positions (
-    entry_id TEXT PRIMARY KEY,
-    strategy_key TEXT NOT NULL,
-    side TEXT NOT NULL,
-    price REAL NOT NULL,
-    quantity REAL NOT NULL,
-    filled_quantity REAL NOT NULL DEFAULT 0,
-    fixed_take_profit_rate REAL NOT NULL,
-    signal_min_take_profit_rate REAL NOT NULL,
-    exit_price REAL,
-    status TEXT,
-    exit_id TEXT,
-    stop_loss_rate REAL NOT NULL DEFAULT 0,
-    enable_stop_loss INTEGER NOT NULL DEFAULT 0,
-    trailing_stop_rate REAL NOT NULL DEFAULT 0,
-    enable_trailing_stop INTEGER NOT NULL DEFAULT 0,
-    trailing_stop_activation_profit_rate REAL NOT NULL DEFAULT 0,
-    current_stop_price REAL,
-    active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_grid_positions_strategy ON grid_positions(strategy_key, active);
-"""
 
-_CREATE_ORDERS = """
-CREATE TABLE IF NOT EXISTS orders (
-    order_id TEXT PRIMARY KEY,
-    strategy_key TEXT NOT NULL,
-    role TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    side TEXT NOT NULL,
-    type TEXT NOT NULL,
-    price REAL,
-    quantity REAL NOT NULL DEFAULT 0,
-    filled_qty REAL NOT NULL DEFAULT 0,
-    avg_price REAL,
-    status TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_orders_strategy ON orders(strategy_key, role);
-"""
-
-_POSITION_COLUMNS = (
-    "entry_id",
-    "strategy_key",
-    "side",
-    "price",
-    "quantity",
-    "filled_quantity",
-    "fixed_take_profit_rate",
-    "signal_min_take_profit_rate",
-    "exit_price",
-    "status",
-    "exit_id",
-    "stop_loss_rate",
-    "enable_stop_loss",
-    "trailing_stop_rate",
-    "enable_trailing_stop",
-    "trailing_stop_activation_profit_rate",
-    "current_stop_price",
-    "active",
-    "created_at",
-    "updated_at",
-)
-
-_UPSERT_POSITION = f"""
-INSERT INTO grid_positions ({", ".join(_POSITION_COLUMNS)})
-VALUES ({", ".join("?" for _ in _POSITION_COLUMNS)})
-ON CONFLICT(entry_id) DO UPDATE SET
-    strategy_key=excluded.strategy_key,
-    side=excluded.side,
-    price=excluded.price,
-    quantity=excluded.quantity,
-    filled_quantity=excluded.filled_quantity,
-    fixed_take_profit_rate=excluded.fixed_take_profit_rate,
-    signal_min_take_profit_rate=excluded.signal_min_take_profit_rate,
-    exit_price=excluded.exit_price,
-    status=excluded.status,
-    exit_id=excluded.exit_id,
-    stop_loss_rate=excluded.stop_loss_rate,
-    enable_stop_loss=excluded.enable_stop_loss,
-    trailing_stop_rate=excluded.trailing_stop_rate,
-    enable_trailing_stop=excluded.enable_trailing_stop,
-    trailing_stop_activation_profit_rate=excluded.trailing_stop_activation_profit_rate,
-    current_stop_price=excluded.current_stop_price,
-    active=excluded.active,
-    updated_at=excluded.updated_at
-"""
-
-_ORDER_RECORD_COLUMNS = (
-    "order_id",
-    "strategy_key",
-    "role",
-    "symbol",
-    "side",
-    "type",
-    "price",
-    "quantity",
-    "filled_qty",
-    "avg_price",
-    "status",
-    "created_at",
-    "updated_at",
-)
-
-_UPSERT_ORDER_RECORD = f"""
-INSERT INTO orders ({", ".join(_ORDER_RECORD_COLUMNS)})
-VALUES ({", ".join("?" for _ in _ORDER_RECORD_COLUMNS)})
-ON CONFLICT(order_id) DO UPDATE SET
-    strategy_key=excluded.strategy_key,
-    role=excluded.role,
-    symbol=excluded.symbol,
-    side=excluded.side,
-    type=excluded.type,
-    price=excluded.price,
-    quantity=excluded.quantity,
-    filled_qty=excluded.filled_qty,
-    avg_price=excluded.avg_price,
-    status=excluded.status,
-    updated_at=excluded.updated_at
-"""
-
-_MAX_ID_RETRY = 5
+def _create_engine(db_path: str) -> Engine:
+    """创建 SQLite 引擎: 文件库用默认连接池, 内存库（测试）用 StaticPool 共享单连接"""
+    if db_path == ":memory:":
+        engine = create_engine(
+            "sqlite://",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
+    else:
+        engine = create_engine(
+            f"sqlite:///{db_path}",
+            connect_args={"check_same_thread": False},
+        )
+    event.listen(engine, "connect", _on_connect)
+    return engine
 
 
 class OrderJournal:
     """订单日志: id 表（WAL）+ 逻辑仓位表 + 订单流水表 + 事务, 线程安全"""
 
     def __init__(self, db_path: str = ":memory:"):
-        self._lock = threading.RLock()
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        with self._conn:
-            self._migrate_legacy_schema()
-            self._conn.executescript(_CREATE_ORDER_IDS)
-            self._conn.executescript(_CREATE_GRID_POSITIONS)
-            self._conn.executescript(_CREATE_ORDERS)
+        self._engine = _create_engine(db_path)
+        with self._engine.begin() as conn:
+            self._migrate_legacy_schema(conn)
+            schema.metadata.create_all(conn)
 
     def close(self) -> None:
-        self._conn.close()
+        self._engine.dispose()
 
-    def _migrate_legacy_schema(self) -> None:
+    def _migrate_legacy_schema(self, conn: Connection) -> None:
         """
         兼容旧库（Step 8 之前）: 当时的 orders 表承载的是逻辑仓位（无 role 列）。
 
         迁移动作: orders 改名 grid_positions; 旧意图快照 `entry_order` 字段改名为
         `entry_position`（仅字符串替换 id 表内的 JSON）。对全新库与非旧结构库幂等无感。
         """
-        cursor = self._conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        tables = {row["name"] for row in cursor.fetchall()}
+        inspector = inspect(conn)
+        tables = set(inspector.get_table_names())
         if "orders" not in tables:
             return
 
-        cursor = self._conn.execute("PRAGMA table_info(orders)")
-        columns = {row["name"] for row in cursor.fetchall()}
+        columns = {column["name"] for column in inspector.get_columns("orders")}
         if "role" in columns:
             return  # 已是新版订单流水表
 
@@ -295,11 +116,13 @@ class OrderJournal:
             )
 
         logger.info("检测到旧版 orders 表（逻辑仓位形态）, 迁移为 grid_positions")
-        self._conn.execute("ALTER TABLE orders RENAME TO grid_positions")
+        conn.execute(text("ALTER TABLE orders RENAME TO grid_positions"))
         if "order_ids" in tables:
-            self._conn.execute(
-                "UPDATE order_ids SET intent = REPLACE("
-                "intent, '\"entry_order\"', '\"entry_position\"')"
+            conn.execute(
+                text(
+                    "UPDATE order_ids SET intent = REPLACE("
+                    "intent, '\"entry_order\"', '\"entry_position\"')"
+                )
             )
 
     # ---- id 表（WAL） ----
@@ -317,47 +140,52 @@ class OrderJournal:
         @param intent: 意图快照（对账重建仓位与流水所需上下文）
         @param preferred_id: 期望使用的订单号; 被占用时自动换新
         """
-        with self._lock:
-            for attempt in range(_MAX_ID_RETRY):
-                custom_id = (
-                    preferred_id
-                    if attempt == 0 and preferred_id
-                    else self._generate_id(intent.side)
-                )
-                now = _now()
-                try:
-                    with self._conn:
-                        self._conn.execute(
-                            "INSERT INTO order_ids"
-                            " (id, used, type, strategy_key, intent, created_at, updated_at)"
-                            " VALUES (?, 0, 'ORDER', ?, ?, ?, ?)",
-                            (
-                                custom_id,
-                                strategy_key,
-                                intent.model_dump_json(),
-                                now,
-                                now,
-                            ),
+        for attempt in range(_MAX_ID_RETRY):
+            custom_id = (
+                preferred_id
+                if attempt == 0 and preferred_id
+                else self._generate_id(intent.side)
+            )
+            now = _now()
+            try:
+                with self._engine.begin() as conn:
+                    conn.execute(
+                        insert(schema.order_ids).values(
+                            id=custom_id,
+                            used=0,
+                            type="ORDER",
+                            strategy_key=strategy_key,
+                            intent=intent.model_dump_json(),
+                            created_at=now,
+                            updated_at=now,
                         )
-                    return custom_id
-                except sqlite3.IntegrityError:
-                    continue
-            raise RuntimeError(f"连续 {_MAX_ID_RETRY} 次未能生成唯一订单号")
+                    )
+                return custom_id
+            except IntegrityError:
+                continue
+        raise RuntimeError(f"连续 {_MAX_ID_RETRY} 次未能生成唯一订单号")
 
     def pending_ids(self, strategy_key: str) -> list[IdRecord]:
         """未确认（待对账）的 id 列表"""
-        with self._lock:
-            cursor = self._conn.execute(
-                "SELECT * FROM order_ids WHERE strategy_key = ? AND used = 0"
-                " ORDER BY created_at",
-                (strategy_key,),
+        with self._engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    select(schema.order_ids)
+                    .where(
+                        schema.order_ids.c.strategy_key == strategy_key,
+                        schema.order_ids.c.used == 0,
+                    )
+                    .order_by(schema.order_ids.c.created_at)
+                )
+                .mappings()
+                .all()
             )
-            return [self._to_id_record(row) for row in cursor.fetchall()]
+        return [self._to_id_record(row) for row in rows]
 
     def void(self, custom_id: str) -> None:
         """明确失败: 核销订单号, 不留仓位与流水"""
-        with self._lock:
-            self._settle(custom_id)
+        with self._engine.begin() as conn:
+            self._settle(conn, custom_id)
 
     # ---- 写（挂上成功: 仓位 + 流水 + 核销, 同一事务） ----
 
@@ -368,10 +196,10 @@ class OrderJournal:
         order: OrderRecord,
     ) -> None:
         """入场挂上成功: 同一事务写入/更新仓位行、记录订单流水并核销订单号"""
-        with self._lock, self._conn:
-            self._settle(custom_id)
-            self._upsert_position(position)
-            self._upsert_order_record(order)
+        with self._engine.begin() as conn:
+            self._settle(conn, custom_id)
+            self._upsert(conn, schema.grid_positions, "entry_id", position)
+            self._upsert(conn, schema.orders, "order_id", order)
 
     def confirm_exit(
         self,
@@ -382,46 +210,65 @@ class OrderJournal:
         order: OrderRecord,
     ) -> None:
         """出场单挂上: 同一事务回填各仓位出场信息、记录订单流水并核销订单号"""
-        with self._lock, self._conn:
-            self._settle(custom_id)
-            record = self._get_id_record(custom_id)
-            now = _now()
-            for entry_id in entry_ids:
-                self._conn.execute(
-                    "UPDATE grid_positions SET exit_id = ?, exit_price = ?, updated_at = ?"
-                    " WHERE entry_id = ? AND strategy_key = ?",
-                    (exit_id, exit_price, now, entry_id, record.strategy_key),
+        with self._engine.begin() as conn:
+            self._settle(conn, custom_id)
+            record = self._get_id_record(conn, custom_id)
+            if entry_ids:
+                conn.execute(
+                    update(schema.grid_positions)
+                    .where(
+                        schema.grid_positions.c.entry_id.in_(entry_ids),
+                        schema.grid_positions.c.strategy_key == record.strategy_key,
+                    )
+                    .values(exit_id=exit_id, exit_price=exit_price, updated_at=_now())
                 )
-            self._upsert_order_record(order)
+            self._upsert(conn, schema.orders, "order_id", order)
 
     # ---- 逻辑仓位表 ----
 
     def load_positions(self, strategy_key: str) -> list[GridPositionRow]:
         """加载策略当前仓位（active=1）"""
-        with self._lock:
-            cursor = self._conn.execute(
-                "SELECT * FROM grid_positions WHERE strategy_key = ? AND active = 1"
-                " ORDER BY rowid",
-                (strategy_key,),
+        with self._engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    select(schema.grid_positions)
+                    .where(
+                        schema.grid_positions.c.strategy_key == strategy_key,
+                        schema.grid_positions.c.active == 1,
+                    )
+                    .order_by(text("rowid"))
+                )
+                .mappings()
+                .all()
             )
-            return [self._to_position_row(row) for row in cursor.fetchall()]
+        return [self._to_position_row(row) for row in rows]
 
     def load_archived_positions(self, strategy_key: str) -> list[GridPositionRow]:
         """加载已归档仓位（active=0, 最近归档在前）—— 用于对账/盈亏统计"""
-        with self._lock:
-            cursor = self._conn.execute(
-                "SELECT * FROM grid_positions WHERE strategy_key = ? AND active = 0"
-                " ORDER BY updated_at DESC, rowid DESC",
-                (strategy_key,),
+        with self._engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    select(schema.grid_positions)
+                    .where(
+                        schema.grid_positions.c.strategy_key == strategy_key,
+                        schema.grid_positions.c.active == 0,
+                    )
+                    .order_by(
+                        schema.grid_positions.c.updated_at.desc(), text("rowid DESC")
+                    )
+                )
+                .mappings()
+                .all()
             )
-            return [self._to_position_row(row) for row in cursor.fetchall()]
+        return [self._to_position_row(row) for row in rows]
 
     def deactivate_position(self, entry_id: str) -> None:
         """归档仓位（已平仓）: 保留行, 置 active=0"""
-        with self._lock, self._conn:
-            self._conn.execute(
-                "UPDATE grid_positions SET active = 0, updated_at = ? WHERE entry_id = ?",
-                (_now(), entry_id),
+        with self._engine.begin() as conn:
+            conn.execute(
+                update(schema.grid_positions)
+                .where(schema.grid_positions.c.entry_id == entry_id)
+                .values(active=0, updated_at=_now())
             )
 
     def sync_positions(
@@ -437,150 +284,90 @@ class OrderJournal:
         @param rows: 当前仓位（快照, 覆盖旧值）
         @param removed_ids: 本次移除的仓位号（置 active=0）
         """
-        with self._lock, self._conn:
+        with self._engine.begin() as conn:
             for row in rows:
-                self._upsert_position(row)
-            now = _now()
-            for entry_id in removed_ids:
-                self._conn.execute(
-                    "UPDATE grid_positions SET active = 0, updated_at = ?"
-                    " WHERE entry_id = ? AND strategy_key = ?",
-                    (now, entry_id, strategy_key),
+                self._upsert(conn, schema.grid_positions, "entry_id", row)
+            if removed_ids:
+                conn.execute(
+                    update(schema.grid_positions)
+                    .where(
+                        schema.grid_positions.c.entry_id.in_(removed_ids),
+                        schema.grid_positions.c.strategy_key == strategy_key,
+                    )
+                    .values(active=0, updated_at=_now())
                 )
 
     # ---- 订单流水表 ----
 
     def load_order_records(self, strategy_key: str) -> list[OrderRecord]:
         """加载策略的订单流水（写入序）"""
-        with self._lock:
-            cursor = self._conn.execute(
-                "SELECT * FROM orders WHERE strategy_key = ? ORDER BY created_at, rowid",
-                (strategy_key,),
+        with self._engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    select(schema.orders)
+                    .where(schema.orders.c.strategy_key == strategy_key)
+                    .order_by(schema.orders.c.created_at, text("rowid"))
+                )
+                .mappings()
+                .all()
             )
-            return [self._to_order_record(row) for row in cursor.fetchall()]
+        return [self._to_order_record(row) for row in rows]
 
     # ---- 内部工具 ----
 
     def _generate_id(self, side: OrderSide) -> str:
         return f"{side.value}{secrets.token_hex(nbytes=5)}"
 
-    def _settle(self, custom_id: str) -> None:
+    def _settle(self, conn: Connection, custom_id: str) -> None:
         """核销订单号（used=1）; 未登记的订单号视为调用方错误"""
-        cursor = self._conn.execute(
-            "UPDATE order_ids SET used = 1, updated_at = ? WHERE id = ?",
-            (_now(), custom_id),
+        result = conn.execute(
+            update(schema.order_ids)
+            .where(schema.order_ids.c.id == custom_id)
+            .values(used=1, updated_at=_now())
         )
-        if cursor.rowcount == 0:
+        if result.rowcount == 0:
             raise ValueError(f"订单号未在 id 表登记, 不能核销: {custom_id}")
 
-    def _get_id_record(self, custom_id: str) -> IdRecord:
-        cursor = self._conn.execute(
-            "SELECT * FROM order_ids WHERE id = ?", (custom_id,)
+    def _get_id_record(self, conn: Connection, custom_id: str) -> IdRecord:
+        row = (
+            conn.execute(
+                select(schema.order_ids).where(schema.order_ids.c.id == custom_id)
+            )
+            .mappings()
+            .one_or_none()
         )
-        row = cursor.fetchone()
         if row is None:
             raise ValueError(f"订单号未在 id 表登记: {custom_id}")
         return self._to_id_record(row)
 
-    def _upsert_position(self, row: GridPositionRow) -> None:
+    def _upsert(
+        self,
+        conn: Connection,
+        table: Table,
+        primary_key: str,
+        record: BaseModel,
+    ) -> None:
+        """通用 upsert: 列值取自记录（JSON 模式）; 冲突时更新除主键与 created_at 外的所有列"""
         now = _now()
-        values = (
-            row.entry_id,
-            row.strategy_key,
-            row.side.value,
-            row.price,
-            row.quantity,
-            row.filled_quantity,
-            row.fixed_take_profit_rate,
-            row.signal_min_take_profit_rate,
-            row.exit_price,
-            row.status.value if row.status is not None else None,
-            row.exit_id,
-            row.stop_loss_rate,
-            int(row.enable_stop_loss),
-            row.trailing_stop_rate,
-            int(row.enable_trailing_stop),
-            row.trailing_stop_activation_profit_rate,
-            row.current_stop_price,
-            int(row.active),
-            row.created_at or now,
-            now,
-        )
-        self._conn.execute(_UPSERT_POSITION, values)
+        data: dict[str, Any] = record.model_dump(mode="json")
+        data["created_at"] = data["created_at"] or now
+        data["updated_at"] = now
+        stmt = sqlite_insert(table).values(**data)
+        set_: dict[str, Any] = {
+            name: stmt.excluded[name]
+            for name in data
+            if name not in (primary_key, "created_at")
+        }
+        conn.execute(stmt.on_conflict_do_update(index_elements=[primary_key], set_=set_))
 
-    def _upsert_order_record(self, row: OrderRecord) -> None:
-        now = _now()
-        values = (
-            row.order_id,
-            row.strategy_key,
-            row.role.value,
-            row.symbol,
-            row.side.value,
-            row.type.value,
-            row.price,
-            row.quantity,
-            row.filled_qty,
-            row.avg_price,
-            row.status.value,
-            row.created_at or now,
-            now,
-        )
-        self._conn.execute(_UPSERT_ORDER_RECORD, values)
-
-    def _to_id_record(self, row: sqlite3.Row) -> IdRecord:
-        data: dict[str, Any] = dict(row)
-        return IdRecord(
-            id=data["id"],
-            used=bool(data["used"]),
-            type=data["type"],
-            strategy_key=data["strategy_key"],
-            intent=OrderIntent.model_validate_json(data["intent"]),
-            created_at=data["created_at"],
-            updated_at=data["updated_at"],
+    def _to_id_record(self, row: RowMapping) -> IdRecord:
+        data = dict(row)
+        return IdRecord.model_validate(
+            {**data, "intent": OrderIntent.model_validate_json(data["intent"])}
         )
 
-    def _to_position_row(self, row: sqlite3.Row) -> GridPositionRow:
-        data: dict[str, Any] = dict(row)
-        status = data["status"]
-        return GridPositionRow(
-            entry_id=data["entry_id"],
-            strategy_key=data["strategy_key"],
-            side=OrderSide(data["side"]),
-            price=data["price"],
-            quantity=data["quantity"],
-            filled_quantity=data["filled_quantity"],
-            fixed_take_profit_rate=data["fixed_take_profit_rate"],
-            signal_min_take_profit_rate=data["signal_min_take_profit_rate"],
-            exit_price=data["exit_price"],
-            status=OrderStatus(status) if status is not None else None,
-            exit_id=data["exit_id"],
-            stop_loss_rate=data["stop_loss_rate"],
-            enable_stop_loss=bool(data["enable_stop_loss"]),
-            trailing_stop_rate=data["trailing_stop_rate"],
-            enable_trailing_stop=bool(data["enable_trailing_stop"]),
-            trailing_stop_activation_profit_rate=data[
-                "trailing_stop_activation_profit_rate"
-            ],
-            current_stop_price=data["current_stop_price"],
-            active=bool(data["active"]),
-            created_at=data["created_at"],
-            updated_at=data["updated_at"],
-        )
+    def _to_position_row(self, row: RowMapping) -> GridPositionRow:
+        return GridPositionRow.model_validate(dict(row))
 
-    def _to_order_record(self, row: sqlite3.Row) -> OrderRecord:
-        data: dict[str, Any] = dict(row)
-        return OrderRecord(
-            order_id=data["order_id"],
-            strategy_key=data["strategy_key"],
-            role=OrderRole(data["role"]),
-            symbol=data["symbol"],
-            side=OrderSide(data["side"]),
-            type=OrderType(data["type"]),
-            price=data["price"],
-            quantity=data["quantity"],
-            filled_qty=data["filled_qty"],
-            avg_price=data["avg_price"],
-            status=OrderStatus(data["status"]),
-            created_at=data["created_at"],
-            updated_at=data["updated_at"],
-        )
+    def _to_order_record(self, row: RowMapping) -> OrderRecord:
+        return OrderRecord.model_validate(dict(row))

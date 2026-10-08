@@ -7,7 +7,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
         │
         ├──▶ execution (smart_trader/execution/)   执行编排: 追单、记账下单、对账
         │          │  │
-        │          │  └──▶ storage (smart_trader/storage/)   订单日志: id 表 + order 表 (sqlite)
+        │          │  └──▶ storage (smart_trader/storage/)   订单日志: id/仓位/流水表 (sqlite, SQLAlchemy Core)
         │          │
         │          ▼
         │      ports (smart_trader/client/ports.py)   零实现、零第三方依赖
@@ -23,7 +23,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 2. **适配器只做翻译**：领域对象 ⇄ 交易所参数/响应。不做重试编排、不做下单策略、不碰数据库。
 3. **领域对象是唯一契约**：跨层传递的订单/持仓必须是 `OrderRequest` / `OrderResult` / `Position`，禁止使用 `dict[str, Any]` 承载订单语义。
 4. 交易所异常在适配器内统一翻译为 `SmartTraderError` + `ErrorCode`，业务层不感知 ccxt 异常类型。
-5. **storage 是纯数据层**：只做 sqlite 存取与事务，只依赖 `model`；不 import ccxt、不依赖 execution / strategy。
+5. **storage 是纯数据层**：只做 sqlite 存取与事务，只依赖 `model` 与 SQLAlchemy（SQLAlchemy 仅限 storage 内部，对外只暴露 Pydantic 记录与 `OrderJournal`）；不 import ccxt、不依赖 execution / strategy。storage 之外的任何层不得 import sqlalchemy。
 6. **所有下单路径必须经过 `JournaledTradingPort`**（策略常规单、追单的每次尝试）：id 预留与记账不可绕过，否则最终一致性失效（见第十一节）。
 
 ## 二、端口定义
@@ -76,7 +76,9 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | `smart_trader/model.py` | 领域对象与枚举（Symbol / SymbolInfo / Kline / Order* / Position） |
 | `smart_trader/client/ports.py` | 端口（Protocol） |
 | `smart_trader/client/binance_client.py` | Binance 适配器 + ccxt ⇄ 领域对象翻译 |
-| `smart_trader/storage/order_journal.py` | 订单日志（sqlite）：id 表（WAL）+ `grid_positions`（逻辑仓位）+ `orders`（订单流水）+ 事务 |
+| `smart_trader/storage/records.py` | 存储记录模型（Pydantic）：`GridPositionRow` / `OrderRecord` / `IdRecord` / `OrderIntent`，存储层对外的数据契约 |
+| `smart_trader/storage/schema.py` | 表结构元数据（SQLAlchemy Core）：schema 唯一来源（列/约束/索引），建库走 `metadata.create_all` |
+| `smart_trader/storage/order_journal.py` | 订单日志仓储（SQLAlchemy Core 语句 + 事务）：id 表（WAL）+ `grid_positions`（逻辑仓位）+ `orders`（订单流水） |
 | `smart_trader/execution/limit_order_chaser.py` | 追单执行策略 |
 | `smart_trader/execution/journaled_trading.py` | 记账下单包装（TradingPort 装饰器）：预留 id → 下单 → 确认/核销 |
 | `smart_trader/execution/order_reconciler.py` | 启动对账：扫未确认 id → 查交易所 → 补全/核销 |
@@ -96,6 +98,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 6 | `order_file_path` → `strategy_key`；sqlite 订单日志（id 表 WAL + order 表）；`JournaledTradingPort` 记账下单 + 启动对账（见第十一节） | 已完成 |
 | Step 7 | 语义正名：`Order` → `GridPosition`（逻辑仓位）、`OrderManager` → `GridPositionManager`；行为零变化 | 已完成 |
 | Step 8 | 数据模型拆分：`orders` 表拆为 `grid_positions`（逻辑仓位）+ `orders`（纯订单流水）；storage 层命名对齐（`OrderRow` → 分家） | 已完成 |
+| Step 9 | 存储层 SQLAlchemy Core 化：拆分 `records` / `schema` / `order_journal`；DDL 单一来源；泛型 upsert；WAL + busy_timeout；DDL 等价性测试（设计见 `.memory/03-coding-design.md`） | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -146,7 +149,8 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 
 - 内存实现优先：`tests/fakes.py` 提供 `FakeCcxtExchange` / `FakeTradingPort` / `FakeMarketDataPort`，默认测试不触网（集成测试标记 `@pytest.mark.integration`）。
 - 端口契约测试通过假端口验证业务行为，适配器测试通过假 ccxt 验证翻译规则。
-- sqlite 日志测试统一使用 `:memory:` 数据库，不落盘、不共享状态。
+- sqlite 日志测试统一使用 `:memory:` 数据库（StaticPool 共享单连接），不落盘、不共享状态。
+- 库结构由 `tests/test_storage_schema.py` 以冻结的旧版 DDL 快照做等价性校验：metadata 建出的库与历史契约（列/约束/默认值/索引）不一致即失败。
 
 ## 十一、订单最终一致性（WAL + 对账）
 

@@ -12,10 +12,10 @@ from pathlib import Path
 import pytest
 
 from smart_trader.model import OrderSide, Symbol
-from smart_trader.storage.order_journal import (
+from smart_trader.storage.order_journal import OrderJournal
+from smart_trader.storage.records import (
     GridPositionRow,
     IdRecord,
-    OrderJournal,
     OrderRecord,
     OrderRole,
 )
@@ -131,6 +131,32 @@ class TestConfirmEntry:
         positions = journal.load_positions(STRATEGY_KEY)
         assert len(positions) == 1
         assert positions[0].filled_quantity == pytest.approx(100.0)
+
+    def test_upsert_preserves_first_write_created_at(self, journal: OrderJournal):
+        """重复写同一仓位: 其余字段覆盖, created_at 保持首写不覆盖"""
+        custom_id = journal.reserve(STRATEGY_KEY, make_entry_intent())
+        journal.confirm_entry(
+            custom_id,
+            make_position_row("e1", created_at="2026-01-01T00:00:00+00:00"),
+            make_order_record(),
+        )
+
+        second_id = journal.reserve(STRATEGY_KEY, make_entry_intent())
+        journal.confirm_entry(
+            second_id,
+            make_position_row(
+                "e1",
+                created_at="2030-12-31T00:00:00+00:00",
+                filled_quantity=5.0,
+            ),
+            make_order_record(),
+        )
+
+        updated = journal.load_positions(STRATEGY_KEY)[0]
+        assert updated.created_at == "2026-01-01T00:00:00+00:00", (
+            "created_at 是首写事实, 二次 upsert 不得覆盖"
+        )
+        assert updated.filled_quantity == pytest.approx(5.0), "其余字段仍应正常覆盖"
 
     def test_record_upsert_is_idempotent_for_reconcile_rerun(
         self, journal: OrderJournal

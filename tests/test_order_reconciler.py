@@ -14,7 +14,8 @@ from smart_trader.model import (
     OrderSide,
     OrderStatus,
 )
-from smart_trader.storage.order_journal import OrderJournal, OrderRole
+from smart_trader.storage.order_journal import OrderJournal
+from smart_trader.storage.records import OrderRole
 from tests.fakes import (
     DEFAULT_STRATEGY_KEY,
     DEFAULT_SYMBOL,

@@ -11,10 +11,10 @@
 | `OrderResult` | `model.py` | 订单结果（领域对象），`place`/`query`/`cancel` 的统一返回 |
 | `Position` | `model.py` | 持仓 |
 | `GridPosition` | `strategy/signal_grid_strategy.py` | **逻辑仓位**（原 `Order`，正名）：网格的一个格子从入场到平仓的完整生命周期，含止盈/止损参数；与交易所订单（`OrderResult`）解耦 |
-| `GridPositionRow` | `storage/order_journal.py` | `grid_positions` 表的一行：`GridPosition` 的持久化形态，不含策略行为 |
-| `OrderRecord` | `storage/order_journal.py` | `orders` 表的一行：一次真实委托的流水记录（审计/统计） |
-| `IdRecord` | `storage/order_journal.py` | id 表的一行：预生成的订单号 + 确认状态 + 意图快照 |
-| `OrderIntent` | `storage/order_journal.py` | 下单意图快照：崩溃后对账重建订单所需的最小上下文 |
+| `GridPositionRow` | `storage/records.py` | `grid_positions` 表的一行：`GridPosition` 的持久化形态，不含策略行为 |
+| `OrderRecord` | `storage/records.py` | `orders` 表的一行：一次真实委托的流水记录（审计/统计） |
+| `IdRecord` | `storage/records.py` | id 表的一行：预生成的订单号 + 确认状态 + 意图快照 |
+| `OrderIntent` | `storage/records.py` | 下单意图快照：崩溃后对账重建订单所需的最小上下文 |
 
 `GridPosition` 的 `quantity` 是委托量，`filled_quantity` 是**入场单实际成交量**；
 平仓数量取 `effective_filled_quantity`（见 `01-system-architecture.md` 第十节不变量）。
@@ -101,6 +101,8 @@
 ## 六、持久化
 
 订单持久化已从 JSON 文件（`OrderRecorder` / `order_file_path`）迁移到 sqlite 订单日志（见第七节）。
+记录模型定义于 `storage/records.py`，表结构定义于 `storage/schema.py`（SQLAlchemy Core 元数据，单一来源），
+语句与事务由 `storage/order_journal.py` 实现（设计见 `.memory/03-coding-design.md`）。
 策略通过 `strategy_key` 归属订单：一个数据库多策略共享，`strategy_key` 是策略的稳定标识（如
 `dogeusdt_long_buy_1m`），替代原先的文件路径。
 

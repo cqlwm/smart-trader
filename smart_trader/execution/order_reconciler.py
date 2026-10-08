@@ -17,10 +17,10 @@ from pydantic import BaseModel, ConfigDict
 from smart_trader import log
 from smart_trader.client.ports import TradingPort
 from smart_trader.model import OrderResult
-from smart_trader.storage.order_journal import (
+from smart_trader.storage.order_journal import OrderJournal
+from smart_trader.storage.records import (
     IdRecord,
     OrderIntent,
-    OrderJournal,
     OrderRecord,
     OrderRole,
 )

@@ -19,12 +19,8 @@ from smart_trader.model import (
     PositionSide,
     Symbol,
 )
-from smart_trader.storage.order_journal import (
-    GridPositionRow,
-    OrderIntent,
-    OrderJournal,
-    OrderRole,
-)
+from smart_trader.storage.order_journal import OrderJournal
+from smart_trader.storage.records import GridPositionRow, OrderIntent, OrderRole
 from smart_trader.strategy import Signal, SingleTimeframeStrategy
 
 logger = log.getLogger(__name__)

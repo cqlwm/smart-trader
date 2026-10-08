@@ -14,10 +14,10 @@ from smart_trader import log
 from smart_trader.client.ports import TradingPort
 from smart_trader.exceptions import ErrorCode, SmartTraderError
 from smart_trader.model import OrderRequest, OrderResult, Symbol
-from smart_trader.storage.order_journal import (
+from smart_trader.storage.order_journal import OrderJournal
+from smart_trader.storage.records import (
     GridPositionRow,
     OrderIntent,
-    OrderJournal,
     OrderRecord,
     OrderRole,
 )
