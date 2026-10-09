@@ -13,15 +13,11 @@ from smart_trader.model import (
     OrderSide,
     OrderStatus,
     OrderType,
+    PositionSide,
     Symbol,
     SymbolInfo,
 )
-from smart_trader.storage.records import (
-    GridPositionRow,
-    OrderIntent,
-    OrderRecord,
-    OrderRole,
-)
+from smart_trader.storage.records import GridPositionRow, OrderRecord
 
 DEFAULT_SYMBOL = Symbol(base="DOGE", quote="USDT")
 DEFAULT_SYMBOL_INFO = SymbolInfo(
@@ -37,17 +33,18 @@ DEFAULT_SYMBOL_INFO = SymbolInfo(
 DEFAULT_STRATEGY_KEY = "dogeusdt_long_buy_1m"
 
 
-def make_position_row(entry_id: str = "e1", **overrides: object) -> GridPositionRow:
-    """构造测试用逻辑仓位行"""
+def make_position_row(position_id: str = "POS1", **overrides: object) -> GridPositionRow:
+    """构造测试用逻辑仓位行（策略参数 + 运行时状态）"""
     fields: dict[str, object] = {
-        "entry_id": entry_id,
+        "id": position_id,
         "strategy_key": DEFAULT_STRATEGY_KEY,
-        "side": OrderSide.BUY,
-        "price": 0.5,
-        "quantity": 100.0,
+        "symbol": DEFAULT_SYMBOL.ccxt(),
+        "position_side": PositionSide.LONG,
+        "main_order_side": OrderSide.BUY,
+        "opening_quantity": 0.0,
+        "opening_price": 0.0,
         "fixed_take_profit_rate": 0.01,
         "signal_min_take_profit_rate": 0.002,
-        "status": OrderStatus.OPEN,
     }
     fields.update(overrides)
     return GridPositionRow.model_validate(fields)
@@ -55,14 +52,14 @@ def make_position_row(entry_id: str = "e1", **overrides: object) -> GridPosition
 
 def make_order_record(
     order_id: str = "BUYexchange1",
-    role: OrderRole = OrderRole.ENTRY,
+    grid_position_id: str = "POS1",
     **overrides: object,
 ) -> OrderRecord:
-    """构造测试用订单流水记录"""
+    """构造测试用订单行"""
     fields: dict[str, object] = {
         "order_id": order_id,
+        "grid_position_id": grid_position_id,
         "strategy_key": DEFAULT_STRATEGY_KEY,
-        "role": role,
         "symbol": DEFAULT_SYMBOL.ccxt(),
         "side": OrderSide.BUY,
         "type": OrderType.LIMIT,
@@ -73,26 +70,6 @@ def make_order_record(
     }
     fields.update(overrides)
     return OrderRecord.model_validate(fields)
-
-
-def make_entry_intent(entry_position: GridPositionRow | None = None) -> OrderIntent:
-    """构造测试用入场意图"""
-    return OrderIntent(
-        kind=OrderRole.ENTRY,
-        symbol=DEFAULT_SYMBOL,
-        side=OrderSide.BUY,
-        entry_position=entry_position or make_position_row(),
-    )
-
-
-def make_exit_intent(entry_ids: list[str] | None = None) -> OrderIntent:
-    """构造测试用出场意图"""
-    return OrderIntent(
-        kind=OrderRole.EXIT,
-        symbol=DEFAULT_SYMBOL,
-        side=OrderSide.SELL,
-        entry_ids=entry_ids if entry_ids is not None else ["e1", "e2"],
-    )
 
 
 class FakeTradingPort:

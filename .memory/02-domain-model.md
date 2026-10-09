@@ -10,14 +10,13 @@
 | `OrderRequest` | `model.py` | 下单请求（领域对象） |
 | `OrderResult` | `model.py` | 订单结果（领域对象），`place`/`query`/`cancel` 的统一返回 |
 | `Position` | `model.py` | 持仓 |
-| `GridPosition` | `strategy/signal_grid_strategy.py` | **逻辑仓位**（原 `Order`，正名）：网格的一个格子从入场到平仓的完整生命周期，含止盈/止损参数；与交易所订单（`OrderResult`）解耦 |
+| `GridPosition` | `strategy/signal_grid_strategy.py` | **逻辑仓位**：一个格子的完整生命周期；只持策略参数与运行时跟踪状态，价格/数量/相位全部由订单派生 |
 | `GridPositionRow` | `storage/records.py` | `grid_positions` 表的一行：`GridPosition` 的持久化形态，不含策略行为 |
-| `OrderRecord` | `storage/records.py` | `orders` 表的一行：一次真实委托的流水记录（审计/统计） |
-| `IdRecord` | `storage/records.py` | id 表的一行：预生成的订单号 + 确认状态 + 意图快照 |
-| `OrderIntent` | `storage/records.py` | 下单意图快照：崩溃后对账重建订单所需的最小上下文 |
+| `OrderRecord` | `storage/records.py` | `orders` 表的一行：一次委托（`status` 为空表示结果未确认，承担 WAL 标记） |
 
-`GridPosition` 的 `quantity` 是委托量，`filled_quantity` 是**入场单实际成交量**；
-平仓数量取 `effective_filled_quantity`（见 `01-system-architecture.md` 第十节不变量）。
+`GridPosition` 的**数量、均价、相位都不是存储字段**，而是由该仓位关联的 `orders` 派生
+（定义见第七节）。入场/出场按 `position_side` 归类：`long` 下 buy=入场、sell=出场，
+`short` 反之；`main_order_side` 只表示网格主攻方向，**不参与**入/出场归类。
 模型配置 `extra="forbid"`，字段拼写错误会立即报错而不是被静默忽略。
 
 ## 二、枚举（统一定义于 `model.py`，禁止硬编码字符串）
@@ -108,67 +107,60 @@
 
 ## 七、订单日志（sqlite，storage/order_journal.py）
 
-### id 表 `order_ids`（WAL）
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `id` | TEXT PK | 预生成的订单号（custom_id） |
-| `used` | INTEGER | **0 = 结果未确认（待对账）**；1 = 已确认/已核销 |
-| `type` | TEXT | 恒为 `'ORDER'`（预留扩展） |
-| `strategy_key` | TEXT | 归属策略 |
-| `intent` | TEXT | 意图快照 JSON（`OrderIntent`） |
-| `created_at` / `updated_at` | TEXT | 时间戳（审计、对账最小年龄判断） |
+两张表（原 `order_ids`（WAL）已删除，职责由 `orders.status` 为空承担）。
 
 ### 逻辑仓位表 `grid_positions`
 
-一行 = 一个 `GridPosition` 的持久化形态（`GridPositionRow`），字段平铺 + `active` 标记：
+一行 = 一个 `GridPosition` 的持久化形态（`GridPositionRow`），只存策略参数与运行时状态：
 
 | 列 | 说明 |
 | --- | --- |
-| `entry_id` | TEXT PK，逻辑仓位号 = 入场单最终 custom_id（追单改写后以交易所返回为准） |
+| `id` | TEXT PK，逻辑仓位号（journal 生成，与首单同事务写入） |
 | `strategy_key` | 归属策略（索引） |
-| `side` / `price` / `quantity` / `filled_quantity` | 方向与数量（`quantity` 委托量、`filled_quantity` 入场单实际成交量） |
+| `symbol` | ccxt 格式交易对（接管建仓时可能暂无订单，需自带） |
+| `position_side` | `long` / `short`：决定入场/出场归类 |
+| `main_order_side` | 网格主攻方向；不参与入/出场归类 |
+| `opening_quantity` / `opening_price` | 开仓基准：接管持仓时的数量与均价（普通网格数量为 0）；`opening_price` 同时作为「尚无成交时的参考价」（网格间隔 / 止盈判定基准） |
 | `fixed_take_profit_rate` / `signal_min_take_profit_rate` | 止盈参数 |
-| `exit_price` / `exit_id` / `status` | 出场单与入场状态 |
-| `stop_loss_rate` / `enable_stop_loss` / `trailing_stop_rate` / `enable_trailing_stop` / `trailing_stop_activation_profit_rate` / `current_stop_price` | 止损参数 |
-| `active` | 1 = 当前仓位；0 = 已平仓归档（加载只取 active=1，归档可查询） |
+| `enable_stop_loss` / `stop_loss_rate` | 止损参数 |
+| `enable_trailing_stop` / `trailing_stop_rate` / `trailing_stop_activation_rate` / `trailing_stop_price` | 跟踪止损参数与运行时状态（`trailing_stop_price` 每根 K 线更新，不可派生，必须落库） |
+| `active` | 1 = 未到终态；0 = 已归档。**唯一物化的状态标记**，其余相位派生 |
 | `created_at` / `updated_at` | 时间戳 |
 
-### 订单流水表 `orders`
+### 订单表 `orders`
 
-一行 = 一次"交易所确认存在过"的真实委托（`OrderRecord`），以 append 为主：
+一行 = 一次委托（**先落行、再发交易所**）：
 
 | 列 | 说明 |
 | --- | --- |
 | `order_id` | TEXT PK，custom_id（交易所返回为准） |
-| `strategy_key` | 归属策略（索引） |
-| `role` | `entry` / `exit`（`OrderRole`） |
-| `symbol` | ccxt 格式交易对（如 `DOGE/USDC:USDC`） |
+| `grid_position_id` | 归属逻辑仓位（索引） |
+| `strategy_key` | 归属策略 |
+| `symbol` | ccxt 格式交易对 |
 | `side` / `type` | 方向与订单类型 |
 | `price` / `quantity` / `filled_qty` / `avg_price` | 委托价量与成交 |
-| `status` | 订单状态（`OrderStatus`） |
+| `status` | 订单状态（`OrderStatus`）；**为空 = 结果未确认**，承担 WAL 标记与对账线索 |
 | `created_at` / `updated_at` | 时间戳 |
 
-被拒的尝试（-5022 等）**不进流水表**，保留在 id 表（审计留痕、防流水淹没）。
+### 入/出场归类（原 `OrderRole` 已删除）
 
-### OrderRole（原 `IntentKind`）
+`entry_side = buy if position_side == long else sell`，`exit_side` 反之。
+`orders.side == entry_side` 即入场单，`== exit_side` 即出场单。
 
-`ENTRY` / `EXIT`——下单意图与订单流水共用同一枚举。
+### 派生量（不落库，`GridPosition` 计算属性）
 
-### OrderIntent（意图快照）
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `kind` | `OrderRole` | `ENTRY` / `EXIT` |
-| `symbol` | `Symbol` | 对账 query 必须带 symbol |
-| `side` | `OrderSide` | 下单方向 |
-| `order_type` | `OrderType` | 网格下单恒为 `LIMIT`，对账重建流水时使用 |
-| `entry_position` | `GridPositionRow \| None` | `ENTRY`：重建仓位行的模板（策略参数来自这里） |
-| `entry_ids` | `list[str]` | `EXIT`：该出场单关联的入场单号（对账时回填 exit_id） |
+- `entry_filled = Σ entry.filled_qty`；`entry_pending = Σ(entry.quantity − entry.filled_qty)`（仅 `status=OPEN` 的行）
+- `exit_filled = Σ exit.filled_qty`；`has_pending_exit = 存在 status ∈ {OPEN, 空} 的 exit 行`
+- `quantity = opening_quantity + entry_filled − exit_filled`
+- `price = 加权均价(opening_price × opening_quantity, entry 行 avg_price × filled_qty)`
+- 相位：`active=0 → closed`；`quantity<=0 → opening`；`quantity>0 且 has_pending_exit → closing`；否则 `holding`
 
 ### 一致性语义
 
-- `used=0` ⇔ 订单号结果未确认；对账时用「意图快照 + 交易所事实」补全仓位与流水；
-- **挂上成功的写入三合一**（同一事务）：{ upsert `grid_positions` + INSERT `orders` 流水 + 置 `used=1` }；
-- 明确拒绝直接核销（`used=1`），结果未知保持 `used=0` 留给对账；
-- 仓位归档不删行；流水 append-only，`sync_positions` 不触碰流水表。
+- **下单前先写库**：首单与仓位行同事务（避免孤儿）；订单行 `status` 为空 = 结果未确认；
+- 发送后回写 `status/filled_qty/avg_price`；
+- 交易所明确拒绝/取消（订单曾存在过）→ 更新该行 `status` 并保留，**另起一行新 `order_id`** 重试；
+- **交易所从未存在的订单**（GTX 被拒 -5022、对账查无）→ 删除预写行，且该 `order_id` **可复用**重试
+  （同一 id 不堆多行）；一旦订单存在（被接受 / 有成交）则 id **作废**，必须换新 id；
+- **`status` 为空 ⇔ 结果未确认**，即对账清单；对账用交易所事实回写该行；
+- 归档不删行（`active=0`）；`orders` 不随 `sync` 删除。

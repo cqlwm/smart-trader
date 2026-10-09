@@ -14,7 +14,7 @@ from smart_trader.task.strategy_task import StrategyTask
 
 logger = log.getLogger(__name__)
 
-symbol_ = Symbol(base="doge", quote="usdc")
+symbol_ = Symbol(base="doge", quote="usdt")
 timeframe_ = "1m"
 
 

@@ -76,12 +76,12 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | `smart_trader/model.py` | 领域对象与枚举（Symbol / SymbolInfo / Kline / Order* / Position） |
 | `smart_trader/client/ports.py` | 端口（Protocol） |
 | `smart_trader/client/binance_client.py` | Binance 适配器 + ccxt ⇄ 领域对象翻译 |
-| `smart_trader/storage/records.py` | 存储记录模型（Pydantic）：`GridPositionRow` / `OrderRecord` / `IdRecord` / `OrderIntent`，存储层对外的数据契约 |
+| `smart_trader/storage/records.py` | 存储记录模型（Pydantic）：`GridPositionRow` / `OrderRecord`，存储层对外的数据契约 |
 | `smart_trader/storage/schema.py` | 表结构元数据（SQLAlchemy Core）：schema 唯一来源（列/约束/索引），建库走 `metadata.create_all` |
-| `smart_trader/storage/order_journal.py` | 订单日志仓储（SQLAlchemy Core 语句 + 事务）：id 表（WAL）+ `grid_positions`（逻辑仓位）+ `orders`（订单流水） |
+| `smart_trader/storage/order_journal.py` | 订单日志仓储（SQLAlchemy Core 语句 + 事务）：`grid_positions`（逻辑仓位）+ `orders`（订单，`status` 为空承担 WAL） |
 | `smart_trader/execution/limit_order_chaser.py` | 追单执行策略 |
-| `smart_trader/execution/journaled_trading.py` | 记账下单包装（TradingPort 装饰器）：预留 id → 下单 → 确认/核销 |
-| `smart_trader/execution/order_reconciler.py` | 启动对账：扫未确认 id → 查交易所 → 补全/核销 |
+| `smart_trader/execution/journaled_trading.py` | 记账下单包装（TradingPort 装饰器）：预写仓位/订单 → 下单 → 回写结果 |
+| `smart_trader/execution/order_reconciler.py` | 启动对账：扫 `status IS NULL` 的订单 → 查交易所 → 回写 |
 | `smart_trader/strategy/` | 策略基类与网格策略 |
 | `smart_trader/data_event_loop.py` / `task/` | WebSocket 事件循环与任务分发 |
 
@@ -99,6 +99,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 7 | 语义正名：`Order` → `GridPosition`（逻辑仓位）、`OrderManager` → `GridPositionManager`；行为零变化 | 已完成 |
 | Step 8 | 数据模型拆分：`orders` 表拆为 `grid_positions`（逻辑仓位）+ `orders`（纯订单流水）；storage 层命名对齐（`OrderRow` → 分家） | 已完成 |
 | Step 9 | 存储层 SQLAlchemy Core 化：拆分 `records` / `schema` / `order_journal`；DDL 单一来源；泛型 upsert；WAL + busy_timeout；DDL 等价性测试（设计见 `.memory/03-coding-design.md`） | 已完成 |
+| Step 10 | 逻辑仓位重构：`grid_positions` 只存参数与运行时状态，价格/数量/相位由 `orders` 派生；删 `order_ids`（WAL 改由 `orders.status` 为空承担）；入/出场按 `position_side` 归类；`current_stop_price` → `trailing_stop_price` | 进行中 |
 
 ### 待办清单（Step 5）
 
@@ -127,6 +128,13 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 - **出场单部分成交后重挂未扣除已成交量**：会挂出超量平仓单（如已平 30 仍重挂 100）。
   修复：重挂量 = `实际成交量 − 出场单已成交`；剩余 ≤ 0 视为平仓完成直接归档。
 - 撤单与复查统一走 `_cancel_and_refresh`：先撤单再查询终态，避免"撤销前又成交一部分"的竞态。
+- **出场单未成交导致敞口脱管**：原逻辑在挂出出场单后即把仓位归档（`active=0`），
+  限价单未成交时仓位不再被跟踪，重启后 `load_positions` 也加载不到。
+  修复：出场改为显式生命周期（`HOLDING → EXIT_PENDING → ARCHIVED`），
+  只有出场单确认成交且可平量耗尽才归档；跟踪每根 K 线无条件执行
+  （止损暂停后仍执行）；未成交保留原挂单，强制出场才撤单重挂（见第十节不变量 4）。
+- **多仓位共用一张聚合出场单导致按仓位归因错误**：部分成交时每个仓位都用同一聚合成交量扣减。
+  修复：改为每仓位一张独立出场单，成交可独立归因。
 
 ## 九、事件循环与任务
 
@@ -138,12 +146,31 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 
 ## 十、持仓记账不变量
 
-1. **平仓数量只能取实际成交量**：`GridPosition.effective_filled_quantity`
-   （`CLOSED` 状态缺失成交量时按委托量兜底，兼容旧数据热加载）。
-   任何"按委托量平仓"的写法都会在部分成交场景下超卖。
-2. **`OrderStatus.CLOSED` 等价于完全成交**：ccxt 把部分成交映射为 `open`，
+逻辑仓位（`GridPosition`）只存策略参数与运行时状态；**价格、数量、相位全部由 `orders` 派生**
+（定义见 `.memory/02-domain-model.md` 第七节）。
+
+1. **数量 = 基准 + 入场成交 − 出场成交**：`quantity = opening_quantity + entry_filled − exit_filled`。
+   平仓可用量只能取派生后的 `quantity`；任何"按委托量平仓"的写法都会在部分成交场景下超卖。
+2. **入场/出场按 `position_side` 归类**：`long` → buy=入场、sell=出场；`short` 反之。
+   `main_order_side` 只表示网格主攻方向，**不参与**归类。
+3. **`OrderStatus.CLOSED` 等价于完全成交**：ccxt 把部分成交映射为 `open`，
    因此适配器在 `closed` 且无 `filled` 字段时按委托量补齐成交量。
-3. **未成交的订单不产生平仓单**：成交量 > 0 才会进入平仓队列。
+4. **未成交的订单不产生平仓单**：成交量 > 0 才会进入平仓队列。
+5. **出场是有生命周期的（挂单 ≠ 了结）**：
+   - "未成交出场单" = 存在 `status ∈ {OPEN, 空}` 的出场行；其挂单价与数量由此行派生；
+   - 仓位只有在**出场全部成交且 `quantity` 归零**时才归档（`active=0`）；
+   - 每仓位可有**多条**入场/出场订单，成交按订单行独立归因；
+   - 出场单跟踪每根完成 K 线**无条件**执行：不被开仓短路、止损暂停（`is_running=False`）后仍执行。
+   - 未成交且价格回落 → **保留原挂单**；出场单作废（canceled/rejected/expired / query 不到）
+     → 结算已成交后退回持仓，等待重挂；查询异常 → 下一根重试，绝不重复下单。
+   - **强制出场**（单笔止损 / 达到上限全平 / 手动 `close_position`）可覆盖休息中的挂单：
+     先撤单、结算已成交部分，再按剩余重挂。
+6. **相位（派生，不落库）**：`active=0 → closed`；`quantity<=0 → opening`（虚拟空仓位）；
+   `quantity>0 且 has_pending_exit → closing`；否则 `holding`。出场单被撤后退回 `holding`。
+7. **孤儿回收**（每根完成 K 线执行）：
+   - 孤儿条件 = `active=1` 且 `quantity<=0` 且无任何存活订单（无 `OPEN`、无 `status` 为空的行）；
+   - **超时回收**：必须同时满足孤儿条件**且**仓位存在时长超过 `max(10 分钟, 策略 K 线周期时长)`
+     才回收 —— opening 空仓位先保留作网格价格参考，超时后再清（回收即置 `active=0`）。
 
 ## 八、测试策略
 
@@ -152,36 +179,38 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 - sqlite 日志测试统一使用 `:memory:` 数据库（StaticPool 共享单连接），不落盘、不共享状态。
 - 库结构由 `tests/test_storage_schema.py` 以冻结的旧版 DDL 快照做等价性校验：metadata 建出的库与历史契约（列/约束/默认值/索引）不一致即失败。
 
-## 十一、订单最终一致性（WAL + 对账）
+## 十一、订单最终一致性（预写 + 对账）
 
-背景：`place_order` 是"多步、可中断"的动作（预留 id → 发请求 → 记结果），任何一步崩溃都可能留下"交易所已有单、本地不知道"的幽灵订单。用"预写日志 + 启动对账"兜住：
+背景：`place_order` 是"多步、可中断"的动作，任何一步崩溃都可能留下"交易所已有单、本地不知道"的幽灵订单。用"预写 + 启动对账"兜住。**原 `order_ids`（WAL）表已删除**，其职责由 `orders` 行承担（`status` 为空 = 结果未确认）。
 
 ### 流程（见 storage/order_journal.py）
 
-1. **reserve 预留**：下单前先写 id 表——`INSERT {id, used=0, type='ORDER', strategy_key, intent=意图快照}`，拿到本次下单的 custom_id；
-2. **place 下单**：用预留 id 调交易所（追单每次递进都要重新 reserve）；
-3. **按结果收尾**：
-   - 挂上成功 → **同一事务**内三合一：`upsert grid_positions（逻辑仓位）+ INSERT orders 流水 + UPDATE id SET used=1`；
-   - 交易所明确拒绝（-5022 / 余额不足 / 精度等确定性失败）→ `used=1` 核销，不留仓位与流水；
-   - **结果未知（网络超时、响应丢失、进程崩溃）→ 保持 used=0**，交给对账。
+1. **预写**：向交易所发送前先把仓位行（首单时**同事务**创建）与订单行写入库，订单行 `status` 置空；
+2. **发送**：用本地生成的 `order_id` 调交易所（追单每次递进复用同一 id，除非已确认订单存在）；
+3. **回写**：
+   - 结果明确（挂上 / 拒绝 / 取消 / 过期，订单确曾存在）→ 回写该行 `status/filled_qty/avg_price`；
+   - 结果未知（网络超时、响应丢失、进程崩溃）→ **保持 `status` 为空**，交给对账；
+   - GTX 被拒（-5022）等"交易所从未存在的订单" → **删除预写行**，且该 `order_id` **仍可复用**；
+   - **id 复用规则**：只要确认订单从未在交易所存在，就复用同一个 `order_id` 重试（同一 id 不会堆出多行）；
+     一旦订单存在（被接受 / 有成交），该 id **作废**，后续下单必须换新 id。
 
 ### 状态语义（不变量）
 
-- **`used=0` ⇔ 该订单号结果未确认**（不是"没发过请求"）；id 表中 `used=0` 的记录就是待对账清单。
-- **confirm 必须原子**：仓位行、订单流水与 used 置位必须同一事务，中间崩溃会永久丢单。
-- **意图快照（intent）先于下单写入**：对账重建仓位行与流水所需的上下文（含止盈止损等策略参数）只能来自快照，交易所只提供客观事实。
-- **订单流水只记"交易所确认存在过"的委托**（append-only）；被拒尝试留在 id 表，`sync_positions` 不触碰流水。
+- **`status` 为空 ⇔ 该订单结果未确认**（不是"没发过请求"）；`status IS NULL` 就是待对账清单。
+- **仓位与首单必须同事务**：避免"有仓位无订单"或"有订单无仓位"的孤儿。
+- **策略参数先于下单写入**：策略参数存于 `grid_positions`，交易所只提供客观事实；
+  对账只需 `symbol + grid_position_id`（均在订单行上），不再需要意图快照。
 
 ### 对账（storage 之外，execution/order_reconciler.py）
 
 - 触发时机：策略启动加载仓位前（`force` 加载）；
-- 规则：对每条 `used=0`：
-  - 距预留时间过近（< 最小年龄）→ 跳过，留给下一次；
-  - query 到有效订单（open / closed / 有任何成交）→ 用「意图快照 + 交易所事实」补全仓位与流水，`used=1`；
-  - query 不到或无成交终结态 → `used=1` 核销。
+- 规则：对每条 `status IS NULL`：
+  - 距创建时间过近（< 最小年龄）→ 跳过，留给下一次；
+  - query 到有效订单（open / closed / 有任何成交）→ 用交易所事实回写该行；
+  - query 不到 → 删除该行（交易所从未存在）。
 - 对账查询异常单条容忍，不中断整个对账。
 
 ### 归谁调
 
-- 记账包装 `JournaledTradingPort` 实现 `TradingPort`：`place` 内完成 reserve / confirm / void；`query` / `cancel` 透传。策略与追单器只依赖端口，不感知日志存在。
-- 策略加载：`strategy_key` → `OrderJournal.load_positions`（替代原 `order_file_path` JSON）。
+- 记账包装 `JournaledTradingPort` 实现 `TradingPort`：`place` 内完成 预写 / 回写；`query` / `cancel` 透传。策略与追单器只依赖端口，不感知日志存在。
+- 策略加载：`strategy_key` → `OrderJournal.load_active_positions`（含关联订单聚合）。

@@ -1,13 +1,13 @@
 """启动对账
 
-扫描 id 表中 used=0（结果未确认）的记录, 去交易所确认:
+扫描 `orders` 中 status 为空（结果未确认）的行, 去交易所确认:
 
-- 订单存在（含部分成交）→ 用「意图快照 + 交易所事实」补全 order 行并核销;
-- 订单不存在或零成交终结 → 核销;
+- 订单存在（open / closed / 有任何成交）→ 用交易所事实回写该行;
+- 查询不到 → 删除该行（交易所从未存在）;
 - 查询失败 → 保留, 留给下一次对账;
-- 距预留时间过近的记录先跳过（可能尚未在交易所 settle）。
+- 距创建时间过近的记录先跳过（可能尚未在交易所 settle）。
 
-单条记录的失败不会中断整体对账; 对账完成后策略再加载仓位（load_positions）。
+单条记录的失败不会中断整体对账; 对账完成后策略再加载仓位（load_active_positions）。
 """
 
 from datetime import UTC, datetime, timedelta
@@ -16,14 +16,9 @@ from pydantic import BaseModel, ConfigDict
 
 from smart_trader import log
 from smart_trader.client.ports import TradingPort
-from smart_trader.model import OrderResult
+from smart_trader.model import OrderResult, Symbol
 from smart_trader.storage.order_journal import OrderJournal
-from smart_trader.storage.records import (
-    IdRecord,
-    OrderIntent,
-    OrderRecord,
-    OrderRole,
-)
+from smart_trader.storage.records import OrderRecord
 
 logger = log.getLogger(__name__)
 
@@ -40,7 +35,7 @@ class ReconcileSummary(BaseModel):
 
 
 class OrderReconciler:
-    """用未确认的订单号去交易所确认, 补全或核销"""
+    """用未确认的订单行去交易所确认, 回写或删除"""
 
     def __init__(
         self,
@@ -62,38 +57,37 @@ class OrderReconciler:
 
     def reconcile(self) -> ReconcileSummary:
         summary = ReconcileSummary()
-        for record in self.journal.pending_ids(self.strategy_key):
+        for record in self.journal.pending_orders(self.strategy_key):
             if self._too_fresh(record.created_at):
                 summary.skipped += 1
                 continue
 
             try:
-                order = self.trading.query(record.id, record.intent.symbol)
+                order = self.trading.query(
+                    record.order_id, Symbol.from_ccxt(record.symbol)
+                )
             # 对账必须容忍单条查询的一切失败: 保留线索待下次, 不能中断整体
             except Exception as e:  # noqa: BLE001
-                logger.warning("对账查询失败, 保留待下次: %s (%s)", record.id, e)
+                logger.warning("对账查询失败, 保留待下次: %s (%s)", record.order_id, e)
                 summary.failed += 1
                 continue
 
             if order is not None and self._has_live_order(order):
-                try:
-                    self._recover(record, order)
-                except ValueError:
-                    logger.exception("对账数据异常, 保留待下次: %s", record.id)
-                    summary.failed += 1
-                    continue
+                self.journal.settle_order(self._settle_record(record, order))
                 summary.recovered += 1
-                logger.info("对账恢复订单: %s -> %s", record.id, order.status.value)
+                logger.info(
+                    "对账恢复订单: %s -> %s", record.order_id, order.status.value
+                )
             else:
-                self.journal.void(record.id)
+                self.journal.discard_order(record.order_id)
                 summary.settled += 1
-                logger.info("对账核销订单号(交易所无单): %s", record.id)
+                logger.info("对账删除预写行(交易所无单): %s", record.order_id)
 
         if any(
             (summary.recovered, summary.settled, summary.skipped, summary.failed)
         ):
             logger.info(
-                "对账完成: 恢复 %s, 核销 %s, 跳过 %s, 失败 %s",
+                "对账完成: 恢复 %s, 删除 %s, 跳过 %s, 失败 %s",
                 summary.recovered,
                 summary.settled,
                 summary.skipped,
@@ -115,51 +109,15 @@ class OrderReconciler:
             return True
         return order.filled_qty > 0
 
-    def _recover(self, record: IdRecord, order: OrderResult) -> None:
-        """用意图快照 + 交易所事实重建仓位与流水, 并核销"""
-        intent = record.intent
-        if intent.kind is OrderRole.ENTRY:
-            template = intent.entry_position
-            if template is None:
-                raise ValueError(f"ENTRY 意图缺少 entry_position 快照: {record.id}")
-            position = template.model_copy(
-                update={
-                    "entry_id": order.custom_id,
-                    "strategy_key": self.strategy_key,
-                    "price": (
-                        order.price if order.price is not None else template.price
-                    ),
-                    "status": order.status,
-                    "filled_quantity": order.filled_qty,
-                }
-            )
-            self.journal.confirm_entry(
-                record.id, position, self._record_from_query(intent, order)
-            )
-            return
-
-        self.journal.confirm_exit(
-            record.id,
-            intent.entry_ids,
-            exit_id=order.custom_id,
-            exit_price=order.price if order.price is not None else 0.0,
-            order=self._record_from_query(intent, order),
-        )
-
-    def _record_from_query(
-        self, intent: OrderIntent, result: OrderResult
-    ) -> OrderRecord:
-        """从意图快照 + 交易所查询事实构造订单流水"""
-        return OrderRecord(
-            order_id=result.custom_id,
-            strategy_key=self.strategy_key,
-            role=intent.kind,
-            symbol=intent.symbol.ccxt(),
-            side=result.side if result.side is not None else intent.side,
-            type=intent.order_type,
-            price=result.price,
-            quantity=result.quantity,
-            filled_qty=result.filled_qty,
-            avg_price=result.avg_price,
-            status=result.status,
+    @staticmethod
+    def _settle_record(record: OrderRecord, order: OrderResult) -> OrderRecord:
+        """用交易所事实回写预写行"""
+        return record.model_copy(
+            update={
+                "price": order.price if order.price is not None else record.price,
+                "quantity": order.quantity if order.quantity > 0 else record.quantity,
+                "filled_qty": order.filled_qty,
+                "avg_price": order.avg_price,
+                "status": order.status,
+            }
         )

@@ -5,7 +5,6 @@
 挂上后可选择等待成交, 超时则撤单。
 """
 
-import secrets
 import time
 
 from smart_trader import log
@@ -83,12 +82,14 @@ class LimitOrderChaser:
     def _place_gtx(self, price: float) -> OrderResult | None:
         """
         挂一张 GTX(post only)限价单
+
+        订单号由记账包装分配并在多轮递进间复用（传空 custom_id）。
+
         @return: 挂单被交易所接受返回订单结果, 被拒返回 None
         @raise SmartTraderError: 确定性拒绝(精度/名义价值等)直接抛出
         """
-        custom_id = f"{self.side.value}{secrets.token_hex(nbytes=5)}"
         request = OrderRequest(
-            custom_id=custom_id,
+            custom_id="",
             symbol=self.symbol,
             side=self.side,
             type=OrderType.LIMIT,
@@ -98,8 +99,7 @@ class LimitOrderChaser:
             time_in_force=TimeInForce.GTX,
         )
         logger.info(
-            "下单：%s, %s, %s, Qty: %s, Price: %s",
-            custom_id,
+            "下单：%s, %s, Qty: %s, Price: %s",
             self.symbol.ccxt(),
             self.side.name,
             self.quantity,
