@@ -12,6 +12,7 @@ backtest_report*.txt
 
 .venv
 .pytest_cache
+.pytest-tmp
 .claude
 .github
 .data
