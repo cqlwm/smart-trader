@@ -17,5 +17,6 @@ backtest_report*.txt
 .github
 .data
 .vscode
+.trae
 
 smart_trader.egg-info
