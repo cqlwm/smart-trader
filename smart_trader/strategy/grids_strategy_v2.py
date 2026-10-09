@@ -513,10 +513,9 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                 )
                 refresh = True
 
-        if not self.check_open_order():
-            closed_orders = self.check_close_order()
-        else:
-            closed_orders = []
+        # 止损/平仓优先: 本根K线一旦产生平仓(含撤销未成交入场单), 就不再开新仓
+        closed_orders = self.check_close_order()
+        if closed_orders or self.check_open_order():
             refresh = True
 
         self.order_manager.record_orders(closed_orders, refresh)

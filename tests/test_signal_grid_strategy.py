@@ -110,3 +110,26 @@ def test_close_position_ratio_multiple_orders():
     assert len(flat_orders) == 2
     # 总数量 = 100 + 50 = 150, 平仓数量 = 150 * 0.95
     assert ex_client.place_order_v2.call_args[1]["quantity"] == 150.0 * 0.95
+
+
+def test_open_order_allowed_when_no_close_in_kline():
+    """无平仓的K线仍能正常开仓"""
+    config = SignalGridStrategyConfig(
+        symbol=Symbol(base="BTC", quote="USDT"),
+        timeframe=TIMEFRAME,
+        per_order_qty=100,
+        order_file_path="",
+    )
+    ex_client = Mock(spec=ExSwapClient)
+    ex_client.place_order_v2.return_value = {
+        "clientOrderId": "entry1",
+        "price": 100.0,
+        "status": "open",
+    }
+    strategy = SignalGridStrategy(config, ex_client)
+    set_latest_kline(strategy, 100.0)
+
+    strategy._on_kline_finished()
+
+    assert len(strategy.order_manager.orders) == 1
+    assert strategy.order_manager.orders[0].entry_id == "entry1"

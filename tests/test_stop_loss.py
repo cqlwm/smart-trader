@@ -220,6 +220,46 @@ def test_trailing_stop_not_activated():
     assert order.current_stop_price == 98.0
 
 
+def test_stop_loss_takes_priority_over_open_order():
+    """止损优先: 同一根K线同时满足止损与补仓条件时, 先执行止损且不再开新仓"""
+    config = SignalGridStrategyConfig(
+        symbol=Symbol(base="BTC", quote="USDT"),
+        timeframe=TIMEFRAME,
+        per_order_qty=100,
+        order_file_path="",
+        enable_order_stop_loss=True,
+        order_stop_loss_rate=0.05,
+        grid_spacing_rate=0.01,
+    )
+    strategy, ex_client = build_strategy(config)
+    ex_client.place_order_v2.return_value = {"clientOrderId": "exit1", "price": 94.0}
+
+    strategy.order_manager.add_order(
+        Order(
+            entry_id="buy1",
+            side=OrderSide.BUY,
+            price=100.0,
+            quantity=100.0,
+            fixed_take_profit_rate=0.01,
+            signal_min_take_profit_rate=0.002,
+            status="closed",
+            stop_loss_rate=0.05,
+            enable_stop_loss=True,
+            current_stop_price=95.0,
+        )
+    )
+    # 价格94: 既触发止损(<=95), 又满足补仓间距(100 -> 94, 跌幅6% > 1%)
+    set_latest_kline(strategy, 94.0)
+
+    strategy._on_kline_finished()
+
+    # 只下了止损单, 且方向为反向
+    ex_client.place_order_v2.assert_called_once()
+    assert ex_client.place_order_v2.call_args[1]["order_side"] == OrderSide.SELL
+    # 本根K线不再补新仓
+    assert strategy.order_manager.orders == [], "止损所在K线不应再开新仓"
+
+
 def test_order_initialization_with_stop_loss():
     """测试订单初始化时正确设置止损参数"""
     config = SignalGridStrategyConfig(
