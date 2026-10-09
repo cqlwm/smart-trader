@@ -75,6 +75,7 @@
 | `OrderRequest.position_side` | `params.positionSide` | 双向持仓模式 |
 | `OrderRequest.time_in_force` | `params.timeInForce` | `GTX` 即 post only |
 | `OrderResult.status` | `order.status` | `open`/`closed`/`canceled`/`rejected`/`expired`；其余（如 `canceling`）→ `ORDER_RESPONSE_INVALID` |
+| `OrderResult.side` | `order.side` | 交易所必回传；缺失或无法解析 → `ORDER_RESPONSE_INVALID`（已实测 place/query/cancel 六种场景均回传） |
 | `OrderResult.filled_qty` | `order.filled` | 由交易所 `executedQty` 归一化 |
 | `OrderResult.price` | `order.price` | 市价单为 `0`/空 → `None` |
 | `OrderResult.avg_price` | `order.average` | 由 `avgPrice` 归一化 |

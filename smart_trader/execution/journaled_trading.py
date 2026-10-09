@@ -141,7 +141,7 @@ class JournaledTradingPort:
             grid_position_id=self._grid_position_id or "",
             strategy_key=self.strategy_key,
             symbol=request.symbol.ccxt(),
-            side=result.side if result.side is not None else request.side,
+            side=result.side,
             type=request.type,
             price=result.price if result.price is not None else request.price,
             quantity=request.quantity,

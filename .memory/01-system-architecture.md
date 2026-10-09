@@ -82,7 +82,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | `smart_trader/execution/limit_order_chaser.py` | 追单执行策略 |
 | `smart_trader/execution/journaled_trading.py` | 记账下单包装（TradingPort 装饰器）：预写仓位/订单 → 下单 → 回写结果 |
 | `smart_trader/execution/order_reconciler.py` | 启动对账：扫 `status IS NULL` 的订单 → 查交易所 → 回写 |
-| `smart_trader/strategy/` | 策略基类与网格策略 |
+| `smart_trader/strategy/` | 策略基类与网格策略；信号网格拆分为 `grid_position`（仓位对象 + `load_positions` 批量还原）/ `signal_grid_config`（配置 + `CloseOutcome`）/ `grid_order_gateway`（记账下单入口）/ `position_lifecycle`（订单结算与出场单跟踪）/ `signal_grid_strategy`（编排 + 仓位登记表 + 公共名再导出） |
 | `smart_trader/data_event_loop.py` / `task/` | WebSocket 事件循环与任务分发 |
 
 ## 七、演进状态
@@ -100,6 +100,8 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 8 | 数据模型拆分：`orders` 表拆为 `grid_positions`（逻辑仓位）+ `orders`（纯订单流水）；storage 层命名对齐（`OrderRow` → 分家） | 已完成 |
 | Step 9 | 存储层 SQLAlchemy Core 化：拆分 `records` / `schema` / `order_journal`；DDL 单一来源；泛型 upsert；WAL + busy_timeout；DDL 等价性测试（设计见 `.memory/03-coding-design.md`） | 已完成 |
 | Step 10 | 逻辑仓位重构：`grid_positions` 只存参数与运行时状态，价格/数量/相位由 `orders` 派生；删 `order_ids`（WAL 改由 `orders.status` 为空承担）；入/出场按 `position_side` 归类；`current_stop_price` → `trailing_stop_price` | 进行中 |
+| Step 11 | 删除 `GridPositionManager`：仓位登记表内联进策略（`positions` / `add_position` / `remove_positions`），批量还原下沉为 `grid_position.load_positions`；`load_positions(force)` 的 `force` 参数随之删除（唯一调用点在 `__init__`）；行为零变化 | 已完成 |
+| Step 12 | 回调互斥重构：`on_kline_lock` + `on_kline_finished_lock` 合并为 `_callback_lock`；`_call_on_kline_finished` 阻塞等待（交易决策永不被跳过），`_call_on_kline` 非阻塞（盘中更新可跳过 + warning 日志）；`SignalGridStrategy._positions_lock` 随之删除（回调已串行化） | 已完成 |
 
 ### 待办清单（Step 5）
 

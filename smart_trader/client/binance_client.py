@@ -134,14 +134,12 @@ def to_ccxt_order_params(request: OrderRequest) -> dict[str, Any]:
 def to_order_result(
     order: dict[str, Any],
     symbol: Symbol,
-    fallback_side: OrderSide | None = None,
 ) -> OrderResult:
     """
     ccxt 订单结构 → 领域订单结果
     @param order: ccxt 统一订单结构
     @param symbol: 交易对(交易所未回传时可确认)
-    @param fallback_side: 交易所未回传方向时的兜底方向
-    @raise SmartTraderError: 响应缺少必需字段或状态无法解析
+    @raise SmartTraderError: 响应缺少必需字段, 或状态/方向无法解析
     """
     raw_status = order.get("status")
     try:
@@ -161,9 +159,13 @@ def to_order_result(
 
     raw_side = order.get("side")
     if isinstance(raw_side, str) and raw_side.lower() in ("buy", "sell"):
-        side: OrderSide | None = OrderSide(raw_side.lower())
+        side = OrderSide(raw_side.lower())
     else:
-        side = fallback_side
+        # 交易所必回传方向; 缺失或非法都属响应数据不完整, 不得猜测兜底
+        raise SmartTraderError(
+            ErrorCode.ORDER_RESPONSE_INVALID,
+            f"无法解析订单方向: {raw_side}",
+        )
 
     quantity = _to_float(order.get("amount")) or 0.0
     filled_qty = _to_float(order.get("filled")) or 0.0
@@ -316,9 +318,7 @@ class BinanceSwapClient:
             raise _translate_error(e, "下单") from e
 
         logger.debug("下单返回: %s", order)
-        return to_order_result(
-            cast(dict[str, Any], order), request.symbol, request.side
-        )
+        return to_order_result(cast(dict[str, Any], order), request.symbol)
 
     def query(self, custom_id: str, symbol: Symbol) -> OrderResult | None:
         try:

@@ -214,6 +214,7 @@ class FakeCcxtExchange:
         self.cancel_order_result: dict[str, Any] = {
             "clientOrderId": "cid1",
             "status": "canceled",
+            "side": "buy",
         }
         self.create_order_error: Exception | None = None
         self.fetch_order_error: Exception | None = None

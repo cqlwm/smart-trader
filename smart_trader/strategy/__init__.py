@@ -38,8 +38,7 @@ class MultiTimeframeStrategy(Strategy):
         self.market: MarketDataPort = market
         self.kline_data_dict: dict[str, KlineData] = {}
         self.init_kline_nums = 300
-        self.on_kline_finished_lock = threading.Lock()
-        self.on_kline_lock = threading.Lock()
+        self._callback_lock = threading.Lock()
         self.data_lock = threading.Lock()
 
         for timeframe in timeframes:
@@ -104,20 +103,19 @@ class MultiTimeframeStrategy(Strategy):
             self.kline_data_dict[timeframe].klines = new_df
 
     def _call_on_kline(self, timeframe: str):
-        """Safely call the on_kline method with locking"""
-        if self.on_kline_lock.acquire(blocking=False):
+        """盘中更新: 非阻塞, 正在执行完成K线回调时跳过"""
+        if self._callback_lock.acquire(blocking=False):
             try:
                 self.on_kline(timeframe)
             finally:
-                self.on_kline_lock.release()
+                self._callback_lock.release()
+        else:
+            logger.warning("跳过 on_kline(%s): on_kline_finished 正在执行", timeframe)
 
     def _call_on_kline_finished(self, timeframe: str):
-        """Safely call the on_kline_finished method with locking"""
-        if self.on_kline_finished_lock.acquire(blocking=False):
-            try:
-                self.on_kline_finished(timeframe)
-            finally:
-                self.on_kline_finished_lock.release()
+        """完成K线回调: 阻塞等待, 永不跳过（交易决策必须执行）"""
+        with self._callback_lock:
+            self.on_kline_finished(timeframe)
 
     def run(self, kline: Kline):
         """处理K线数据（多时间框架版本）"""

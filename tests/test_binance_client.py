@@ -185,6 +185,7 @@ class TestPlace:
             "clientOrderId": "cid1",
             "status": "closed",
             "amount": "100",
+            "side": "buy",
         }
 
         result = client.place(build_request())
@@ -198,6 +199,7 @@ class TestPlace:
             "clientOrderId": "cid1",
             "status": "canceled",
             "amount": "100",
+            "side": "buy",
         }
 
         result = client.place(build_request())
@@ -213,6 +215,7 @@ class TestPlace:
             "price": "0.09085",
             "amount": "100",
             "filled": "0",
+            "side": "buy",
         }
 
         result = client.place(build_request())
@@ -242,6 +245,35 @@ class TestPlace:
         exchange.create_order_result = {
             "clientOrderId": "cid1",
             "status": "canceling",
+            "amount": "100",
+        }
+
+        with pytest.raises(SmartTraderError) as exc:
+            client.place(build_request())
+
+        assert exc.value.error_code is ErrorCode.ORDER_RESPONSE_INVALID
+
+    def test_raises_order_response_invalid_on_unparseable_side(self):
+        """交易所回传了 side 但无法解析为 buy/sell, 属于数据完整性问题, 必须失败而非静默兜底"""
+        client, exchange = build_client()
+        exchange.create_order_result = {
+            "clientOrderId": "cid1",
+            "status": "open",
+            "amount": "100",
+            "side": "unknown",
+        }
+
+        with pytest.raises(SmartTraderError) as exc:
+            client.place(build_request())
+
+        assert exc.value.error_code is ErrorCode.ORDER_RESPONSE_INVALID
+
+    def test_raises_order_response_invalid_when_exchange_omits_side(self):
+        """交易所未回传 side 属响应数据不完整, 必须失败而非猜测方向"""
+        client, exchange = build_client()
+        exchange.create_order_result = {
+            "clientOrderId": "cid1",
+            "status": "open",
             "amount": "100",
         }
 
@@ -291,6 +323,7 @@ class TestQuery:
             "price": "0.09085",
             "amount": "100",
             "filled": "30",
+            "side": "buy",
             "info": {"origClientOrderId": "cid1"},
         }
 
@@ -300,6 +333,35 @@ class TestQuery:
         assert result.filled_qty == 30.0, "部分成交量必须透出"
         assert result.status is OrderStatus.OPEN
         assert exchange.fetch_order_calls[0]["params"]["origClientOrderId"] == "cid1"
+
+    def test_raises_order_response_invalid_on_unparseable_side(self):
+        """查询返回了无法解析的 side 时不得静默兜底(查询路径无兜底方向)"""
+        client, exchange = build_client()
+        exchange.fetch_order_result = {
+            "clientOrderId": "cid1",
+            "status": "open",
+            "amount": "100",
+            "side": "unknown",
+        }
+
+        with pytest.raises(SmartTraderError) as exc:
+            client.query("cid1", SYMBOL)
+
+        assert exc.value.error_code is ErrorCode.ORDER_RESPONSE_INVALID
+
+    def test_raises_order_response_invalid_when_exchange_omits_side(self):
+        """查询返回缺少 side 时同样视为响应不完整, 不得静默返回 None 方向"""
+        client, exchange = build_client()
+        exchange.fetch_order_result = {
+            "clientOrderId": "cid1",
+            "status": "open",
+            "amount": "100",
+        }
+
+        with pytest.raises(SmartTraderError) as exc:
+            client.query("cid1", SYMBOL)
+
+        assert exc.value.error_code is ErrorCode.ORDER_RESPONSE_INVALID
 
     def test_returns_none_when_order_not_found(self):
         """订单不存在属于可预期情况, 不应向上抛异常"""
@@ -318,6 +380,7 @@ class TestCancel:
             "price": "0.09085",
             "amount": "100",
             "filled": "0",
+            "side": "buy",
         }
 
         result = client.cancel("cid1", SYMBOL)

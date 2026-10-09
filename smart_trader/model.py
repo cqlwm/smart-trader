@@ -199,7 +199,7 @@ class OrderResult(BaseModel):
 
     custom_id: str
     symbol: Symbol
-    side: OrderSide | None = None
+    side: OrderSide
     status: OrderStatus
     quantity: float = 0.0
     filled_qty: float = 0.0

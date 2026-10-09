@@ -1,299 +1,184 @@
+"""SignalGridStrategy 止损相关测试
+
+覆盖: 单笔止损触发平仓、未触发/未激活时不动作、跟踪止损上移、
+空头方向的止损判定、已有出场挂单时不重复下单、暂停后仍跟踪出场单。
+"""
+
 import pytest
 
-from smart_trader.model import (
-    Kline,
-    OrderSide,
-    OrderStatus,
-    OrderType,
-    PlaceOrderBehavior,
-    PositionSide,
-    Symbol,
+from smart_trader.model import OrderResult, OrderSide, OrderStatus, PositionSide
+from tests.fakes import DEFAULT_SYMBOL, make_order_record
+from tests.test_signal_grid_strategy import (
+    build_strategy,
+    push_kline,
+    seed_position,
 )
-from smart_trader.storage.order_journal import OrderJournal
-from smart_trader.storage.records import OrderRecord
-from smart_trader.strategy.signal_grid_strategy import (
-    GridPosition,
-    SignalGridStrategy,
-    SignalGridStrategyConfig,
-)
-from tests.fakes import FakeMarketDataPort, FakeTradingPort
-
-SYMBOL = Symbol(base="BTC", quote="USDT")
-
-TIMEFRAME = "1m"
-STRATEGY_KEY = "test_stop_loss"
 
 
-def set_latest_kline(
-    strategy: SignalGridStrategy,
-    close: float,
-    high: float | None = None,
-    low: float | None = None,
-) -> None:
-    strategy.kline_data_dict[TIMEFRAME].latest_kline = Kline(
-        symbol=strategy.config.symbol,
-        timeframe=TIMEFRAME,
-        open=close,
-        high=close if high is None else high,
-        low=close if low is None else low,
-        close=close,
-        volume=0.0,
-        timestamp=0,
-        finished=True,
+def test_stop_loss_triggers_exit_order():
+    """跌破止损价 -> 挂出反向平仓单"""
+    strategy, trading, _ = build_strategy(
+        enable_order_stop_loss=True, order_stop_loss_rate=0.05
     )
-
-
-def build_strategy(
-    config: SignalGridStrategyConfig,
-) -> tuple[SignalGridStrategy, FakeTradingPort]:
-    trading = FakeTradingPort(status=OrderStatus.OPEN, price=0.0)
-    return (
-        SignalGridStrategy(
-            config,
-            trading,
-            FakeMarketDataPort(),
-            OrderJournal(":memory:"),
-            reconcile_min_age_seconds=0.0,
-        ),
-        trading,
-    )
-
-
-def build_position(
-    position_id: str,
-    side: OrderSide,
-    price: float,
-    quantity: float,
-    **extra: object,
-) -> GridPosition:
-    """构造一个含单条已成交入场单的逻辑仓位"""
-    position_side = PositionSide.LONG if side == OrderSide.BUY else PositionSide.SHORT
-    entry = OrderRecord(
-        order_id=f"{position_id}-e",
-        grid_position_id=position_id,
-        strategy_key=STRATEGY_KEY,
-        symbol=SYMBOL.ccxt(),
-        side=side,
-        type=OrderType.LIMIT,
-        price=price,
-        quantity=quantity,
-        filled_qty=quantity,
-        avg_price=price,
-        status=OrderStatus.CLOSED,
-    )
-    return GridPosition(
-        id=position_id,
-        strategy_key=STRATEGY_KEY,
-        symbol=SYMBOL.ccxt(),
-        position_side=position_side,
-        main_order_side=side,
-        fixed_take_profit_rate=0.01,
-        signal_min_take_profit_rate=0.002,
-        orders=[entry],
-        **extra,  # type: ignore[arg-type]
-    )
-
-
-def test_order_stop_loss_buy():
-    """测试买入订单的止损功能"""
-    config = SignalGridStrategyConfig(
-        symbol=SYMBOL,
-        timeframe=TIMEFRAME,
-        per_order_qty=100,
-        strategy_key=STRATEGY_KEY,
-        place_order_behavior=PlaceOrderBehavior.NORMAL,
-        enable_order_stop_loss=True,
-        order_stop_loss_rate=0.05,  # 5% 止损
-    )
-    strategy, trading = build_strategy(config)
-
-    # 买入订单，价格100，止损价95
-    position = build_position(
-        "buy1",
-        OrderSide.BUY,
-        100.0,
-        100.0,
-        stop_loss_rate=0.05,
+    seed_position(
+        strategy,
         enable_stop_loss=True,
-        trailing_stop_price=95.0,
+        stop_loss_rate=0.05,
+        trailing_stop_price=0.475,
     )
-    strategy.position_manager.add_position(position)
-    set_latest_kline(strategy, 94.0)  # 触发止损
 
-    archived = strategy.check_close_position()
+    push_kline(strategy, 0.47)
 
-    assert archived == [], "挂出止损单不等于平仓完成"
-    assert position.pending_exit_order is not None
-    assert len(trading.placed) == 1
-    exit_request = trading.placed[0]
-    assert exit_request.side is OrderSide.SELL, "多头止损必须卖出平仓"
-    assert exit_request.quantity == pytest.approx(100.0)
-    assert exit_request.price == pytest.approx(94.0)
+    assert [request.side for request in trading.placed] == [OrderSide.SELL]
+    assert strategy.positions[0].pending_exit_order is not None
 
 
-def test_order_stop_loss_sell():
-    """测试卖出订单的止损功能"""
-    config = SignalGridStrategyConfig(
-        symbol=SYMBOL,
-        timeframe=TIMEFRAME,
+def test_stop_loss_not_triggered_keeps_position():
+    """未跌破止损价 -> 不挂平仓单"""
+    strategy, trading, _ = build_strategy(
+        enable_order_stop_loss=True,
+        order_stop_loss_rate=0.05,
+        grid_spacing_rate=0.05,
+    )
+    seed_position(
+        strategy,
+        enable_stop_loss=True,
+        stop_loss_rate=0.05,
+        trailing_stop_price=0.475,
+    )
+
+    push_kline(strategy, 0.476)
+
+    assert trading.placed == [], "止损未触发不应产生任何委托"
+    assert strategy.positions[0].pending_exit_order is None
+
+
+def test_stop_loss_triggers_for_short_position():
+    """空头: 价格涨破止损价 -> 买入平仓"""
+    strategy, trading, _ = build_strategy(
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
-        per_order_qty=100,
-        strategy_key=STRATEGY_KEY,
-        place_order_behavior=PlaceOrderBehavior.NORMAL,
         enable_order_stop_loss=True,
         order_stop_loss_rate=0.05,
     )
-    strategy, trading = build_strategy(config)
-
-    # 卖出订单，价格100，止损价105
-    position = build_position(
-        "sell1",
-        OrderSide.SELL,
-        100.0,
-        100.0,
-        stop_loss_rate=0.05,
-        enable_stop_loss=True,
-        trailing_stop_price=105.0,
-    )
-    strategy.position_manager.add_position(position)
-    set_latest_kline(strategy, 106.0)  # 触发止损
-
-    archived = strategy.check_close_position()
-
-    assert archived == [], "挂出止损单不等于平仓完成"
-    assert position.pending_exit_order is not None
-    assert trading.placed[0].side is OrderSide.BUY, "空头止损必须买入平仓"
-
-
-def test_trailing_stop_buy():
-    """测试买入订单的跟踪止损"""
-    config = SignalGridStrategyConfig(
-        symbol=SYMBOL,
-        timeframe=TIMEFRAME,
-        per_order_qty=100,
-        strategy_key=STRATEGY_KEY,
-        place_order_behavior=PlaceOrderBehavior.NORMAL,
-        enable_trailing_stop=True,
-        trailing_stop_rate=0.02,
-        trailing_stop_activation_profit_rate=0.01,
-    )
-    strategy, _ = build_strategy(config)
-
-    # 买入订单，价格100，初始止损价98
-    position = build_position(
-        "buy1",
-        OrderSide.BUY,
-        100.0,
-        100.0,
-        trailing_stop_rate=0.02,
-        enable_trailing_stop=True,
-        trailing_stop_activation_rate=0.01,
-        trailing_stop_price=98.0,
-    )
-    strategy.position_manager.add_position(position)
-
-    # 最高价涨到102(超过激活价格101)，止损价更新为 max(98, 102 * (1 - 0.02))
-    set_latest_kline(strategy, 102.0, high=102.0)
-    strategy._on_kline_finished()
-
-    assert position.trailing_stop_price == pytest.approx(99.96, abs=1e-6)
-
-
-def test_trailing_stop_sell():
-    """测试卖出订单的跟踪止损"""
-    config = SignalGridStrategyConfig(
-        symbol=SYMBOL,
-        timeframe=TIMEFRAME,
+    seed_position(
+        strategy,
         position_side=PositionSide.SHORT,
-        master_side=OrderSide.SELL,
-        per_order_qty=100,
-        strategy_key=STRATEGY_KEY,
-        place_order_behavior=PlaceOrderBehavior.NORMAL,
+        main_order_side=OrderSide.SELL,
+        enable_stop_loss=True,
+        stop_loss_rate=0.05,
+        trailing_stop_price=0.525,
+    )
+
+    push_kline(strategy, 0.53)
+
+    assert [request.side for request in trading.placed] == [OrderSide.BUY], (
+        "空头止损应买入平仓"
+    )
+    assert strategy.positions[0].pending_exit_order is not None
+
+
+def test_trailing_stop_moves_up_on_new_high():
+    """跟踪止损: 创新高（达到激活盈利）后止损价上移"""
+    strategy, trading, _ = build_strategy(
         enable_trailing_stop=True,
         trailing_stop_rate=0.02,
         trailing_stop_activation_profit_rate=0.01,
+        grid_spacing_rate=0.05,
     )
-    strategy, _ = build_strategy(config)
-
-    # 卖出订单，价格100，初始止损价102
-    position = build_position(
-        "sell1",
-        OrderSide.SELL,
-        100.0,
-        100.0,
-        trailing_stop_rate=0.02,
+    position = seed_position(
+        strategy,
         enable_trailing_stop=True,
+        trailing_stop_rate=0.02,
         trailing_stop_activation_rate=0.01,
-        trailing_stop_price=102.0,
+        trailing_stop_price=0.49,
     )
-    strategy.position_manager.add_position(position)
 
-    # 最低价跌到98(低于激活价格99)，止损价更新为 min(102, 98 * (1 + 0.02))
-    set_latest_kline(strategy, 98.0, low=98.0)
-    strategy._on_kline_finished()
+    push_kline(strategy, 0.52, high=0.52)
 
-    assert position.trailing_stop_price == pytest.approx(99.96, abs=1e-6)
+    assert position.trailing_stop_price == pytest.approx(0.5096, abs=1e-6), (
+        "新止损价 = 最高价 * (1 - 跟踪止损率)"
+    )
+    assert trading.placed == []
 
 
-def test_trailing_stop_not_activated():
-    """测试跟踪止损未激活的情况"""
-    config = SignalGridStrategyConfig(
-        symbol=SYMBOL,
-        timeframe=TIMEFRAME,
-        per_order_qty=100,
-        strategy_key=STRATEGY_KEY,
-        place_order_behavior=PlaceOrderBehavior.NORMAL,
+def test_trailing_stop_not_activated_keeps_price():
+    """未达到激活盈利 -> 止损价保持不动"""
+    strategy, trading, _ = build_strategy(
         enable_trailing_stop=True,
         trailing_stop_rate=0.02,
         trailing_stop_activation_profit_rate=0.01,
+        grid_spacing_rate=0.05,
     )
-    strategy, _ = build_strategy(config)
-
-    # 买入订单，价格100，激活价格101
-    position = build_position(
-        "buy1",
-        OrderSide.BUY,
-        100.0,
-        100.0,
-        trailing_stop_rate=0.02,
+    position = seed_position(
+        strategy,
         enable_trailing_stop=True,
+        trailing_stop_rate=0.02,
         trailing_stop_activation_rate=0.01,
-        trailing_stop_price=98.0,
+        trailing_stop_price=0.49,
     )
-    strategy.position_manager.add_position(position)
 
-    # 最高价只到100.5，未达到激活价格101，止损价保持不变
-    set_latest_kline(strategy, 100.5, high=100.5)
-    strategy._on_kline_finished()
+    push_kline(strategy, 0.503, high=0.503)
 
-    assert position.trailing_stop_price == 98.0
+    assert position.trailing_stop_price == 0.49
+    assert trading.placed == []
 
 
-def test_order_initialization_with_stop_loss():
-    """测试订单初始化时正确设置止损参数"""
-    config = SignalGridStrategyConfig(
-        symbol=SYMBOL,
-        timeframe=TIMEFRAME,
-        per_order_qty=100,
-        strategy_key=STRATEGY_KEY,
-        place_order_behavior=PlaceOrderBehavior.NORMAL,
-        enable_order_stop_loss=True,
-        order_stop_loss_rate=0.05,
-        enable_trailing_stop=True,
-        trailing_stop_rate=0.02,
-        trailing_stop_activation_profit_rate=0.01,
+def test_normal_take_profit_keeps_resting_exit_order():
+    """已有未成交出场单时, 普通止盈保留原挂单, 不重复下单"""
+    strategy, trading, _ = build_strategy(
+        fixed_rate_take_profit=True, fixed_take_profit_rate=0.01
     )
-    strategy, _ = build_strategy(config)
-    set_latest_kline(strategy, 100.0)
+    position = seed_position(strategy)
+    position.orders.append(
+        make_order_record(
+            "o-EXIT",
+            position.id,
+            side=OrderSide.SELL,
+            price=0.51,
+            quantity=100.0,
+            filled_qty=0.0,
+            status=OrderStatus.OPEN,
+        )
+    )
 
-    result = strategy.check_open_position()
-    assert result is True
+    push_kline(strategy, 0.51)
 
-    position = strategy.position_manager.positions[0]
-    assert position.enable_stop_loss is True
-    assert position.stop_loss_rate == 0.05
-    assert position.enable_trailing_stop is True
-    assert position.trailing_stop_rate == 0.02
-    assert position.trailing_stop_activation_rate == 0.01
-    assert position.trailing_stop_price == 95.0  # 100 * (1 - 0.05)
+    assert trading.placed == [], "已有休息中的出场挂单, 不得重复下单"
+    assert position.quantity == pytest.approx(100.0), "出场未成交, 持仓不变"
+
+
+def test_pending_exit_is_tracked_even_when_paused():
+    """暂停（is_running=False）后仍必须跟踪已挂出的出场单"""
+    strategy, trading, _ = build_strategy()
+    position = seed_position(strategy)
+    position.orders.append(
+        make_order_record(
+            "o-EXIT",
+            position.id,
+            side=OrderSide.SELL,
+            price=0.51,
+            quantity=100.0,
+            filled_qty=0.0,
+            status=OrderStatus.OPEN,
+        )
+    )
+    strategy.is_running = False
+    trading.queue_query(
+        OrderResult(
+            custom_id="o-EXIT",
+            symbol=DEFAULT_SYMBOL,
+            side=OrderSide.SELL,
+            status=OrderStatus.CLOSED,
+            quantity=100.0,
+            filled_qty=100.0,
+            price=0.51,
+        )
+    )
+
+    push_kline(strategy, 0.51)
+
+    assert strategy.positions == [], (
+        "出场成交且可平量归零 -> 归档, 与 is_running 无关"
+    )
+    assert trading.placed == [], "跟踪出场单不应产生新委托"
