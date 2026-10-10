@@ -2,9 +2,15 @@
 
 from pydantic import BaseModel, ConfigDict
 
-from smart_trader.model import OrderSide, PlaceOrderBehavior, PositionSide, Symbol
-from smart_trader.strategy import Signal
+from smart_trader.model import (
+    OrderSide,
+    PlaceOrderBehavior,
+    PositionSide,
+    SignalKind,
+    Symbol,
+)
 from smart_trader.strategy.grid_position import GridPosition
+from smart_trader.strategy.signal import Signal
 
 
 class SignalGridStrategyConfig(BaseModel):
@@ -15,12 +21,18 @@ class SignalGridStrategyConfig(BaseModel):
     position_side: PositionSide = PositionSide.LONG
     master_side: OrderSide = OrderSide.BUY
     per_order_qty: float = 0.02
+    # 加仓间距阈值, 正负号决定语义(见 GridSpacingGate):
+    #   正数: 单向 —— 仅亏损方向走出间距后加仓
+    #   负数: 双向距离限制 —— 距基准仓位不超过 |值| 即加仓(盈利方向也放行)
     grid_spacing_rate: float = 0.01
     max_order: int = 10000
     highest_price: float = 1000000
     lowest_price: float = 0
 
+    # 行情信号: 唯一的决策注入点, 闸门链与策略链共享同一实例
     signal: Signal | None = None
+    # 信号种类: TRIGGER=无方向倾向(任何非中性信号都触发) / DIRECTIONAL=有方向倾向
+    signal_kind: SignalKind = SignalKind.DIRECTIONAL
 
     # 启用退出信号
     enable_exit_signal: bool = True
@@ -35,14 +47,11 @@ class SignalGridStrategyConfig(BaseModel):
     # 固定比例止盈率
     fixed_take_profit_rate: float = 0.006
 
-    place_order_behavior: PlaceOrderBehavior = (
-        PlaceOrderBehavior.CHASER_OPEN
-    )  # 下单行为
+    place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER_OPEN
 
     # 账本归属键: 多策略共享一个数据库, 按此键存取订单
     strategy_key: str
 
-    position_reverse: bool = False  # 是否反向持仓
     # 达到最大订单数全部止损
     enable_max_order_stop_loss: bool = False
     # 止损后暂停策略

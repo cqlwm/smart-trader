@@ -4,7 +4,7 @@ from decimal import ROUND_DOWN, Decimal
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from smart_trader.exceptions import ErrorCode, SmartTraderError
 
@@ -314,3 +314,75 @@ class Kline:
             "volume": self.volume,
             "finished": self.finished,
         }
+
+
+class SignalDirection(Enum):
+    """行情方向（纯行情事实，与持仓方向无关）"""
+
+    LONG = "long"
+    SHORT = "short"
+    NEUTRAL = "neutral"
+
+    def opposite(self) -> "SignalDirection":
+        """反向方向；NEUTRAL 的反向仍是 NEUTRAL（中性没有反向可言）"""
+        if self is SignalDirection.LONG:
+            return SignalDirection.SHORT
+        if self is SignalDirection.SHORT:
+            return SignalDirection.LONG
+        return SignalDirection.NEUTRAL
+
+    @classmethod
+    def of_order_side(cls, side: OrderSide) -> "SignalDirection":
+        """下单方向 → 行情方向"""
+        return cls.LONG if side == OrderSide.BUY else cls.SHORT
+
+    def to_order_side(self) -> OrderSide:
+        """行情方向 → 下单方向
+
+        @note NEUTRAL 无下单方向，归为 BUY；调用方须先排除 NEUTRAL
+        """
+        return OrderSide.SELL if self is SignalDirection.SHORT else OrderSide.BUY
+
+
+class SignalKind(Enum):
+    """信号种类：策略如何解读行情方向
+
+    - `TRIGGER`：无方向倾向，任何非中性信号都触发入场与离场；
+    - `DIRECTIONAL`：有方向倾向，同向许可入场、反向许可离场。
+    """
+
+    TRIGGER = "trigger"
+    DIRECTIONAL = "directional"
+
+
+class MarketSignal(BaseModel):
+    """行情信号快照：只描述"现在是什么状态"，不含任何持仓语义
+
+    不入库（无 signals 表）。策略按 K 线 memo，保证每根 K 线最多求值一次。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    direction: SignalDirection = SignalDirection.NEUTRAL
+    datetime: str = ""  # 触发该信号的 K 线时间；空串表示尚无触发
+
+
+class PositionLimit(BaseModel):
+    """仓位数量上限：开仓上限闸门与"达到上限全部止损"的唯一权威来源"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_order: int
+    enable_stop_loss: bool = False
+
+    def reached(self, position_count: int) -> bool:
+        """仓位数已达上限，禁止再开仓"""
+        return position_count >= self.max_order
+
+    def stop_loss_triggered(self, position_count: int) -> bool:
+        """只剩 <=1 个空位时触发全部止损
+
+        @note max_order=1 且空仓时为真（1 - 0 <= 1），即永不下第一单；
+              该行为来自既有实现，本次重构保留
+        """
+        return self.enable_stop_loss and self.max_order - position_count <= 1

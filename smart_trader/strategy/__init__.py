@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from smart_trader import log
 from smart_trader.client.ports import MarketDataPort
-from smart_trader.model import Kline, OrderSide
+from smart_trader.model import Kline
 
 logger = log.getLogger(__name__)
 
@@ -169,28 +169,3 @@ class SingleTimeframeStrategy(MultiTimeframeStrategy):
 
     def on_kline_finished(self, timeframe: str):
         self._on_kline_finished()
-
-
-class Signal:
-    def __init__(self, side: OrderSide):
-        self.side: OrderSide = side
-
-    @abstractmethod
-    def run(self, klines: DataFrame) -> int:
-        pass
-
-    def is_entry(self, df: DataFrame) -> bool:
-        signal = self.run(df)
-        if self.side == OrderSide.BUY:
-            return signal == 1
-        elif self.side == OrderSide.SELL:
-            return signal == -1
-        return False
-
-    def is_exit(self, df: DataFrame) -> bool:
-        signal = self.run(df)
-        if self.side == OrderSide.BUY:
-            return signal == -1
-        elif self.side == OrderSide.SELL:
-            return signal == 1
-        return False

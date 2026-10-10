@@ -66,8 +66,12 @@ def push_kline(
     close: float,
     high: float | None = None,
     low: float | None = None,
+    timestamp: int = TIMESTAMP,
 ) -> None:
-    """推进一根已收盘的 K 线（走 run() 公开入口）"""
+    """推进一根已收盘的 K 线（走 run() 公开入口）
+
+    @param timestamp 默认固定值; 需要推进 K 线时间时传入不同值
+    """
     strategy.run(
         Kline(
             symbol=DEFAULT_SYMBOL,
@@ -77,7 +81,7 @@ def push_kline(
             low=close if low is None else low,
             close=close,
             volume=0.0,
-            timestamp=TIMESTAMP,
+            timestamp=timestamp,
             finished=True,
         )
     )

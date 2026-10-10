@@ -1,4 +1,8 @@
-"""信号网格策略编排: 开仓 / 平仓 / 维护 / K线回调
+"""信号网格策略编排: 仓位与订单管理 + 闸门/策略装配
+
+**本类不做任何入场/离场判定**（不出现方向比较、不出现止盈止损阈值判断）——
+入场由 `EntryGateChain` 判定, 离场由 `ExitPolicyChain` 判定。
+本类只负责: 装配规则链、建仓下单、挂/撤出场单、结算与归档、跟踪止损落库。
 
 仓位对象、下单、订单生命周期分别见:
 `grid_position.py` / `grid_order_gateway.py` / `position_lifecycle.py`;
@@ -12,10 +16,36 @@ from datetime import UTC, datetime
 from smart_trader import log
 from smart_trader.client.ports import MarketDataPort, TradingPort
 from smart_trader.execution.order_reconciler import OrderReconciler
-from smart_trader.model import OrderSide, PositionSide
+from smart_trader.model import (
+    MarketSignal,
+    OrderSide,
+    PositionLimit,
+    SignalKind,
+)
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import GridPositionRow
 from smart_trader.strategy import SingleTimeframeStrategy
+from smart_trader.strategy.entry_gate import (
+    DirectionalSignalGate,
+    EntryContext,
+    EntryGate,
+    EntryGateChain,
+    GridSpacingGate,
+    MaxOrderStopLossGate,
+    MaxPositionsGate,
+    PriceRangeGate,
+    SignalTriggerGate,
+)
+from smart_trader.strategy.exit_policy import (
+    ExitContext,
+    ExitPolicy,
+    ExitPolicyChain,
+    FixedTakeProfitPolicy,
+    ForceExitPolicy,
+    RestingTakeProfitPolicy,
+    SignalExitPolicy,
+    StopLossPolicy,
+)
 from smart_trader.strategy.grid_order_gateway import GridOrderGateway
 from smart_trader.strategy.grid_position import GridPosition, load_positions
 from smart_trader.strategy.position_lifecycle import PositionLifecycle
@@ -79,7 +109,7 @@ class SignalGridStrategy(SingleTimeframeStrategy):
             trading=trading,
             market=market,
             journal=journal,
-            position_side=self._position_side,
+            position_side=lambda: self.config.position_side,
         )
         self._lifecycle = PositionLifecycle(
             config=config,
@@ -88,9 +118,66 @@ class SignalGridStrategy(SingleTimeframeStrategy):
             positions=lambda: self.positions,
         )
 
+        # 规则装配: 策略只做接线, 判定全在闸门/策略链内
+        self._limit = PositionLimit(
+            max_order=config.max_order,
+            enable_stop_loss=config.enable_max_order_stop_loss,
+        )
+        self._entry_gates = self._build_entry_gates()
+        self._exit_policies = self._build_exit_policies()
+        self._resting_take_profit: RestingTakeProfitPolicy | None = (
+            RestingTakeProfitPolicy(config.master_side)
+            if config.fixed_rate_take_profit and config.take_profit_use_limit_order
+            else None
+        )
+        self._signal_kline: str | None = None
+        self._signal_cache: MarketSignal | None = None
+
         self.on_stop_loss_order_all: Callable[[], None] = lambda: None
         self.close_position: bool = False
         self.is_running: bool = True
+
+    # ---- 规则链装配 ----
+
+    def _build_entry_gates(self) -> EntryGateChain:
+        """按既有判定顺序装配入场闸门链"""
+        signal_gate: EntryGate
+        if self.config.signal_kind is SignalKind.TRIGGER:
+            signal_gate = SignalTriggerGate()
+        else:
+            signal_gate = DirectionalSignalGate(self.config.master_side)
+        return EntryGateChain(
+            [
+                MaxPositionsGate(self._limit),
+                signal_gate,
+                PriceRangeGate(self.config.lowest_price, self.config.highest_price),
+                GridSpacingGate(
+                    self.config.grid_spacing_rate, self.config.master_side
+                ),
+                MaxOrderStopLossGate(self._limit),
+            ]
+        )
+
+    def _build_exit_policies(self) -> ExitPolicyChain:
+        """装配离场策略链（顺序不影响合并结果）"""
+        policies: list[ExitPolicy] = [
+            # 上限止损与手动全平共用同一个 force 触发源
+            ForceExitPolicy(
+                lambda: self._limit.stop_loss_triggered(len(self.positions))
+                or self.close_position
+            ),
+            StopLossPolicy(),
+        ]
+        if self.config.fixed_rate_take_profit:
+            policies.append(FixedTakeProfitPolicy())
+        policies.append(
+            SignalExitPolicy(
+                self.config.signal_kind,
+                self.config.master_side.reversal(),
+                self.config.enable_exit_signal,
+            )
+        )
+        return ExitPolicyChain(policies)
 
     # ---- 逻辑仓位登记表 ----
 
@@ -98,6 +185,21 @@ class SignalGridStrategy(SingleTimeframeStrategy):
     def positions(self) -> list[GridPosition]:
         """逻辑仓位快照（回调已串行化, 无需锁）"""
         return list(self._positions.values())
+
+    @property
+    def entry_gates(self) -> EntryGateChain:
+        """已装配的入场闸门链（只读, 供装配契约测试验证）"""
+        return self._entry_gates
+
+    @property
+    def exit_policies(self) -> ExitPolicyChain:
+        """已装配的离场策略链（只读, 供装配契约测试验证）"""
+        return self._exit_policies
+
+    @property
+    def position_limit(self) -> PositionLimit:
+        """仓位数量上限（开仓闸门与强制离场共用的唯一权威来源）"""
+        return self._limit
 
     def add_position(self, position: GridPosition) -> None:
         """登记逻辑仓位"""
@@ -108,176 +210,138 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         for position in positions:
             self._positions.pop(position.id, None)
 
-    # ---- 方向推导 ----
+    # ---- 行情信号 ----
 
-    def _position_side(self) -> PositionSide:
-        side = self.config.position_side
-        if self.config.position_reverse:
-            return (
-                PositionSide.SHORT if side == PositionSide.LONG else PositionSide.LONG
-            )
-        return side
+    def _current_market_signal(self) -> MarketSignal | None:
+        """本根 K 线的行情信号（按 kline.datetime memo, 每根最多求值一次）
 
-    def _entry_side(self) -> OrderSide:
-        side = self.config.master_side
-        if self.config.position_reverse:
-            return side.reversal()
-        return side
+        @return 未配置信号时为 None
+        """
+        signal = self.config.signal
+        kline = self.latest_kline_obj
+        if signal is None or kline is None:
+            return None
+        if self._signal_kline != kline.datetime or self._signal_cache is None:
+            self._signal_cache = signal.evaluate(self.klines_df)
+            self._signal_kline = kline.datetime
+        return self._signal_cache
 
-    def _check_max_order_stop_loss(self) -> bool:
-        return (
-            self.config.enable_max_order_stop_loss
-            and self.config.max_order - len(self.positions) <= 1
+    def _entry_context(self) -> EntryContext:
+        kline = self.latest_kline_obj
+        return EntryContext(
+            positions=self.positions,
+            close=kline.close if kline is not None else None,
+            market_signal=self._current_market_signal(),
+        )
+
+    def _exit_context(self) -> ExitContext:
+        kline = self.latest_kline_obj
+        return ExitContext(
+            close=kline.close if kline is not None else 0.0,
+            market_signal=self._current_market_signal(),
         )
 
     def check_open_position(self) -> bool:
-        # 检查订单是否到达上限
-        if len(self.positions) >= self.config.max_order:
+        """闸门链全部放行则建仓并下单"""
+        ctx = self._entry_context()
+        if not self._entry_gates.allows(ctx):
             return False
+        return self._open_position(ctx.require_close())
 
-        # 检查是否有入场信号
-        if self.config.signal and not self.config.signal.is_entry(self.klines_df):
-            return False
+    def _open_position(self, close_price: float) -> bool:
+        """按当前收盘价建仓（闸门已放行）"""
+        stop_loss_rate = (
+            self.config.order_stop_loss_rate
+            if self.config.enable_order_stop_loss
+            else 0.0
+        )
+        trailing_stop_rate = (
+            self.config.trailing_stop_rate if self.config.enable_trailing_stop else 0.0
+        )
+        trailing_activation_rate = (
+            self.config.trailing_stop_activation_profit_rate
+            if self.config.enable_trailing_stop
+            else 0.0
+        )
 
-        # 检查当前价格是否在可交易的价格区间
-        latest_kline = self.latest_kline_obj
-        if latest_kline is None:
-            return False
+        trailing_stop_price = None
+        if self.config.enable_order_stop_loss or self.config.enable_trailing_stop:
+            if self.config.master_side == OrderSide.BUY:
+                trailing_stop_price = close_price * (1 - stop_loss_rate)
+            else:  # SELL
+                trailing_stop_price = close_price * (1 + stop_loss_rate)
 
-        close_price = latest_kline.close
-        if (
-            close_price < self.config.lowest_price
-            or close_price > self.config.highest_price
-        ):
-            return False
+        template = GridPositionRow(
+            id=self.journal.generate_position_id(),
+            strategy_key=self.config.strategy_key,
+            symbol=self.config.symbol.ccxt(),
+            position_side=self.config.position_side,
+            main_order_side=self.config.master_side,
+            # 开仓参考价: 无成交（如 per_order_qty=0 的空仓位或首单未成交）时
+            # 作为网格间隔 / 止盈判定的基准; created_at 用于孤儿超时回收计时
+            opening_price=close_price,
+            created_at=datetime.now(UTC).isoformat(),
+            fixed_take_profit_rate=self.config.fixed_take_profit_rate,
+            signal_min_take_profit_rate=(
+                self.config.exit_signal_take_profit_min_rate
+            ),
+            enable_stop_loss=self.config.enable_order_stop_loss,
+            stop_loss_rate=stop_loss_rate,
+            enable_trailing_stop=self.config.enable_trailing_stop,
+            trailing_stop_rate=trailing_stop_rate,
+            trailing_stop_activation_rate=trailing_activation_rate,
+            trailing_stop_price=trailing_stop_price,
+        )
 
-        if self.positions:
-            recent_price_position = self.config.master_side.extremum_fun()(
-                self.positions, key=lambda position: position.price
-            )
-        else:
-            recent_price_position = None
-
-        if (not recent_price_position) or (
-            recent_price_position
-            and recent_price_position.profit_and_loss_ratio(close_price)
-            <= -self.config.grid_spacing_rate
-        ):
-            if self._check_max_order_stop_loss():
-                return False
-            stop_loss_rate = (
-                self.config.order_stop_loss_rate
-                if self.config.enable_order_stop_loss
-                else 0.0
-            )
-            trailing_stop_rate = (
-                self.config.trailing_stop_rate
-                if self.config.enable_trailing_stop
-                else 0.0
-            )
-            trailing_activation_rate = (
-                self.config.trailing_stop_activation_profit_rate
-                if self.config.enable_trailing_stop
-                else 0.0
-            )
-
-            trailing_stop_price = None
-            if self.config.enable_order_stop_loss or self.config.enable_trailing_stop:
-                if self._entry_side() == OrderSide.BUY:
-                    trailing_stop_price = close_price * (1 - stop_loss_rate)
-                else:  # SELL
-                    trailing_stop_price = close_price * (1 + stop_loss_rate)
-
-            template = GridPositionRow(
-                id=self.journal.generate_position_id(),
-                strategy_key=self.config.strategy_key,
-                symbol=self.config.symbol.ccxt(),
-                position_side=self._position_side(),
-                main_order_side=self.config.master_side,
-                # 开仓参考价: 无成交（如 per_order_qty=0 的空仓位或首单未成交）时
-                # 作为网格间隔 / 止盈判定的基准; created_at 用于孤儿超时回收计时
-                opening_price=close_price,
-                created_at=datetime.now(UTC).isoformat(),
-                fixed_take_profit_rate=self.config.fixed_take_profit_rate,
-                signal_min_take_profit_rate=(
-                    self.config.exit_signal_take_profit_min_rate
-                ),
-                enable_stop_loss=self.config.enable_order_stop_loss,
-                stop_loss_rate=stop_loss_rate,
-                enable_trailing_stop=self.config.enable_trailing_stop,
-                trailing_stop_rate=trailing_stop_rate,
-                trailing_stop_activation_rate=trailing_activation_rate,
-                trailing_stop_price=trailing_stop_price,
-            )
-
-            if self.config.per_order_qty == 0:
-                # 零数量: 只登记一个空仓位（无首单）
-                self.journal.upsert_position(template)
-                self.add_position(GridPosition.from_row(template, []))
-                return True
-
-            position = GridPosition.from_row(template, [])
-            self._gateway.place_and_append(
-                position,
-                self._entry_side(),
-                self.config.per_order_qty,
-                close_price,
-                first_price=close_price,
-                template=template,
-            )
-            self.add_position(position)
+        if self.config.per_order_qty == 0:
+            # 零数量: 只登记一个空仓位（无首单）
+            self.journal.upsert_position(template)
+            self.add_position(GridPosition.from_row(template, []))
             return True
-        return False
 
-    def _stop_loss_triggered(self, position: GridPosition, close: float) -> bool:
-        if not position.enable_stop_loss or position.trailing_stop_price is None:
-            return False
-        if position.entry_side == OrderSide.BUY:
-            return close <= position.trailing_stop_price
-        return close >= position.trailing_stop_price
+        position = GridPosition.from_row(template, [])
+        self._gateway.place_and_append(
+            position,
+            self.config.master_side,
+            self.config.per_order_qty,
+            close_price,
+            first_price=close_price,
+            template=template,
+        )
+        self.add_position(position)
+        return True
 
     def check_close_position(self) -> CloseOutcome:
         """
-        触发平仓条件, 为每仓位挂出独立的出场单
+    触发平仓条件, 为每仓位挂出独立的出场单
 
-        - 每仓位一张出场单, 成交可独立归因;
-        - 已有未成交出场单的仓位: 普通止盈保留原挂单, 强制出场先撤单结算再重挂;
-        - 只有真正完成的仓位(零成交入场单丢弃 / 出场剩余耗尽)才归档。
+    - 每仓位一张出场单, 成交可独立归因;
+    - 已有未成交出场单的仓位: 只有 force 决策才撤单结算再重挂;
+    - 只有真正完成的仓位(零成交入场单丢弃 / 出场剩余耗尽)才归档。
 
-        @return: 本次平仓检查的结果(归档仓位 + 本根K线是否产生过平仓动作)
-        """
-        latest_kline = self.latest_kline_obj
-        if latest_kline is None:
+    @return: 本次平仓检查的结果(归档仓位 + 本根K线是否产生过平仓动作)
+    """
+        if self.latest_kline_obj is None:
             return CloseOutcome()
 
-        close = latest_kline.close
-        exit_signal = (
-            self.config.enable_exit_signal
-            and self.config.signal
-            and self.config.signal.is_exit(self.klines_df)
-        )
+        ctx = self._exit_context()
+        # 上限止损是仓位外部强制; 手动全平是用户主动行为 —— 两个独立触发源
+        stop_loss_reached = self._limit.stop_loss_triggered(len(self.positions))
 
         outcome = CloseOutcome()
-        stop_loss_order_all = self._check_max_order_stop_loss() or self.close_position
         for position in self.positions:
-            profit_level = position.profit_level(close)
-            force_exit = stop_loss_order_all or self._stop_loss_triggered(
-                position, close
-            )
-            normal_exit = (profit_level == 2 and self.config.fixed_rate_take_profit) or (
-                profit_level == 1 and exit_signal
-            )
+            decision = self._exit_policies.decide(position, ctx)
 
-            # 已有未成交的出场单: 普通止盈保留原挂单; 强制出场才撤单结算后重挂
+            # 已有未成交的出场单: 非强制决策保留原挂单, 强制才撤单结算后重挂
             if position.has_pending_exit:
-                if not force_exit:
+                if not decision.force:
                     continue
                 outcome.acted = True
                 if not self._lifecycle.force_settle_exit(position):
                     outcome.archived.append(position)
                     continue
 
-            if not (force_exit or normal_exit):
+            if not decision.should_exit:
                 continue
 
             # 未成交入场单: 先撤剩余挂单防止继续建仓, 零成交则无可平仓位
@@ -289,14 +353,15 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                 continue
 
             self._gateway.place_and_append(
-                position, position.exit_side, position.quantity, close
+                position, position.exit_side, position.quantity, ctx.close
             )
             outcome.acted = True
 
         if self.close_position:
             self.close_position = False
 
-        if stop_loss_order_all:
+        # 仅"达到上限止损"触发回调与暂停; 手动全平不触发（已修复的缺陷）
+        if stop_loss_reached:
             self.on_stop_loss_order_all()
             if self.config.paused_after_stop_loss:
                 self.is_running = False
@@ -310,7 +375,7 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         if kline is None:
             return
         extremum_price = (
-            kline.high if self._entry_side() == OrderSide.BUY else kline.low
+            kline.high if self.config.master_side == OrderSide.BUY else kline.low
         )
         for position in self.positions:
             if not position.enable_trailing_stop or position.trailing_stop_price is None:
@@ -384,11 +449,10 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         self._archive(archived)
 
     def _on_kline(self):
+        """盘中路径: 跟踪休息中的出场单, 必要时挂出休息限价止盈单"""
         latest_kline = self.latest_kline_obj
-        if latest_kline is None:
-            return
-
-        if not (self.config.fixed_rate_take_profit and self.config.take_profit_use_limit_order):
+        resting_take_profit = self._resting_take_profit
+        if latest_kline is None or resting_take_profit is None:
             return
 
         for position in self.positions:
@@ -407,7 +471,7 @@ class SignalGridStrategy(SingleTimeframeStrategy):
             if self._lifecycle.settle_pending_entries(position):
                 continue
             if not position.pending_entry_orders:
-                exit_price = position.price * (1 + self._entry_side().to_int() * self.config.fixed_take_profit_rate)
+                exit_price = resting_take_profit.limit_price(position)
                 self._gateway.place_and_append(
                     position,
                     position.exit_side,

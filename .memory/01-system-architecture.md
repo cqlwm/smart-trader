@@ -82,7 +82,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | `smart_trader/execution/limit_order_chaser.py` | 追单执行策略 |
 | `smart_trader/execution/journaled_trading.py` | 记账下单包装（TradingPort 装饰器）：预写仓位/订单 → 下单 → 回写结果 |
 | `smart_trader/execution/order_reconciler.py` | 启动对账：扫 `status IS NULL` 的订单 → 查交易所 → 回写 |
-| `smart_trader/strategy/` | 策略基类与网格策略；信号网格拆分为 `grid_position`（仓位对象 + `load_positions` 批量还原）/ `signal_grid_config`（配置 + `CloseOutcome`）/ `grid_order_gateway`（记账下单入口）/ `position_lifecycle`（订单结算与出场单跟踪）/ `signal_grid_strategy`（编排 + 仓位登记表 + 公共名再导出） |
+| `smart_trader/strategy/` | 策略基类与网格策略。**四层职责边界**：`signal`（`Signal` ABC，只回答"行情现在是什么状态"）/ `entry_gate`（`EntryGate` 可组合入场闸门链）/ `exit_policy`（`ExitPolicy` 可组合离场策略链）/ `signal_grid_strategy`（**只做装配 + 仓位与订单管理**，不做任何入场/离场判定）。网格策略其余模块：`grid_position`（仓位对象 + `load_positions` 批量还原）/ `signal_grid_config`（配置 + `CloseOutcome`）/ `grid_order_gateway`（记账下单入口）/ `position_lifecycle`（订单结算与出场单跟踪）/ `alpha_trend_signal`（`AlphaTrendSignal` 实现，`alpha_trend_grids_signal.py` 已删除，语义由 `SignalKind.TRIGGER` 承载） |
 | `smart_trader/data_event_loop.py` / `task/` | WebSocket 事件循环与任务分发 |
 
 ## 七、演进状态
@@ -102,6 +102,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 10 | 逻辑仓位重构：`grid_positions` 只存参数与运行时状态，价格/数量/相位由 `orders` 派生；删 `order_ids`（WAL 改由 `orders.status` 为空承担）；入/出场按 `position_side` 归类；`current_stop_price` → `trailing_stop_price` | 进行中 |
 | Step 11 | 删除 `GridPositionManager`：仓位登记表内联进策略（`positions` / `add_position` / `remove_positions`），批量还原下沉为 `grid_position.load_positions`；`load_positions(force)` 的 `force` 参数随之删除（唯一调用点在 `__init__`）；行为零变化 | 已完成 |
 | Step 12 | 回调互斥重构：`on_kline_lock` + `on_kline_finished_lock` 合并为 `_callback_lock`；`_call_on_kline_finished` 阻塞等待（交易决策永不被跳过），`_call_on_kline` 非阻塞（盘中更新可跳过 + warning 日志）；`SignalGridStrategy._positions_lock` 随之删除（回调已串行化） | 已完成 |
+| Step 13 | **信号抽象重构（职责边界）**：`Signal` 只输出行情状态（`MarketSignal` / `SignalDirection`），删 `side`/`run`/`is_entry`/`is_exit`/`reverse`；入场判定下沉为可组合 `EntryGate` 闸门链，离场判定下沉为可组合 `ExitPolicy` 策略链（`force` 表达"可覆盖休息中的出场挂单"）；`AlphaTrendGridsSignal` 删除，语义由 `SignalKind.TRIGGER` 承载；`SignalKind` 取代闸门的 bool flag；`PositionLimit` 成为仓位上限与"达到上限止损"的唯一权威来源；**删除 `position_reverse`**（方向直接来自 config，顺势加仓应写新信号 + 正常闸门）；**修掉 `close_position` 手动全平触发止损回调并暂停策略的缺陷**（拆 `stop_loss_reached` 与 `force_all` 两个独立触发源）；`AlphaTrendSignal` 改用 v2 指标的趋势累积计数，去掉 `first_run` 历史反推（该反推含当前 K 线，导致重启后漏信号）；`check_open_position` 由 98 行降到 5 行（只剩闸门调用 + 建仓），策略内不再出现任何入场/离场判定；新增 `ErrorCode.MARKET_DATA_UNAVAILABLE`（设计见 `.memory/03-coding-design.md` 第三节、模型见 `02-domain-model.md` 第九节） | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -112,12 +113,21 @@ strategy / task / template              (业务编排: 网格、信号、止损)
    `enable_max_order_stop_loss` + `paused_after_stop_loss`（达到上限止损后暂停策略）、
    `per_order_qty == 0`、`profit_level` / `profit_and_loss_ratio` 的分档边界、
    `grid_spacing_rate` 的加仓间隔判定、`close_position` 手动全平。
-2. **信号层缺单元测试**：`Signal.is_entry` / `is_exit` 的买卖方向语义，
-   以及 `AlphaTrendGridsSignal`（entry 与 exit 返回同一个条件，需明确这是不是有意设计）。
-3. **`AlphaTrendGridsSignal` 死代码**：`_close`、`_alpha_trend_cross_buy/sell`、
-   `_alpha_trend`、`_long_trend`、`_short_trend` 定义后从未使用。
-4. **`.memory/03-coding-design.md` 缺失**（AGENTS.md 第三节要求）。
+   （Step 13 已覆盖：`profit_level` 分档边界、`close_position` 手动全平；
+   `position_reverse` 随该字段删除而作废；其余仍待补。）
+2. ~~**信号层缺单元测试**~~ —— **已由 Step 13 完成**：`Signal.is_entry` / `is_exit` 与
+   `AlphaTrendGridsSignal` 已随职责重构删除；替代覆盖见 `tests/test_market_signal.py`、
+   `tests/test_entry_gate.py`、`tests/test_exit_policy.py`、`tests/test_alpha_trend_signal_unit.py`。
+3. ~~**`AlphaTrendGridsSignal` 死代码**~~ —— **已由 Step 13 解决**：整个文件随类一并删除。
+4. **`.memory/03-coding-design.md` 内容与代码脱节**（文件已存在）：`records.py` 的
+   `IdRecord` / `OrderIntent`、`_migrate_legacy_schema`、`confirm_entry` / `confirm_exit`、
+   `order_ids.intent` 四处引用早已失效。**已由 Step 13 一并修正**，并新增第三节
+   「信号与规则层设计」覆盖 strategy 层（此前只覆盖 storage 层）。
 5. **日志与配置模块无测试**（`log.init_logging` 的级别解析、`config` 的必填校验）。
+6. **顺势加仓**：需要"价格顺趋势上涨/下跌到一定距离即加仓"时，
+   可用**负 `grid_spacing_rate`**（双向距离限制：盈利与亏损方向都会放行，
+   见 `02-domain-model.md` 第九节），或写新信号 + 正常闸门组合。
+   `Step 13` 已删除 `position_reverse` 这个反向开关，方向直接由 config 声明。
 
 ### 已修复缺陷（记录）
 
@@ -137,6 +147,24 @@ strategy / task / template              (业务编排: 网格、信号、止损)
   （止损暂停后仍执行）；未成交保留原挂单，强制出场才撤单重挂（见第十节不变量 4）。
 - **多仓位共用一张聚合出场单导致按仓位归因错误**：部分成交时每个仓位都用同一聚合成交量扣减。
   修复：改为每仓位一张独立出场单，成交可独立归因。
+- **手动全平触发止损回调并暂停策略**（Step 13 修复）：原实现把
+  `达到上限止损 or self.close_position` 合并成一个 `stop_loss_order_all`，
+  于是用户主动的手动全平（`close_position = True`）也会调用 `on_stop_loss_order_all()`
+  并在 `paused_after_stop_loss` 下把 `is_running` 置 `False` —— 手动动作被当成止损。
+  修复：拆成两个独立触发源，`stop_loss_reached` 只管回调与暂停，
+  `force_all`（`stop_loss_reached or close_position`）只管离场判定。离场行为不变。
+- **`Signal` 不是真 ABC**（Step 13 修复）：`@abstractmethod` 修饰 `run()` 但类未继承 `ABC`，
+  抽象方法完全失效，任何子类都可实例化并返回 `None`。
+- **`AlphaTrendSignal.first_run` 反推吞掉本次突破**（Step 13 修复）：反推取
+  `df[_signal].dropna().iloc[-1]`，而那条记录**就是正在处理的当前 K 线**，
+  于是 `current_signal` 被设成当前方向，随后的同向去重把本次突破吞掉 ——
+  实测进程重启后首次求值恒为 `neutral`，必丢一个突破信号。
+  修复：改用 `alpha_trend_indicator_v2` 的趋势累积计数口径，信号完全由 DataFrame
+  决定，`first_run` 反推整体删除。
+- **`evaluate()` 对空 DataFrame 抛 `IndexError`**（Step 13 修复）：
+  `klines[_datetime].iloc[-1]` 在空表上越界。旧测试用 `try/except` + `assert ... in str(e)`
+  把它盖住了。修复：入口加 `if klines.empty: return MarketSignal()`，
+  并新增 `ErrorCode.MARKET_DATA_UNAVAILABLE` 供 `EntryContext.require_close()` 使用。
 
 ## 九、事件循环与任务
 
@@ -173,11 +201,24 @@ strategy / task / template              (业务编排: 网格、信号、止损)
    - 孤儿条件 = `active=1` 且 `quantity<=0` 且无任何存活订单（无 `OPEN`、无 `status` 为空的行）；
    - **超时回收**：必须同时满足孤儿条件**且**仓位存在时长超过 `max(10 分钟, 策略 K 线周期时长)`
      才回收 —— opening 空仓位先保留作网格价格参考，超时后再清（回收即置 `active=0`）。
+8. **信号只输出行情状态，不得携带持仓语义**（Step 13）：
+   `Signal.evaluate` 只返回 `MarketSignal(direction, datetime)`，不含 `side`。
+   方向消费方是 `EntryGate` / `ExitPolicy`，**策略内不得出现方向比较**。
+9. **已有未成交出场单时，只有 `force=True` 的离场决策可覆盖**（Step 13）：
+   `force=True` 仅由 `ForceExitPolicy`（仓位外部强制）与 `StopLossPolicy`（仓位自身止损）产出；
+   止盈类策略恒为 `force=False`，保留原挂单不重复下单。
+   `ExitPolicyChain` 的合并规则（`should_exit = any`、`force = any`）**与顺序无关**。
+10. **`PositionLimit` 是仓位数量上限与"达到上限止损"的唯一权威来源**（Step 13）：
+    开仓闸门与离场强制判定必须读同一对象，杜绝两处各写一遍导致的漂移。
 
 ## 八、测试策略
 
-- 内存实现优先：`tests/fakes.py` 提供 `FakeCcxtExchange` / `FakeTradingPort` / `FakeMarketDataPort`，默认测试不触网（集成测试标记 `@pytest.mark.integration`）。
+- 内存实现优先：`tests/fakes.py` 提供 `FakeCcxtExchange` / `FakeTradingPort` / `FakeMarketDataPort` / `FakeSignal` / `RecordingGate` / `RecordingPolicy`，默认测试不触网（集成测试标记 `@pytest.mark.integration`）。
 - 端口契约测试通过假端口验证业务行为，适配器测试通过假 ccxt 验证翻译规则。
+- 信号与规则层分层测试（Step 13）：值对象（`test_market_signal.py`）→ 闸门（`test_entry_gate.py`）
+  → 策略（`test_exit_policy.py`）→ 信号实现（`test_alpha_trend_signal_unit.py`）
+  → 仓位分档（`test_grid_position_profit.py`）→ 编排（`test_signal_grid_strategy.py`）
+  → 装配契约（`test_signal_grid_rules.py`），底层先测。
 - sqlite 日志测试统一使用 `:memory:` 数据库（StaticPool 共享单连接），不落盘、不共享状态。
 - 库结构由 `tests/test_storage_schema.py` 以冻结的旧版 DDL 快照做等价性校验：metadata 建出的库与历史契约（列/约束/默认值/索引）不一致即失败。
 

@@ -4,20 +4,26 @@
 """
 
 from collections import deque
+from datetime import datetime, timedelta
 from typing import Any
 
 from smart_trader.model import (
     Kline,
+    MarketSignal,
     OrderRequest,
     OrderResult,
     OrderSide,
     OrderStatus,
     OrderType,
     PositionSide,
+    SignalDirection,
     Symbol,
     SymbolInfo,
 )
 from smart_trader.storage.records import GridPositionRow, OrderRecord
+from smart_trader.strategy.entry_gate import EntryContext, EntryGate
+from smart_trader.strategy.grid_position import GridPosition
+from smart_trader.strategy.signal import Signal
 
 DEFAULT_SYMBOL = Symbol(base="DOGE", quote="USDT")
 DEFAULT_SYMBOL_INFO = SymbolInfo(
@@ -70,6 +76,108 @@ def make_order_record(
     }
     fields.update(overrides)
     return OrderRecord.model_validate(fields)
+
+
+DEFAULT_SIGNAL_DATETIME = "2026-01-01 00:00:00"
+
+
+def make_market_signal(
+    direction: SignalDirection = SignalDirection.LONG,
+    datetime: str = DEFAULT_SIGNAL_DATETIME,
+) -> MarketSignal:
+    """构造行情信号快照"""
+    return MarketSignal(direction=direction, datetime=datetime)
+
+
+def make_position(
+    position_id: str = "POS1",
+    *,
+    orders: list[OrderRecord] | None = None,
+    **overrides: object,
+) -> GridPosition:
+    """构造逻辑仓位领域对象（字段默认值与 make_position_row 对齐）
+
+    `orders` 为仅关键字参数, 避免与 `**overrides` 争用同一名字
+    """
+    row = make_position_row(position_id, **overrides)
+    return GridPosition.from_row(row, orders if orders is not None else [])
+
+
+def make_entry_context(
+    positions: list[GridPosition] | None = None,
+    close: float | None = 0.5,
+    market_signal: MarketSignal | None = None,
+) -> EntryContext:
+    """构造入场闸门上下文"""
+    return EntryContext(
+        positions=positions if positions is not None else [],
+        close=close,
+        market_signal=market_signal,
+    )
+
+
+class RecordingGate(EntryGate):
+    """记录 allow 调用顺序的闸门，返回预设结果（用于短路与优先级断言）"""
+
+    def __init__(self, result: bool, name: str) -> None:
+        self._result = result
+        self._name = name
+        self.calls: list[str] = []
+
+    def allow(self, ctx: EntryContext) -> bool:
+        self.calls.append(self._name)
+        return self._result
+
+
+class FakeSignal(Signal):
+    """预设立场序列的信号（不跑 talib, 供策略层测试保持毫秒级）"""
+
+    def __init__(
+        self,
+        directions: list[SignalDirection] | None = None,
+        datetime: str = DEFAULT_SIGNAL_DATETIME,
+    ) -> None:
+        self._directions = list(directions or [SignalDirection.LONG])
+        self._datetime = datetime
+        self.evaluate_calls = 0
+
+    def evaluate(self, klines: Any) -> MarketSignal:
+        index = min(self.evaluate_calls, len(self._directions) - 1)
+        self.evaluate_calls += 1
+        return MarketSignal(
+            direction=self._directions[index], datetime=self._datetime
+        )
+
+
+def make_klines_df(
+    closes: list[float],
+    start: str = "2026-01-01 00:00:00",
+    interval_seconds: int = 60,
+) -> Any:
+    """构造确定性的 OHLCV DataFrame（收盘价序列驱动, 无随机数）
+
+    @param closes 收盘价序列; open=high=low=close
+    """
+    import pandas as pd
+
+    datetimes = [
+        (
+            datetime.strptime(start, "%Y-%m-%d %H:%M:%S")  # noqa: DTZ007
+            + timedelta(seconds=index * interval_seconds)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        for index in range(len(closes))
+    ]
+    return pd.DataFrame(
+        {
+            "datetime": pd.Series(datetimes, dtype="str"),
+            "open": pd.Series(closes, dtype="float64"),
+            "high": pd.Series(closes, dtype="float64"),
+            "low": pd.Series(closes, dtype="float64"),
+            "close": pd.Series(closes, dtype="float64"),
+            "volume": pd.Series([1.0] * len(closes), dtype="float64"),
+            "finished": pd.Series([True] * len(closes), dtype="boolean"),
+        }
+    )
 
 
 class FakeTradingPort:

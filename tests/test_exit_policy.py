@@ -1,0 +1,472 @@
+"""离场策略链测试
+
+覆盖: 各策略规则 / force 语义 / 合并顺序无关性 / 隔离 / 空值与边界。
+判定口径（与既有实现逐字一致）：
+- `StopLossPolicy` 用 `>=` / `<=`（含等号）
+- `FixedTakeProfitPolicy` / `SignalExitPolicy` 依赖 `profit_level` 的严格 `>`（不含等号）
+"""
+
+import pytest
+
+from smart_trader.exceptions import SmartTraderError
+from smart_trader.model import (
+    MarketSignal,
+    OrderSide,
+    PositionSide,
+    SignalDirection,
+    SignalKind,
+)
+from smart_trader.strategy.entry_gate import EntryContext
+from smart_trader.strategy.exit_policy import (
+    ExitContext,
+    ExitDecision,
+    ExitPolicyChain,
+    FixedTakeProfitPolicy,
+    ForceExitPolicy,
+    RestingTakeProfitPolicy,
+    SignalExitPolicy,
+    StopLossPolicy,
+)
+from smart_trader.strategy.grid_position import GridPosition
+from tests.fakes import make_market_signal, make_position_row
+
+# ---- ExitContext / ExitDecision ----
+
+
+def test_exit_context_defaults_to_zero_close_and_no_signal():
+    """默认值: 收盘价 0, 无信号"""
+    ctx = ExitContext()
+
+    assert ctx.close == 0.0, "默认收盘价为 0"
+    assert ctx.market_signal is None, "默认无信号"
+
+
+def test_exit_decision_defaults_to_no_exit_and_no_force():
+    """默认决策: 不离场, 不强制"""
+    decision = ExitDecision()
+
+    assert decision.should_exit is False, "默认不离场"
+    assert decision.force is False, "默认不强制"
+
+
+def test_exit_decision_rejects_unknown_field():
+    """extra=forbid: 字段拼写错误立即报错"""
+    with pytest.raises(ValueError):
+        ExitDecision.model_validate({"should_exit": True, "forced": True})
+
+
+# ---- ForceExitPolicy ----
+
+
+def test_force_exit_policy_triggers_when_trigger_true():
+    """外部强制（达到上限止损 / 手动全平）"""
+    policy = ForceExitPolicy(lambda: True)
+
+    decision = policy.evaluate(_position(), ExitContext())
+
+    assert decision.should_exit is True, "触发时应离场"
+    assert decision.force is True, "强制离场必须能覆盖休息中的挂单"
+
+
+def test_force_exit_policy_does_not_trigger_when_trigger_false():
+    """未触发时不离场"""
+    policy = ForceExitPolicy(lambda: False)
+
+    decision = policy.evaluate(_position(), ExitContext())
+
+    assert decision.should_exit is False
+    assert decision.force is False
+
+
+def test_force_exit_policy_evaluates_trigger_on_every_call():
+    """trigger 是回调, 每次求值都重新读取（状态变化能立即反映）"""
+    state = {"active": False}
+    policy = ForceExitPolicy(lambda: state["active"])
+    position = _position()
+
+    assert policy.evaluate(position, ExitContext()).should_exit is False
+
+    state["active"] = True
+    assert policy.evaluate(position, ExitContext()).should_exit is True, (
+        "触发状态变化后应立即生效"
+    )
+
+
+# ---- StopLossPolicy ----
+
+
+def test_stop_loss_policy_triggers_below_stop_price_for_long():
+    """多头: 价格跌破止损价"""
+    policy = StopLossPolicy()
+    position = _position(enable_stop_loss=True, trailing_stop_price=0.45)
+
+    decision = policy.evaluate(position, ExitContext(close=0.44))
+
+    assert decision.should_exit is True, "跌破止损价应离场"
+    assert decision.force is True, "止损属强制离场"
+
+
+def test_stop_loss_policy_does_not_trigger_above_stop_price_for_long():
+    """多头: 价格未跌破止损价"""
+    policy = StopLossPolicy()
+    position = _position(enable_stop_loss=True, trailing_stop_price=0.45)
+
+    assert policy.evaluate(position, ExitContext(close=0.46)).should_exit is False
+
+
+def test_stop_loss_policy_triggers_at_exactly_stop_price_for_long():
+    """多头: 恰好等于止损价即触发（含等号）"""
+    policy = StopLossPolicy()
+    position = _position(enable_stop_loss=True, trailing_stop_price=0.45)
+
+    assert policy.evaluate(position, ExitContext(close=0.45)).should_exit is True, (
+        "止损判定含等号"
+    )
+
+
+def test_stop_loss_policy_triggers_above_stop_price_for_short():
+    """空头: 价格涨破止损价"""
+    policy = StopLossPolicy()
+    position = _position(
+        position_side=PositionSide.SHORT,
+        enable_stop_loss=True,
+        trailing_stop_price=0.55,
+    )
+
+    assert policy.evaluate(position, ExitContext(close=0.56)).should_exit is True, (
+        "空头涨破止损价应离场"
+    )
+
+
+def test_stop_loss_policy_at_exactly_stop_price_for_short():
+    """空头: 恰好等于止损价即触发（含等号）"""
+    policy = StopLossPolicy()
+    position = _position(
+        position_side=PositionSide.SHORT,
+        enable_stop_loss=True,
+        trailing_stop_price=0.55,
+    )
+
+    assert policy.evaluate(position, ExitContext(close=0.55)).should_exit is True
+
+
+def test_stop_loss_policy_ignores_position_without_stop_loss():
+    """仓位未启用止损时不触发（隔离）"""
+    policy = StopLossPolicy()
+    position = _position(enable_stop_loss=False, trailing_stop_price=0.45)
+
+    assert policy.evaluate(position, ExitContext(close=0.1)).should_exit is False, (
+        "未启用止损的仓位不应被止损策略平仓"
+    )
+
+
+def test_stop_loss_policy_ignores_position_without_stop_price():
+    """trailing_stop_price 为 None 时不触发（空值）"""
+    policy = StopLossPolicy()
+    position = _position(enable_stop_loss=True, trailing_stop_price=None)
+
+    assert policy.evaluate(position, ExitContext(close=0.1)).should_exit is False, (
+        "止损价缺失时无法判定止损"
+    )
+
+
+# ---- FixedTakeProfitPolicy ----
+
+
+def test_fixed_take_profit_policy_triggers_above_fixed_rate():
+    """盈利超过固定止盈率时离场"""
+    policy = FixedTakeProfitPolicy()
+    position = _position(fixed_take_profit_rate=0.01, opening_price=0.5)
+
+    decision = policy.evaluate(position, ExitContext(close=0.51))
+
+    assert decision.should_exit is True, "超过止盈率应离场"
+    assert decision.force is False, "止盈不强制, 保留休息中的挂单"
+
+
+def test_fixed_take_profit_policy_does_not_trigger_exactly_at_fixed_rate():
+    """恰好等于固定止盈率时不触发（profit_level 阈值不含等号）"""
+    policy = FixedTakeProfitPolicy()
+    position = _position(fixed_take_profit_rate=0.01, opening_price=0.5)
+
+    assert policy.evaluate(position, ExitContext(close=0.505)).should_exit is False, (
+        "profit_level 阈值不含等号: 恰好等于止盈价仍是 1 级"
+    )
+
+
+def test_fixed_take_profit_policy_does_not_trigger_when_losing():
+    """亏损时不止盈"""
+    policy = FixedTakeProfitPolicy()
+    position = _position(fixed_take_profit_rate=0.01, opening_price=0.5)
+
+    assert policy.evaluate(position, ExitContext(close=0.49)).should_exit is False
+
+
+def test_fixed_take_profit_policy_ignores_position_without_price():
+    """均价不可用（<=0）时不止盈"""
+    policy = FixedTakeProfitPolicy()
+    position = _position(opening_price=0.0, opening_quantity=0.0)
+
+    assert policy.evaluate(position, ExitContext(close=0.5)).should_exit is False
+
+
+def test_fixed_take_profit_policy_uses_opposite_direction_for_short():
+    """空头盈利方向与多头相反: 价格下跌才是盈利
+
+    `profit_level` 对 SHORT 用 `<` 比较 `price × (1 - rate)`, 因此
+    close < 入场价达阈值时触发止盈。这一口径由本测试锁定。
+    """
+    policy = FixedTakeProfitPolicy()
+    position = _position(
+        position_side=PositionSide.SHORT,
+        fixed_take_profit_rate=0.01,
+        opening_price=0.5,
+    )
+
+    falling = policy.evaluate(position, ExitContext(close=0.49))
+    rising = policy.evaluate(position, ExitContext(close=0.51))
+
+    assert falling.should_exit is True, "空头价格下跌 2% 应止盈"
+    assert rising.should_exit is False, "空头价格上涨应为亏损, 不止盈"
+
+
+# ---- SignalExitPolicy ----
+
+
+def test_signal_exit_policy_triggers_in_trigger_mode():
+    """无方向倾向: 任何非中性信号都可离场"""
+    policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
+    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
+
+    for direction in (SignalDirection.LONG, SignalDirection.SHORT):
+        ctx = ExitContext(close=0.505, market_signal=_signal(direction))
+        assert policy.evaluate(position, ctx).should_exit is True, (
+            f"TRIGGER 模式下 {direction.value} 信号均可触发离场"
+        )
+
+
+def test_signal_exit_policy_blocks_neutral_in_trigger_mode():
+    """无方向倾向模式下中性信号不触发"""
+    policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
+    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
+    ctx = ExitContext(close=0.505, market_signal=_signal(SignalDirection.NEUTRAL))
+
+    assert policy.evaluate(position, ctx).should_exit is False
+
+
+def test_signal_exit_policy_blocks_when_disabled():
+    """未启用信号离场时永不触发（隔离）"""
+    policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL, enabled=False)
+    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
+    ctx = ExitContext(close=0.505, market_signal=_signal(SignalDirection.LONG))
+
+    assert policy.evaluate(position, ctx).should_exit is False, (
+        "enable_exit_signal=False 时信号不得触发离场"
+    )
+
+
+def test_signal_exit_policy_blocks_when_no_signal_configured():
+    """未配置信号时不触发（空值）"""
+    policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
+    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
+
+    assert policy.evaluate(position, ExitContext(close=0.505)).should_exit is False, (
+        "空信号应拦截离场（与入场侧放行相反, 见 02-domain-model.md 第九节）"
+    )
+
+
+def test_signal_exit_policy_in_directional_mode_requires_exit_direction():
+    """有方向倾向: 仅当信号方向与出场方向一致时离场
+
+    多头仓位的出场方向是 SELL, 因此需要看跌信号。
+    """
+    policy = SignalExitPolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
+    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
+
+    matching = ExitContext(close=0.505, market_signal=_signal(SignalDirection.SHORT))
+    opposite = ExitContext(close=0.505, market_signal=_signal(SignalDirection.LONG))
+
+    assert policy.evaluate(position, matching).should_exit is True, (
+        "看跌信号与出场方向一致, 应离场"
+    )
+    assert policy.evaluate(position, opposite).should_exit is False, (
+        "看涨信号与出场方向相反, 不应离场"
+    )
+
+
+def test_signal_exit_policy_in_directional_mode_uses_exit_side_for_short():
+    """空头仓位的出场方向是 BUY, 因此需要看涨信号"""
+    policy = SignalExitPolicy(SignalKind.DIRECTIONAL, OrderSide.BUY)
+    position = _position(
+        position_side=PositionSide.SHORT,
+        signal_min_take_profit_rate=0.002,
+        opening_price=0.5,
+    )
+
+    matching = ExitContext(close=0.495, market_signal=_signal(SignalDirection.LONG))
+    opposite = ExitContext(close=0.495, market_signal=_signal(SignalDirection.SHORT))
+
+    assert policy.evaluate(position, matching).should_exit is True
+    assert policy.evaluate(position, opposite).should_exit is False
+
+
+def test_signal_exit_policy_is_never_force():
+    """信号离场恒为非强制（保留休息中的挂单）"""
+    policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
+    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
+    ctx = ExitContext(close=0.505, market_signal=_signal(SignalDirection.LONG))
+
+    assert policy.evaluate(position, ctx).force is False, (
+        "信号离场不得覆盖休息中的出场挂单"
+    )
+
+
+def test_signal_exit_policy_requires_profit_level_one():
+    """必须处于 1 级盈利（未达固定止盈率）才轮到信号离场"""
+    policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
+    position = _position(
+        signal_min_take_profit_rate=0.002,
+        fixed_take_profit_rate=0.01,
+        opening_price=0.5,
+    )
+
+    # 止盈阈值 = 0.5 × 1.01 = 0.505; 0.51 已超过它（profit_level=2）
+    ctx = ExitContext(close=0.51, market_signal=_signal(SignalDirection.LONG))
+    assert policy.evaluate(position, ctx).should_exit is False, (
+        "达到 2 级止盈时不归信号策略管"
+    )
+
+    # 0.5025 处于 1 级（超过 0.2% 但未达 1%）
+    ctx = ExitContext(close=0.5025, market_signal=_signal(SignalDirection.LONG))
+    assert policy.evaluate(position, ctx).should_exit is True, "1 级盈利应由信号离场"
+
+
+# ---- ExitPolicyChain ----
+
+
+def test_chain_exits_when_any_policy_wants_exit():
+    """任一策略要求离场则离场"""
+    position = _position(enable_stop_loss=True, trailing_stop_price=0.45)
+    chain = ExitPolicyChain([FixedTakeProfitPolicy(), StopLossPolicy()])
+
+    decision = chain.decide(position, ExitContext(close=0.44))
+
+    assert decision.should_exit is True, "止损策略应触发离场"
+
+
+def test_chain_does_not_exit_when_no_policy_wants_exit():
+    """全部策略都不要求离场则不离场"""
+    position = _position(fixed_take_profit_rate=0.01, opening_price=0.5)
+    chain = ExitPolicyChain([FixedTakeProfitPolicy(), StopLossPolicy()])
+
+    decision = chain.decide(position, ExitContext(close=0.505))
+
+    assert decision.should_exit is False
+
+
+def test_chain_merges_force_from_any_policy():
+    """force 由任一策略贡献"""
+    position = _position(fixed_take_profit_rate=0.01, opening_price=0.5)
+    chain = ExitPolicyChain([FixedTakeProfitPolicy(), ForceExitPolicy(lambda: True)])
+
+    decision = chain.decide(position, ExitContext(close=0.51))
+
+    assert decision.should_exit is True
+    assert decision.force is True, "强制标记应被合并进来"
+
+
+def test_chain_merge_is_order_independent():
+    """合并顺序无关: 交换策略顺序结果相同（不变量 9 的基础）"""
+    position = _position(enable_stop_loss=True, trailing_stop_price=0.45)
+    stop = StopLossPolicy()
+    force = ForceExitPolicy(lambda: True)
+    ctx = ExitContext(close=0.44)
+
+    first = ExitPolicyChain([stop, force]).decide(position, ctx)
+    second = ExitPolicyChain([force, stop]).decide(position, ctx)
+
+    assert first == second, "策略顺序不应影响合并结果"
+
+
+def test_empty_chain_never_exits():
+    """空链恒不离场（无策略即无离场条件）"""
+    position = _position(enable_stop_loss=True, trailing_stop_price=0.45)
+
+    decision = ExitPolicyChain([]).decide(position, ExitContext(close=0.1))
+
+    assert decision.should_exit is False, "空策略链不应平仓"
+
+
+def test_chain_does_not_leak_state_between_positions():
+    """隔离: 同一策略链对不同仓位的决策互不影响"""
+    stop = StopLossPolicy()
+    chain = ExitPolicyChain([stop])
+    triggered = _position("TRIGGERED", enable_stop_loss=True, trailing_stop_price=0.45)
+    safe = _position("SAFE", enable_stop_loss=True, trailing_stop_price=0.45)
+
+    assert chain.decide(triggered, ExitContext(close=0.44)).should_exit is True
+    assert chain.decide(safe, ExitContext(close=0.46)).should_exit is False, (
+        "前一仓位的决策不应影响后一仓位"
+    )
+
+
+# ---- RestingTakeProfitPolicy ----
+
+
+def test_resting_take_profit_price_uses_position_rate():
+    """挂单价取自仓位的固定止盈率（与 profit_level 同源, 避免第二真相）"""
+    policy = RestingTakeProfitPolicy(OrderSide.BUY)
+    position = _position(fixed_take_profit_rate=0.01, opening_price=0.5)
+
+    assert policy.limit_price(position) == 0.505, (
+        "买入方向止盈价 = 均价 × (1 + 止盈率)"
+    )
+
+
+def test_resting_take_profit_price_for_sell():
+    """卖出方向止盈价向下"""
+    policy = RestingTakeProfitPolicy(OrderSide.SELL)
+    position = _position(fixed_take_profit_rate=0.01, opening_price=0.5)
+
+    assert policy.limit_price(position) == 0.495, (
+        "卖出方向止盈价 = 均价 × (1 − 止盈率)"
+    )
+
+
+def test_resting_take_profit_price_for_short_position():
+    """空头仓位的止盈方向由入场方向决定, 与仓位实际方向一致"""
+    policy = RestingTakeProfitPolicy(OrderSide.SELL)
+    position = _position(
+        position_side=PositionSide.SHORT,
+        fixed_take_profit_rate=0.01,
+        opening_price=0.5,
+    )
+
+    assert policy.limit_price(position) == 0.495
+
+
+# ---- helpers ----
+
+
+def _position(position_id: str = "POS1", **overrides: object) -> GridPosition:
+    row = make_position_row(position_id, **overrides)
+    return GridPosition.from_row(row, [])
+
+
+def _signal(direction: SignalDirection) -> MarketSignal:
+    return make_market_signal(direction)
+
+
+def test_entry_gate_context_and_exit_context_are_distinct_types():
+    """两个上下文互不通用, 防止字段被误用"""
+    assert EntryContext is not ExitContext, "入场与离场上下文必须是不同类型"
+
+
+def test_require_close_error_is_a_smart_trader_error():
+    """EntryContext.require_close 抛业务异常而非 ValueError"""
+    with pytest.raises(SmartTraderError) as caught:
+        EntryContext().require_close()
+
+    assert caught.value.error_code.value == "market_data_unavailable", (
+        "应使用 market_data_unavailable 异常码"
+    )
