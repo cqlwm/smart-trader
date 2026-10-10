@@ -120,8 +120,15 @@ def parse_symbol_info(exchange_info: dict[str, Any], symbol: Symbol) -> SymbolIn
 def to_ccxt_order_params(request: OrderRequest) -> dict[str, Any]:
     """
     领域下单请求 → ccxt 下单参数
-    @param request: 下单请求
+
+    前置条件: request.custom_id 已由 JournaledTradingPort 分配合法值, 空串意味着
+    调用方绕过了记账包装, 交易所会自动生成非幂等 ID, 破坏"先登记后下单"契约。
     """
+    if not request.custom_id:
+        raise SmartTraderError(
+            ErrorCode.ORDER_REJECTED,
+            "custom_id 为空: 下单必须经过 JournaledTradingPort 分配订单号",
+        )
     params: dict[str, Any] = {
         "newClientOrderId": request.custom_id,
         "positionSide": request.position_side.value.upper(),

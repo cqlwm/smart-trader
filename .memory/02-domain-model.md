@@ -37,7 +37,7 @@
 
 | 字段 | 类型 | 约束 |
 | --- | --- | --- |
-| `custom_id` | `str` | 客户端订单号，幂等标识 |
+| `custom_id` | `str = ""` | 客户端订单号（幂等标识）。默认空串，由 `JournaledTradingPort.place()` 分配合法值后覆盖；适配器收到空串时抛 `SmartTraderError` |
 | `symbol` | `Symbol` | |
 | `side` | `OrderSide` | |
 | `type` | `OrderType` | |

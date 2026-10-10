@@ -63,7 +63,6 @@ class GridOrderGateway:
         @return: 交易所返回的订单结果
         """
         request = OrderRequest(
-            custom_id="",  # 订单号由账本在发送前分发, 保证先登记后下单
             symbol=self._config.symbol,
             side=side,
             type=OrderType.LIMIT,

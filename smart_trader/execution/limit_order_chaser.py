@@ -83,13 +83,12 @@ class LimitOrderChaser:
         """
         挂一张 GTX(post only)限价单
 
-        订单号由记账包装分配并在多轮递进间复用（传空 custom_id）。
+        custom_id 由 JournaledTradingPort 在 place 前自动分配, 此处传默认空值即可。
 
         @return: 挂单被交易所接受返回订单结果, 被拒返回 None
         @raise SmartTraderError: 确定性拒绝(精度/名义价值等)直接抛出
         """
         request = OrderRequest(
-            custom_id="",
             symbol=self.symbol,
             side=self.side,
             type=OrderType.LIMIT,

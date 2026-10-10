@@ -146,6 +146,14 @@ class TestToCcxtOrderParams:
         assert "timeInForce" not in params, "市价单不支持 timeInForce"
         assert params["positionSide"] == "LONG"
 
+    def test_raises_when_custom_id_empty(self):
+        """绕过 JournaledTradingPort 直接下单并遗漏订单号, 交易所会自动生成非幂等 ID"""
+        request = build_request()
+        request.custom_id = ""  # 空 custom_id = 调用方绕过记账包装
+        with pytest.raises(SmartTraderError) as exc_info:
+            to_ccxt_order_params(request)
+        assert exc_info.value.error_code is ErrorCode.ORDER_REJECTED
+
 
 class TestPlace:
     def test_formats_price_and_quantity_to_exchange_precision(self):

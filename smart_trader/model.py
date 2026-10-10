@@ -160,9 +160,14 @@ class Symbol(BaseModel):
 
 
 class OrderRequest(BaseModel):
-    """下单请求(领域对象), 是策略层与交易所适配器之间的唯一契约"""
+    """下单请求(领域对象), 是策略层与交易所适配器之间的唯一契约
 
-    custom_id: str
+    custom_id 由底层记账包装(JournaledTradingPort)在 place 前分发并覆盖,
+    策略层调用方无需填写；仅在绕过记账包装直连 TradingPort 的场景(如 demo/测试)
+    才需要显式指定。交易所适配器禁止收到空 custom_id。
+    """
+
+    custom_id: str = ""
     symbol: Symbol
     side: OrderSide
     type: OrderType
