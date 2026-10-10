@@ -48,7 +48,10 @@ main_binance_client: BinanceSwapClient = create_binance_client("main")
 def main():
     from template import dogeusdt
 
-    tasks: list[StrategyTask] = [dogeusdt.grid(main_binance_client)]
+    tasks: list[StrategyTask] = [
+        dogeusdt.grid_reverse_long(main_binance_client),
+        dogeusdt.grid_reverse_short(main_binance_client),
+    ]
 
     kline_subscribes: list[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
