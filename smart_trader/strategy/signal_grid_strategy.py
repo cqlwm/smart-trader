@@ -140,10 +140,11 @@ class SignalGridStrategy(SingleTimeframeStrategy):
             return False
 
         # 检查当前价格是否在可交易的价格区间
-        if self.latest_kline_obj is None:
+        latest_kline = self.latest_kline_obj
+        if latest_kline is None:
             return False
 
-        close_price = self.latest_kline_obj.close
+        close_price = latest_kline.close
         if (
             close_price < self.config.lowest_price
             or close_price > self.config.highest_price
@@ -245,10 +246,11 @@ class SignalGridStrategy(SingleTimeframeStrategy):
 
         @return: 本次平仓检查的结果(归档仓位 + 本根K线是否产生过平仓动作)
         """
-        if self.latest_kline_obj is None:
+        latest_kline = self.latest_kline_obj
+        if latest_kline is None:
             return CloseOutcome()
 
-        close = self.latest_kline_obj.close
+        close = latest_kline.close
         exit_signal = (
             self.config.enable_exit_signal
             and self.config.signal
@@ -358,7 +360,8 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         self.remove_positions(positions)
 
     def _on_kline_finished(self):
-        if self.latest_kline_obj is None:
+        latest_kline = self.latest_kline_obj
+        if latest_kline is None:
             return
 
         if self.is_running:
