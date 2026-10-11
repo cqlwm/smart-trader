@@ -199,7 +199,7 @@
 - **`status` 为空 ⇔ 结果未确认**，即对账清单；对账用交易所事实回写该行；
 - 归档不删行（`active=0`）；`orders` 不随 `sync` 删除。
 
-## 九、信号与规则层
+## 八、信号与规则层
 
 ### 1. 四层职责
 
@@ -260,7 +260,7 @@
 
 `template/qqqusdt.py` 的 `grid_spacing_rate=-0.1` 是**有意的双向距离限制**，
 不是待修的缺陷。该语义由 `tests/test_entry_gate.py` 的
-`test_negative_spacing_*` / `test_positive_spacing_*` 六个测试锁定。
+`test_negative_spacing_*` / `test_positive_spacing_*` 五个测试锁定。
 
 ### 4. 离场策略（`ExitPolicy`）
 

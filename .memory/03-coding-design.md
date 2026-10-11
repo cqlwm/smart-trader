@@ -36,7 +36,7 @@
 
 ### 3. 语句构造（为什么是 Core 而不是 declarative ORM / SQLModel）
 
-- 三张表**零外键、零关系、零对象图**，declarative ORM 的 relationship / unit-of-work / identity map
+- 两张表**零外键、零关系、零对象图**，declarative ORM 的 relationship / unit-of-work / identity map
   没有用武之地；引入它只会带来第二套模型体系（双映射）或挤掉 Pydantic 的记录语义。
 - SQLModel 的"单类双用"看似省事，但 pyright strict 兼容性与 0.0.x 稳定性不满足本项目
   （0 errors / 0 warnings）的门禁要求。
@@ -71,7 +71,7 @@
 - `:memory:` + StaticPool 单连接在**多线程并发**下共享同一 sqlite 连接；
   当前测试为单线程，行为无影响；生产走文件库（多连接 + WAL）。若未来出现内存库多线程测试，
   需要先升级为"每线程独立库"或改用文件库。
-- `rowid` 排序（`load_positions` / `load_archived_positions` / `load_order_records` 的稳定 tie-break）
+- `rowid` 排序（`load_active_positions` / `load_orders_for_positions` / `pending_orders` 的稳定 tie-break）
   通过 `text("rowid")` 保留，不进入 metadata（SQLite 隐式列，无需定义）。
 
 ## 三、信号与规则层设计（strategy）
