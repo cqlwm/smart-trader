@@ -123,6 +123,12 @@ class SignalGridStrategy(SingleTimeframeStrategy):
             max_order=config.max_order,
             enable_stop_loss=config.enable_max_order_stop_loss,
         )
+        if config.enable_max_order_stop_loss and config.max_order <= 1:
+            logger.warning(
+                "max_order=%s 时上限止损不适用(容量为 1 不存在\"最后一格\"状态), "
+                "该配置被忽略; 单仓位保护请使用 enable_order_stop_loss",
+                config.max_order,
+            )
         self._entry_gates = self._build_entry_gates()
         self._exit_policies = self._build_exit_policies()
         self._resting_take_profit: RestingTakeProfitPolicy | None = (

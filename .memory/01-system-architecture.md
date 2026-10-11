@@ -165,6 +165,13 @@ strategy / task / template              (业务编排: 网格、信号、止损)
   `klines[_datetime].iloc[-1]` 在空表上越界。旧测试用 `try/except` + `assert ... in str(e)`
   把它盖住了。修复：入口加 `if klines.empty: return MarketSignal()`，
   并新增 `ErrorCode.MARKET_DATA_UNAVAILABLE` 供 `EntryContext.require_close()` 使用。
+- **`max_order=1` 且开启上限止损时策略空转**：原判定式 `max_order - count <= 1`
+  在空仓（count=0）时也为真，入场闸门永不开第一单；且若只放开空仓档，
+  持有唯一仓位时 `1 - 1 <= 1` 仍触发强平，会变成"开了就平"的抖动。
+  修复：`stop_loss_triggered` 在 `max_order <= 1` 时恒为 `False`——容量为 1
+  不存在"最后一格"状态，上限止损整体不适用，单仓位保护由
+  `enable_order_stop_loss`（价格维度止损）承担；策略构造时对该组合记录 warning
+  （见 `02-domain-model.md` 第三节）。
 
 ## 八、测试策略
 

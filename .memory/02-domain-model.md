@@ -96,8 +96,11 @@
 - `reached(count)` = `count >= max_order`：仓位数已达上限，禁止再开仓。
 - `stop_loss_triggered(count)` = `enable_stop_loss and max_order - count <= 1`：只剩 ≤1 个空位时触发全部止损。
 
-> **反直觉但必须保留的现状行为**：`max_order == 1` 且空仓时，`stop_loss_triggered(0)` 为
-> `True`（`1 - 0 <= 1`），策略**永不下第一单**。该行为由测试锁定。
+> **`max_order <= 1` 时上限止损不适用**：容量为 1 时空仓（0）与满仓（1）相邻，不存在
+> "最后一格"状态——空仓触发会永不开第一单，满仓触发会开了就强平（开平抖动）。
+> 因此 `stop_loss_triggered` 在 `max_order <= 1` 时恒为 `False`，策略正常交易唯一仓位，
+> 仓位保护由单笔止损（`enable_order_stop_loss`，价格维度）承担；策略构造时对该组合
+> 记录 warning，避免静默失效。
 
 ## 四、ccxt 翻译表（只在适配器内使用）
 

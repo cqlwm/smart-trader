@@ -325,12 +325,12 @@ def test_max_order_stop_loss_gate_allows_with_more_slots():
     assert gate.allow(ctx) is True
 
 
-def test_max_order_stop_loss_gate_blocks_first_slot_when_max_order_is_one():
-    """反直觉现状: max_order=1 且空仓时同样触发（永不下第一单）"""
+def test_max_order_stop_loss_gate_allows_first_slot_when_max_order_is_one():
+    """max_order=1 空仓时放行: 上限止损不适用, 允许开唯一仓位"""
     gate = MaxOrderStopLossGate(PositionLimit(max_order=1, enable_stop_loss=True))
 
-    assert gate.allow(make_entry_context()) is False, (
-        "max_order=1 空仓时 stop_loss_triggered 成立, 现状下永不开第一单"
+    assert gate.allow(make_entry_context()) is True, (
+        "容量为 1 不存在\"最后一格\"状态, 空仓应放行第一单"
     )
 
 

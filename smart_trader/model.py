@@ -382,7 +382,10 @@ class PositionLimit(BaseModel):
     def stop_loss_triggered(self, position_count: int) -> bool:
         """只剩 <=1 个空位时触发全部止损
 
-        @note max_order=1 且空仓时为真（1 - 0 <= 1），即永不下第一单；
-              该行为来自既有实现，本次重构保留
+        @note max_order <= 1 时恒为 False: 容量为 1 时空仓与满仓相邻,
+              不存在"最后一格"状态 —— 空仓触发会永不开第一单, 满仓触发
+              会开了就强平(开平抖动)。单仓位保护由单笔止损承担。
         """
+        if self.max_order <= 1:
+            return False
         return self.enable_stop_loss and self.max_order - position_count <= 1

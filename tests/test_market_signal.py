@@ -112,16 +112,26 @@ def test_position_limit_stop_loss_disabled_never_triggers():
     assert limit.stop_loss_triggered(2) is False, "已满仓也不触发(功能未开启)"
 
 
-def test_position_limit_blocks_first_position_when_max_order_is_one():
-    """反直觉的现状行为: max_order=1 且空仓时 stop_loss_triggered 仍为真
+def test_position_limit_stop_loss_inapplicable_when_max_order_is_one():
+    """max_order=1 时上限止损整体不适用: 空仓与满仓均不触发
 
-    即 1 - 0 <= 1 成立, 策略永不下第一单。该行为由来自既有实现, 本次重构保留。
+    容量为 1 时空仓(0)与满仓(1)相邻, 不存在"最后一格"状态:
+    空仓触发会永不开第一单, 满仓触发会开了就强平(开平抖动)。
+    单仓位保护由单笔止损(enable_order_stop_loss)承担。
     """
     limit = PositionLimit(max_order=1, enable_stop_loss=True)
 
-    assert limit.stop_loss_triggered(0) is True, (
-        "max_order=1 且空仓时上限止损条件成立, 现状下永不开第一单"
+    assert limit.stop_loss_triggered(0) is False, "空仓时不得拦截第一单"
+    assert limit.stop_loss_triggered(1) is False, (
+        "持有唯一仓位时不得触发强平, 否则开了就平"
     )
+
+
+def test_position_limit_stop_loss_inapplicable_when_max_order_is_zero():
+    """max_order=0 与 max_order=1 同属不适用分支(<=1)"""
+    limit = PositionLimit(max_order=0, enable_stop_loss=True)
+
+    assert limit.stop_loss_triggered(0) is False
 
 
 def test_position_limit_isolates_disabled_stop_loss_from_reached():

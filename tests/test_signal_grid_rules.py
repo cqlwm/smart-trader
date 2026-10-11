@@ -5,7 +5,10 @@
 本文件只验证**策略如何装配它们**以及**端到端行为**。
 """
 
+import logging
 from typing import TypeVar
+
+import pytest
 
 from smart_trader.model import OrderSide, PositionSide, SignalDirection, SignalKind
 from smart_trader.strategy.entry_gate import (
@@ -19,7 +22,12 @@ from smart_trader.strategy.exit_policy import (
 )
 from smart_trader.strategy.signal_grid_strategy import SignalGridStrategy
 from tests.fakes import FakeSignal
-from tests.test_signal_grid_strategy import build_strategy, push_kline, seed_position
+from tests.test_signal_grid_strategy import (
+    TIMESTAMP,
+    build_strategy,
+    push_kline,
+    seed_position,
+)
 
 GateT = TypeVar("GateT", bound=EntryGate)
 
@@ -137,16 +145,62 @@ def test_entry_gate_chain_preserves_declared_order():
 # ---- 边界行为（必须保留的现状语义）----
 
 
-def test_first_position_never_opens_when_max_order_is_one():
-    """反直觉现状: max_order=1 且空仓时上限止损条件成立, 永不下第一单"""
+def test_max_order_one_opens_and_holds_single_position():
+    """max_order=1 + 上限止损: 正常开唯一仓位, 下一根 K 线不被强平
+
+    旧实现空仓即触发上限止损（永不下第一单）；若只放开空仓档，
+    持有仓位时 1-1<=1 仍触发强平，变成"开了就平"的抖动。
+    修复后上限止损在 max_order<=1 时整体不适用（单仓位保护交给单笔止损）。
+    """
     strategy, trading, _ = build_strategy(
         max_order=1, enable_max_order_stop_loss=True
     )
+    calls: list[str] = []
+    strategy.on_stop_loss_order_all = lambda: calls.append("called")
 
-    push_kline(strategy, 0.5)
+    push_kline(strategy, 0.5, timestamp=TIMESTAMP)
+    push_kline(strategy, 0.49, timestamp=TIMESTAMP + 60_000)
 
-    assert strategy.positions == [], "max_order=1 时现状永不开第一单"
-    assert trading.placed == [], "不应产生任何委托"
+    assert len(strategy.positions) == 1, "max_order=1 应开出并持有唯一仓位"
+    assert [request.side for request in trading.placed] == [OrderSide.BUY], (
+        "只应有第一单入场委托, 不得出现强平出场单"
+    )
+    assert calls == [], "上限止损不适用时不得触发止损回调"
+    assert strategy.is_running is True, "不得触发止损暂停"
+
+
+def test_max_order_one_with_stop_loss_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+):
+    """max_order=1 且开启上限止损: 构造时记录 warning, 避免静默失效"""
+    with caplog.at_level(logging.WARNING):
+        build_strategy(max_order=1, enable_max_order_stop_loss=True)
+
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+    assert any("上限止损" in message for message in warnings), (
+        f"构造时应记录上限止损 warning, 实际: {warnings}"
+    )
+
+
+def test_no_stop_loss_warning_for_normal_config(
+    caplog: pytest.LogCaptureFixture,
+):
+    """常规配置（上限止损关闭）不产生上限止损警告"""
+    with caplog.at_level(logging.WARNING):
+        build_strategy()
+
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+    assert not any("上限止损" in message for message in warnings), (
+        f"常规配置不应产生上限止损警告, 实际: {warnings}"
+    )
 
 
 def test_opens_first_position_when_max_order_is_two():
