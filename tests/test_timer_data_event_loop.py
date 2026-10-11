@@ -116,7 +116,6 @@ def build_loop(
         market=fake_market,
         clock=fake_clock,
         poll_interval=0.001,
-        retry_interval=0.0,
         **overrides,
     )
     return loop, fake_clock, fake_market
@@ -272,49 +271,56 @@ class TestFetchFinishedKline:
         assert kline is not None and kline.finished is True
         assert market.calls == [(SYMBOL, "1m", 2)], "已完成K线必须以 limit=2 拉取"
 
-    def test_retries_until_latest_kline_finished(self):
+    def test_returns_none_when_no_finished_kline(self):
+        """交易所尚未滚出已完成K线(本地时钟落后): 不等待重试, 直接跳过本周期"""
         loop, _, market = build_loop()
         market.responses.append([make_kline(finished=False)])
-        market.responses.append([make_kline(finished=False), make_kline(finished=True)])
 
         kline = loop._fetch_finished_kline(SYMBOL, "1m", 0)
 
-        assert kline is not None and kline.finished is True
-        assert len(market.calls) == 2, "未收盘时应重试"
+        assert kline is None
+        assert len(market.calls) == 1, "不重试, 拉一次就放弃"
 
-    def test_gives_up_after_retries_exhausted(
-        self, caplog: pytest.LogCaptureFixture
-    ):
-        loop, _, market = build_loop(fetch_retries=3)
-        for _ in range(3):
-            market.responses.append([make_kline(finished=False)])
-
-        with caplog.at_level(logging.ERROR):
-            kline = loop._fetch_finished_kline(SYMBOL, "1m", 0)
-
-        assert kline is None, "重试耗尽必须放弃本周期"
-        assert len(market.calls) == 3
-        assert any(
-            "跳过本周期" in record.message and record.levelno == logging.ERROR
-            for record in caplog.records
-        )
-
-    def test_fetch_error_retries_then_succeeds(self):
+    def test_fetch_error_returns_none(self):
         loop, _, market = build_loop()
         market.responses.append(RuntimeError("网络抖动"))
-        market.responses.append([make_kline(finished=False), make_kline(finished=True)])
 
         kline = loop._fetch_finished_kline(SYMBOL, "1m", 0)
 
-        assert kline is not None, "单次拉取失败不能放弃本周期"
-        assert len(market.calls) == 2
+        assert kline is None
+        assert len(market.calls) == 1, "单次失败不重试, 循环自行在下个边界继续"
 
-    def test_all_fetch_errors_returns_none(self):
-        loop, _, market = build_loop(fetch_retries=2)
-        market.responses.append(RuntimeError("网络抖动"))
-        market.responses.append(RuntimeError("网络抖动"))
+    def test_returns_none_when_kline_already_dispatched(self):
+        """同一根K线(按时间戳)只分发一次 —— 时钟漂移时防止重复触发交易决策"""
+        loop, _, _ = build_loop()
 
-        assert loop._fetch_finished_kline(SYMBOL, "1m", 0) is None
+        first = loop._fetch_finished_kline(SYMBOL, "1m", 0)
+        second = loop._fetch_finished_kline(SYMBOL, "1m", 0)
+
+        assert first is not None
+        assert second is None, "已分发过的K线必须返回 None"
+
+    def test_dispatches_again_when_timestamp_advances(self):
+        loop, _, market = build_loop()
+        market.responses.append(
+            [make_kline(finished=False), make_kline(finished=True, timestamp=456)]
+        )
+        market.responses.append(
+            [make_kline(finished=False), make_kline(finished=True, timestamp=516)]
+        )
+
+        first = loop._fetch_finished_kline(SYMBOL, "1m", 456)
+        second = loop._fetch_finished_kline(SYMBOL, "1m", 516)
+
+        assert first is not None and second is not None, "新K线必须正常分发"
+
+    def test_dedupe_is_isolated_per_subscription(self):
+        loop, _, _ = build_loop()
+
+        first = loop._fetch_finished_kline(SYMBOL, "1m", 0)
+        other = loop._fetch_finished_kline(BTC_SYMBOL, "1m", 0)
+
+        assert first is not None and other is not None, "去重状态必须按 (symbol, timeframe) 隔离"
 
     def test_timestamp_mismatch_is_logged_as_drift(
         self, caplog: pytest.LogCaptureFixture
@@ -413,7 +419,7 @@ class TestFire:
         assert strategy.callbacks == ["on_kline"], "中点事件必须触发 on_kline"
 
     def test_fetch_failure_skips_dispatch_without_crashing(self):
-        loop, _, market = build_loop(fetch_retries=1)
+        loop, _, market = build_loop()
         strategy = CallbackRecordingStrategy()
         loop.add_task(StrategyTask(SYMBOL, strategy))
         loop.running = True
@@ -449,7 +455,6 @@ class TestStartStop:
             clock=time.time,
             fetch_delay=0.05,
             poll_interval=0.005,
-            retry_interval=0.0,
         )
         loop.add_task(StrategyTask(SYMBOL, strategy))
 

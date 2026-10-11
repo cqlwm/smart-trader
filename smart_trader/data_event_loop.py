@@ -257,8 +257,6 @@ class TimerDataEventLoop(DataEventLoop):
         market: MarketDataPort,
         clock: Callable[[], float] = time.time,
         fetch_delay: float = 2.0,
-        fetch_retries: int = 3,
-        retry_interval: float = 0.5,
         poll_interval: float = 0.05,
     ):
         """
@@ -266,8 +264,6 @@ class TimerDataEventLoop(DataEventLoop):
         @param market: 行情端口(REST 拉取K线)
         @param clock: 时间源(秒), 测试注入假时钟
         @param fetch_delay: 边界后延迟拉取的秒数(等交易所收盘), 必须小于最短周期的一半
-        @param fetch_retries: 已完成K线未收盘时的重试次数
-        @param retry_interval: 重试间隔(秒)
         @param poll_interval: 等待调度的轮询间隔(秒), 兼顾 stop() 响应速度
         """
         super().__init__()
@@ -280,11 +276,11 @@ class TimerDataEventLoop(DataEventLoop):
         self.market = market
         self.clock = clock
         self.fetch_delay = fetch_delay
-        self.fetch_retries = fetch_retries
-        self.retry_interval = retry_interval
         self.poll_interval = poll_interval
         self._wakeup = threading.Event()
         self._tf_seconds: dict[str, int] = self._validate_timeframes()
+        # 最近一次分发的已完成K线时间戳, 按 (symbol, timeframe) 隔离
+        self._dispatched_finished: dict[tuple[str, str], int] = {}
 
     def _validate_timeframes(self) -> dict[str, int]:
         """解析并缓存每个唯一 timeframe 的秒数; 构造期失败快速报错"""
@@ -383,35 +379,32 @@ class TimerDataEventLoop(DataEventLoop):
     def _fetch_finished_kline(
         self, symbol: Symbol, timeframe: str, expected_open_ms: int
     ) -> Kline | None:
-        """拉取最后一根已完成K线; 未收盘按 retry_interval 重试, 耗尽后放弃本周期"""
-        for attempt in range(1, self.fetch_retries + 1):
-            finished = [
-                k
-                for k in self._safe_fetch(symbol, timeframe, limit=2)
-                if k.finished
-            ]
-            if finished:
-                kline = finished[-1]
-                if kline.timestamp != expected_open_ms:
-                    logger.warning(
-                        "K线时间戳 %s 与本地边界 %s 不一致(时钟漂移): %s %s",
-                        kline.timestamp,
-                        expected_open_ms,
-                        symbol.ccxt(),
-                        timeframe,
-                    )
-                return kline
+        """拉取最后一根已完成K线; 不等待重试, 已分发过的同一根K线返回 None
+
+        交易所尚未滚出收盘K线(本地时钟落后)或拉取失败时直接返回 None,
+        本周期不分发, 由下一个边界自然补上; 去重防止时钟漂移时
+        同一根K线重复触发 on_kline_finished。
+        """
+        finished = [
+            k for k in self._safe_fetch(symbol, timeframe, limit=2) if k.finished
+        ]
+        if not finished:
+            return None
+        kline = finished[-1]
+        if kline.timestamp != expected_open_ms:
             logger.warning(
-                "最新K线尚未收盘 %s %s (第 %s/%s 次重试)",
+                "K线时间戳 %s 与本地边界 %s 不一致(时钟漂移): %s %s",
+                kline.timestamp,
+                expected_open_ms,
                 symbol.ccxt(),
                 timeframe,
-                attempt,
-                self.fetch_retries,
             )
-            time.sleep(self.retry_interval)
 
-        logger.error("已完成K线拉取失败 %s %s, 跳过本周期", symbol.ccxt(), timeframe)
-        return None
+        key = (symbol.binance(), timeframe)
+        if self._dispatched_finished.get(key) == kline.timestamp:
+            return None
+        self._dispatched_finished[key] = kline.timestamp
+        return kline
 
     def _fetch_current_kline(self, symbol: Symbol, timeframe: str) -> Kline | None:
         """拉取当前进行中的K线(盘中更新); 拉到已收盘K线视为时钟漂移, 跳过"""

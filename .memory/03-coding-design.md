@@ -209,8 +209,11 @@ v2 的累积计数不存在此问题，`first_run` 已删除。
 
 - 边界事件 = 周期边界 + `fetch_delay`（默认 2s，必须 < tf/2，构造时校验）：
   `fetch_ohlcv(limit=2)` 取最后一根 `finished=True`，即"最后一根已完成K线"→
-  经 `strategy.run(kline)` 触发 `on_kline_finished`；未 finished 时小间隔重试，
-  耗尽记 error 并跳过本周期；
+  经 `strategy.run(kline)` 触发 `on_kline_finished`；
+- **不等待重试**：无已完成K线（本地时钟落后）或拉取失败 → 记日志、本周期不分发，
+  由下一个边界自然补上——重试只能拯救"本地时钟落后 2~3s"这种几乎不存在的场景，
+  却引入等待机器；去重（按 `(symbol, timeframe)` 记录最近分发的时间戳，**已分发过的
+  同一根K线返回 None**）才是漂移场景的正解：既不重复分发，数据也只迟到不丢失；
 - 中点事件 = 周期 1/2 处：`fetch_ohlcv(limit=1)` 取进行中 K 线 → 触发 `on_kline`；
 - 错过的事件跳过（只调度未来）；同一周期至多分发一次；
 - fetch 抛异常 → 记日志跳过本周期，循环不中断（与第五节异常策略一致）。
