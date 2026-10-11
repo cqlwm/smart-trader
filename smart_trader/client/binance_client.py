@@ -25,6 +25,7 @@ from smart_trader.model import (
     PositionSide,
     Symbol,
     SymbolInfo,
+    timeframe_seconds,
 )
 
 logger = log.getLogger(__name__)
@@ -409,17 +410,11 @@ class BinanceSwapClient:
         """
         解析周期字符串(如 1m/1h)为毫秒
         @param timeframe: 周期
+        @raise SmartTraderError: 非法周期
         """
-        units = {
-            "s": 1000,
-            "m": 60_000,
-            "h": 3_600_000,
-            "d": 86_400_000,
-            "w": 604_800_000,
-        }
-        unit = timeframe[-1]
-        if unit not in units or not timeframe[:-1].isdigit():
+        try:
+            return timeframe_seconds(timeframe) * 1000
+        except ValueError as error:
             raise SmartTraderError(
                 ErrorCode.EXCHANGE_ERROR, f"不支持的K线周期: {timeframe}"
-            )
-        return int(timeframe[:-1]) * units[unit]
+            ) from error

@@ -275,6 +275,22 @@ class SymbolInfo(BaseModel):
             )
 
 
+_TIMEFRAME_UNITS_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def timeframe_seconds(timeframe: str) -> int:
+    """
+    把周期字符串(如 "1m" / "1h")换算为秒数, 全项目唯一权威实现
+    @param timeframe: 周期字符串, 单位必须小写(s/m/h/d/w)
+    @raise ValueError: 非法周期
+    """
+    unit = timeframe[-1:]
+    value = timeframe[:-1]
+    if unit not in _TIMEFRAME_UNITS_SECONDS or not value.isdigit():
+        raise ValueError(f"无法解析K线周期: {timeframe}")
+    return int(value) * _TIMEFRAME_UNITS_SECONDS[unit]
+
+
 class Kline:
     def __init__(
         self,

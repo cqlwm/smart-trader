@@ -3,32 +3,28 @@ import logging
 
 import pytest
 
-from smart_trader.data_event_loop import DataEventLoop, Task
+from smart_trader.data_event_loop import (
+    DataEventLoop,
+    Task,
+    parse_kline_message,
+    parse_ws_message,
+)
+from smart_trader.model import Kline, Symbol
+from tests.fakes import make_kline, make_ws_kline_message
+
+SYMBOL = Symbol(base="DOGE", quote="USDT")
 
 
 class RecordingTask(Task):
     def __init__(self, name: str, error: Exception | None = None) -> None:
         super().__init__(name)
         self.error = error
-        self.received: list[str] = []
+        self.received: list[Kline] = []
 
-    def run(self, data: str) -> None:
+    def run(self, kline: Kline) -> None:
         if self.error is not None:
             raise self.error
-        self.received.append(data)
-
-
-class DecodingTask(Task):
-    """故意抛异常的任务, 用于验证异常不会逃逸出事件循环"""
-
-    def __init__(self) -> None:
-        super().__init__("DecodingTask")
-        self.handled = 0
-
-    def run(self, data: str) -> None:
-        payload = json.loads(data)
-        self.handled += 1
-        assert isinstance(payload, dict)
+        self.received.append(kline)
 
 
 def drain(loop: DataEventLoop) -> None:
@@ -45,15 +41,16 @@ def build_loop(*tasks: Task) -> DataEventLoop:
     return loop
 
 
-def test_delivers_message_to_every_task():
+def test_delivers_kline_to_every_task():
     first, second = RecordingTask("first"), RecordingTask("second")
     loop = build_loop(first, second)
+    kline = make_kline()
 
-    loop.loop('{"stream": "dogeusdt@kline_1m"}')
+    loop.loop(kline)
     drain(loop)
 
-    assert first.received == ['{"stream": "dogeusdt@kline_1m"}']
-    assert second.received == ['{"stream": "dogeusdt@kline_1m"}']
+    assert first.received == [kline], "每个任务都应收到同一个 Kline 对象"
+    assert second.received == [kline]
 
 
 def test_failing_task_does_not_block_others():
@@ -61,49 +58,17 @@ def test_failing_task_does_not_block_others():
     healthy = RecordingTask("healthy")
     loop = build_loop(failing, healthy)
 
-    loop.loop('{"stream": "dogeusdt@kline_1m"}')
+    loop.loop(make_kline())
     drain(loop)
 
-    assert healthy.received == ['{"stream": "dogeusdt@kline_1m"}'], (
-        "一个任务失败不能影响其它任务"
-    )
-
-
-def test_bad_message_is_logged_and_loop_survives(
-    caplog: pytest.LogCaptureFixture,
-):
-    """脏消息必须被记录, 且后续消息仍能处理 —— 否则线上策略会静默失效"""
-    task = DecodingTask()
-    loop = build_loop(task)
-
-    with caplog.at_level(logging.ERROR):
-        loop.loop("this is not json")
-        drain(loop)
-
-    assert task.handled == 0, "脏消息不应进入任务逻辑"
-    assert any(
-        "DecodingTask" in record.message and record.levelno >= logging.ERROR
-        for record in caplog.records
-    ), f"任务失败必须记录错误日志, 实际日志: {[r.message for r in caplog.records]}"
-
-
-def test_loop_keeps_working_after_a_bad_message():
-    """脏消息之后, 事件循环必须继续正常分发"""
-    task = DecodingTask()
-    loop = build_loop(task)
-
-    loop.loop("this is not json")
-    loop.loop('{"stream": "dogeusdt@kline_1m"}')
-    drain(loop)
-
-    assert task.handled == 1, "脏消息被跳过, 后续消息仍应处理"
+    assert len(healthy.received) == 1, "一个任务失败不能影响其它任务"
 
 
 def test_failing_task_error_is_logged(caplog: pytest.LogCaptureFixture):
     loop = build_loop(RecordingTask("broken", error=RuntimeError("策略内部错误")))
 
     with caplog.at_level(logging.ERROR):
-        loop.loop('{"stream": "dogeusdt@kline_1m"}')
+        loop.loop(make_kline())
         drain(loop)
 
     assert any(
@@ -115,16 +80,74 @@ def test_failing_task_error_is_logged(caplog: pytest.LogCaptureFixture):
 def test_no_tasks_is_a_noop():
     loop = build_loop()
 
-    loop.loop('{"stream": "dogeusdt@kline_1m"}')
+    loop.loop(make_kline())
     drain(loop)
 
 
-def test_messages_are_dropped_after_stop():
-    """stop() 之后到达的消息必须被丢弃, 不能写入已关闭的线程池"""
+def test_klines_are_dropped_after_stop():
+    """stop() 之后到达的 K 线必须被丢弃, 不能写入已关闭的线程池"""
     task = RecordingTask("t")
     loop = build_loop(task)
     loop.stop()
 
-    loop.loop('{"stream": "dogeusdt@kline_1m"}')
+    loop.loop(make_kline())
 
     assert task.received == []
+
+
+class TestParseKlineMessage:
+    def test_parses_symbol_timeframe_and_fields(self):
+        kline = parse_kline_message(
+            json.loads(make_ws_kline_message())["data"]["k"], "dogeusdt@kline_1m"
+        )
+
+        assert kline is not None
+        assert kline.symbol == SYMBOL, "交易对应从 stream 名解析"
+        assert kline.timeframe == "1m"
+        assert kline.close == 0.15
+        assert kline.finished is True
+        assert kline.timestamp == 1_700_000_000_000
+
+    def test_marks_unfinished_kline(self):
+        kline = parse_kline_message(
+            json.loads(make_ws_kline_message(finished=False))["data"]["k"],
+            "dogeusdt@kline_1m",
+        )
+
+        assert kline is not None and kline.finished is False
+
+    def test_returns_none_for_unparsable_stream(self):
+        """无法解析的 stream 不应抛异常, 否则会打断事件循环"""
+        kline = parse_kline_message(
+            json.loads(make_ws_kline_message())["data"]["k"], "unknown@stream"
+        )
+
+        assert kline is None
+
+    def test_returns_none_for_missing_fields(self):
+        kline = parse_kline_message({}, "dogeusdt@kline_1m")
+
+        assert kline is None
+
+
+class TestParseWsMessage:
+    def test_parses_envelope_into_kline(self):
+        kline = parse_ws_message(make_ws_kline_message())
+
+        assert kline is not None
+        assert kline.symbol == SYMBOL
+        assert kline.timeframe == "1m"
+        assert kline.finished is True
+
+    def test_returns_none_for_bad_json(self):
+        assert parse_ws_message("this is not json") is None
+
+    def test_returns_none_for_non_kline_stream(self):
+        message = json.dumps({"stream": "dogeusdt@trade", "data": {}})
+
+        assert parse_ws_message(message) is None
+
+    def test_returns_none_for_missing_kline_body(self):
+        message = json.dumps({"stream": "dogeusdt@kline_1m", "data": {}})
+
+        assert parse_ws_message(message) is None

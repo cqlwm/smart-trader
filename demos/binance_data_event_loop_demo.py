@@ -3,12 +3,11 @@
 运行:
     uv run python demos/binance_data_event_loop_demo.py
     uv run python demos/binance_data_event_loop_demo.py --base DOGE --timeframe 1m --seconds 15
-    uv run python demos/binance_data_event_loop_demo.py --streams btcusdt@trade
 
 说明:
     1. 仅订阅公开推送, 无需 API Key。
     2. 运行 --seconds 秒后自动关闭连接, 用于快速验证事件循环是否正常。
-    3. 默认订阅该交易对的K线流, 可用 --streams 覆盖(逗号分隔)。
+    3. 事件载荷是 Kline 领域对象: ws 字符串在 on_message 解析一次后分发给任务。
 
 注意:
     Binance 于 2026-04-23 停用旧的 wss://fstream.binance.com/ws 与 /stream,
@@ -17,7 +16,6 @@
 """
 
 import argparse
-import json
 import threading
 import time
 
@@ -25,27 +23,30 @@ import websocket
 
 from smart_trader import log
 from smart_trader.data_event_loop import BinanceDataEventLoop, Task
-from smart_trader.model import Symbol
+from smart_trader.model import Kline, Symbol
 
 log.init_logging()
 
 logger = log.getLogger(__name__)
 
 
-class CountStreamTask(Task):
+class CountKlineTask(Task):
     def __init__(self) -> None:
-        super().__init__("CountStreamTask")
+        super().__init__("CountKlineTask")
         self.counts: dict[str, int] = {}
 
-    def run(self, data: str) -> None:
-        try:
-            stream = json.loads(data).get("stream", "unknown")
-        except json.JSONDecodeError:
-            stream = "unknown"
-        self.counts[stream] = self.counts.get(stream, 0) + 1
-        count = self.counts[stream]
+    def run(self, kline: Kline) -> None:
+        key = f"{kline.symbol.binance().lower()}@kline_{kline.timeframe}"
+        self.counts[key] = self.counts.get(key, 0) + 1
+        count = self.counts[key]
         if count <= 3:
-            logger.info("[Task] %s 第 %s 条: %s", stream, count, data)
+            logger.info(
+                "[Task] %s 第 %s 根: finished=%s close=%s",
+                key,
+                count,
+                kline.finished,
+                kline.close,
+            )
 
 
 class DemoDataEventLoop(BinanceDataEventLoop):
@@ -77,25 +78,19 @@ def main() -> None:
     parser.add_argument("--quote", default="USDT", help="交易对计价币, 默认 USDT")
     parser.add_argument("--timeframe", default="1m", help="K线周期, 默认 1m")
     parser.add_argument("--seconds", type=float, default=15.0, help="运行时长(秒)")
-    parser.add_argument(
-        "--streams", default="", help="自定义订阅流(逗号分隔), 默认使用该交易对K线流"
-    )
     args = parser.parse_args()
 
     symbol = Symbol(base=args.base.upper(), quote=args.quote.upper())
-    if args.streams:
-        streams = [s.strip() for s in args.streams.split(",") if s.strip()]
-    else:
-        streams = [symbol.binance_ws_sub_kline(args.timeframe)]
+    streams = [symbol.binance_ws_sub_kline(args.timeframe)]
 
-    task = CountStreamTask()
+    task = CountKlineTask()
     loop = DemoDataEventLoop(kline_subscribes=streams)
     loop.add_task(task)
     loop.close_after(args.seconds)
 
     logger.info("### 开始订阅 %s, %ss 后自动退出 ###", streams, args.seconds)
     loop.start()  # 阻塞直到连接关闭或 stop()
-    logger.info("### 退出 ### 各流消息数: %s", task.counts)
+    logger.info("### 退出 ### 各流K线数: %s", task.counts)
 
 
 if __name__ == "__main__":

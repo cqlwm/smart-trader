@@ -180,3 +180,37 @@ v2 的累积计数不存在此问题，`first_run` 已删除。
 `klines_df`，该副作用保留。
 
 信号状态（去重方向）**留内存不落库**。本轮明确不引入 `signals` 表。
+
+## 四、数据事件循环设计（data_event_loop / task）
+
+### 1. 载荷统一为 Kline
+
+- `Task.run(kline: Kline)` / `DataEventLoop.loop(kline: Kline)`：事件载荷是领域对象，
+  不是原始传输文本。ws 字符串 → Kline 的翻译只发生在 `BinanceDataEventLoop.on_message`
+  一处（`parse_kline_message` 纯函数，属传输细节，放在 `data_event_loop.py`，
+  避免 task 层与循环层的循环导入）；`StrategyTask.run` 只做 `symbol + timeframe`
+  过滤后转调 `strategy.run(kline)`。
+- 定时拉取型 `TimerDataEventLoop` 天然产出 `Kline`，与 ws 路径共用同一 fan-out
+  （executor + `Task.safe_run` 异常隔离），不再有第二套分发契约。
+
+### 2. TimerDataEventLoop 的可测试性设计
+
+- **时钟注入**：`clock: Callable[[], float]`（默认 `time.time`），测试用假时钟推进，
+  无真实长 sleep；
+- **`_next_events(now)` 是纯函数**：输入当前时刻，输出最早到期时刻及该时刻**并列到期**
+  的全部事件 `(fire_at, events)`（如 1m 与 5m 边界重合必须同刻齐发，否则后到的时间框架
+  会被跳过）；无线程、无 IO，全部调度数学在此单测；
+- **`_wait_until(target)` 分片等待**：小片 `threading.Event.wait` 轮询时钟，
+  `stop()` 经 `_wakeup` 立即唤醒并返回 False；`start()` 阻塞语义与
+  `BinanceDataEventLoop.start()` 一致（入口线程驱动，KeyboardInterrupt → stop）；
+- **数据源注入**：`market: MarketDataPort`，测试复用 `FakeMarketDataPort`。
+
+### 3. 调度语义（Step 15）
+
+- 边界事件 = 周期边界 + `fetch_delay`（默认 2s，必须 < tf/2，构造时校验）：
+  `fetch_ohlcv(limit=2)` 取最后一根 `finished=True`，即"最后一根已完成K线"→
+  经 `strategy.run(kline)` 触发 `on_kline_finished`；未 finished 时小间隔重试，
+  耗尽记 error 并跳过本周期；
+- 中点事件 = 周期 1/2 处：`fetch_ohlcv(limit=1)` 取进行中 K 线 → 触发 `on_kline`；
+- 错过的事件跳过（只调度未来）；同一周期至多分发一次；
+- fetch 抛异常 → 记日志跳过本周期，循环不中断（与第五节异常策略一致）。

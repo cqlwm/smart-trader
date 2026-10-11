@@ -1,7 +1,6 @@
-import os
-
 import dotenv
 
+from bootstrap import create_binance_client
 from smart_trader import log
 from smart_trader.client.binance_client import BinanceSwapClient
 from smart_trader.data_event_loop import BinanceDataEventLoop
@@ -12,34 +11,6 @@ dotenv.load_dotenv()
 log.init_logging()
 
 logger = log.getLogger(__name__)
-
-
-def dev_debug():
-    node_env = os.environ.get("NODE_ENV", "NONE")
-    logger.info(f"NODE_ENV: {node_env}")
-    if node_env != "DEV":
-        return
-
-
-def create_binance_client(client_type: str) -> BinanceSwapClient:
-    api_key = os.environ.get(f"BINANCE_API_KEY_{client_type.upper()}")
-    api_secret = os.environ.get(f"BINANCE_API_SECRET_{client_type.upper()}")
-    is_test = os.environ.get(f"BINANCE_IS_TEST_{client_type.upper()}") == "True"
-    if not api_key or not api_secret:
-        raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET must be set")
-    else:
-        logger.info(
-            f"api_key: {api_key[:5]}*****, api_secret: {api_secret[:5]}*****, is_test: {is_test}"
-        )
-
-    binance_client = BinanceSwapClient(
-        api_key=api_key, api_secret=api_secret, is_test=is_test
-    )
-    return binance_client
-
-
-# copy-trading binance client
-# copy_trading_binance_client: BinanceSwapClient = create_binance_client('copy')
 
 # main binance client
 main_binance_client: BinanceSwapClient = create_binance_client("main")

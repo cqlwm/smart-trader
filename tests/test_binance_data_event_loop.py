@@ -1,14 +1,25 @@
 """BinanceDataEventLoop 的连接生命周期测试
 
-用内存 ws 会话替换真实连接, 验证重连与订阅逻辑。
+用内存 ws 会话替换真实连接, 验证重连与订阅逻辑;
+on_message 负责 ws 字符串 → Kline 的唯一解析入口, 一并在此覆盖。
 """
 
 import json
+import logging
 import threading
 import time
 from typing import Any
 
+import pytest
+
 from smart_trader.data_event_loop import BinanceDataEventLoop, Task
+from smart_trader.model import Kline, Symbol
+from tests.fakes import make_kline, make_ws_kline_message
+
+SYMBOL = Symbol(base="DOGE", quote="USDT")
+
+# on_message 的 ws 参数由 websocket-client 回调注入, 单测中不使用
+_WS: Any = None
 
 
 class FakeWebSocketSession:
@@ -45,10 +56,10 @@ class FakeWebSocketSession:
 class RecordingTask(Task):
     def __init__(self) -> None:
         super().__init__("RecordingTask")
-        self.received: list[str] = []
+        self.received: list[Kline] = []
 
-    def run(self, data: str) -> None:
-        self.received.append(data)
+    def run(self, kline: Kline) -> None:
+        self.received.append(kline)
 
 
 def build_loop(
@@ -113,12 +124,65 @@ def test_disconnect_does_not_shut_down_executor():
     loop, _ = build_loop([False])
     task = RecordingTask()
     loop.add_task(task)
+    kline = make_kline()
 
     loop.start()
-    loop.loop('{"stream": "dogeusdt@kline_1m"}')
+    loop.loop(kline)
     loop.executor.shutdown(wait=True)
 
-    assert task.received == ['{"stream": "dogeusdt@kline_1m"}']
+    assert task.received == [kline]
+
+
+def test_on_message_parses_and_fans_out_kline():
+    """on_message 是 ws 字符串 → Kline 的唯一解析入口, 解析后分发给所有任务"""
+    loop, _ = build_loop([False])
+    task = RecordingTask()
+    loop.add_task(task)
+
+    loop.start()
+    loop.on_message(_WS, make_ws_kline_message())
+    loop.executor.shutdown(wait=True)
+
+    assert len(task.received) == 1, "合法K线消息必须分发给任务"
+    assert task.received[0].symbol == SYMBOL
+    assert task.received[0].timeframe == "1m"
+
+
+def test_on_message_keeps_working_after_bad_message():
+    """脏消息之后, 事件循环必须继续正常分发 —— 否则线上策略会静默失效"""
+    loop, _ = build_loop([False])
+    task = RecordingTask()
+    loop.add_task(task)
+
+    loop.start()
+    loop.on_message(_WS, "this is not json")
+    loop.on_message(_WS, make_ws_kline_message())
+    loop.executor.shutdown(wait=True)
+
+    assert len(task.received) == 1, "脏消息被跳过, 后续消息仍应处理"
+
+
+def test_on_message_drops_message_without_kline_body():
+    loop, _ = build_loop([False])
+    task = RecordingTask()
+    loop.add_task(task)
+
+    loop.start()
+    loop.on_message(_WS, json.dumps({"stream": "dogeusdt@kline_1m", "data": {}}))
+    loop.executor.shutdown(wait=True)
+
+    assert task.received == [], "无K线体的消息(如订阅回执)必须忽略"
+
+
+def test_on_message_logs_unparsable_message(caplog: pytest.LogCaptureFixture):
+    loop, _ = build_loop([False])
+
+    with caplog.at_level(logging.DEBUG):
+        loop.on_message(_WS, "this is not json")
+
+    assert any(
+        "无法解析" in record.message for record in caplog.records
+    ), "无法解析的消息必须记录 debug 日志"
 
 
 def test_stop_ends_the_reconnect_loop():

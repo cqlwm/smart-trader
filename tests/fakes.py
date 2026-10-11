@@ -3,6 +3,7 @@
 所有外部依赖(ccxt 交易所、端口)都在这里有内存版本, 保证单元测试不触网、< 1 秒。
 """
 
+import json
 from collections import deque
 from datetime import datetime, timedelta
 from typing import Any
@@ -87,6 +88,48 @@ def make_market_signal(
 ) -> MarketSignal:
     """构造行情信号快照"""
     return MarketSignal(direction=direction, datetime=datetime)
+
+
+def make_kline(
+    symbol: Symbol | None = None,
+    *,
+    timeframe: str = "1m",
+    finished: bool = True,
+    close: float = 1.5,
+    timestamp: int = 1_700_000_000_000,
+) -> Kline:
+    """构造单根 K 线（open/high/low 固定, 满足载荷分发类测试）"""
+    return Kline(
+        symbol=symbol if symbol is not None else DEFAULT_SYMBOL,
+        timeframe=timeframe,
+        open=1.0,
+        high=2.0,
+        low=0.5,
+        close=close,
+        volume=100.0,
+        timestamp=timestamp,
+        finished=finished,
+    )
+
+
+def make_ws_kline_message(
+    stream: str = "dogeusdt@kline_1m",
+    *,
+    finished: bool = True,
+    **kline_overrides: Any,
+) -> str:
+    """构造币安 ws K 线推送的原始 JSON 字符串"""
+    kline: dict[str, Any] = {
+        "t": 1_700_000_000_000,
+        "o": "0.1",
+        "h": "0.2",
+        "l": "0.05",
+        "c": "0.15",
+        "v": "100",
+        "x": finished,
+    }
+    kline.update(kline_overrides)
+    return json.dumps({"stream": stream, "data": {"k": kline}})
 
 
 def make_position(

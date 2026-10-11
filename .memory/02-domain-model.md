@@ -27,6 +27,14 @@
 `short` 反之；`main_order_side` 只表示网格主攻方向，**不参与**入/出场归类。
 模型配置 `extra="forbid"`，字段拼写错误会立即报错而不是被静默忽略。
 
+### timeframe 表示
+
+timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（ccxt 与币安侧均以字符串流转）。
+**秒数换算的权威来源是 `model.timeframe_seconds(timeframe) -> int`**：支持 s/m/h/d/w，
+非法输入抛 `ValueError`。适配器内的毫秒换算（`binance_client._parse_timeframe_ms`）由它派生
+（×1000，并把 `ValueError` 翻译为 `SmartTraderError(EXCHANGE_ERROR)`，保持适配器错误契约）。
+禁止再出现第三份换算实现。
+
 ## 二、枚举（统一定义于 `model.py`，禁止硬编码字符串）
 
 | 枚举 | 取值 |

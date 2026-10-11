@@ -83,7 +83,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | `smart_trader/execution/journaled_trading.py` | 记账下单包装（TradingPort 装饰器）：预写仓位/订单 → 下单 → 回写结果 |
 | `smart_trader/execution/order_reconciler.py` | 启动对账：扫 `status IS NULL` 的订单 → 查交易所 → 回写 |
 | `smart_trader/strategy/` | 策略基类与网格策略。**四层职责边界**：`signal`（`Signal` ABC，只回答"行情现在是什么状态"）/ `entry_gate`（`EntryGate` 可组合入场闸门链）/ `exit_policy`（`ExitPolicy` 可组合离场策略链）/ `signal_grid_strategy`（**只做装配 + 仓位与订单管理**，不做任何入场/离场判定）。网格策略其余模块：`grid_position`（仓位对象 + `load_positions` 批量还原）/ `signal_grid_config`（配置 + `CloseOutcome`）/ `grid_order_gateway`（记账下单入口）/ `position_lifecycle`（订单结算与出场单跟踪）/ `alpha_trend_signal`（`AlphaTrendSignal` 实现，`alpha_trend_grids_signal.py` 已删除，语义由 `SignalKind.TRIGGER` 承载） |
-| `smart_trader/data_event_loop.py` / `task/` | WebSocket 事件循环与任务分发 |
+| `smart_trader/data_event_loop.py` / `task/` | 数据事件循环与任务分发。两种数据源模式：`BinanceDataEventLoop`（WebSocket 推送，解析一次为 Kline 后分发）与 `TimerDataEventLoop`（按 timeframe 定时经 REST 拉取，见第九节）；事件载荷统一为 `Kline` 领域对象 |
 
 ## 七、演进状态
 
@@ -103,6 +103,8 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 11 | 删除 `GridPositionManager`：仓位登记表内联进策略（`positions` / `add_position` / `remove_positions`），批量还原下沉为 `grid_position.load_positions`；`load_positions(force)` 的 `force` 参数随之删除（唯一调用点在 `__init__`）；行为零变化 | 已完成 |
 | Step 12 | 回调互斥重构：`on_kline_lock` + `on_kline_finished_lock` 合并为 `_callback_lock`；`_call_on_kline_finished` 阻塞等待（交易决策永不被跳过），`_call_on_kline` 非阻塞（盘中更新可跳过 + warning 日志）；`SignalGridStrategy._positions_lock` 随之删除（回调已串行化） | 已完成 |
 | Step 13 | **信号抽象重构（职责边界）**：`Signal` 只输出行情状态（`MarketSignal` / `SignalDirection`），删 `side`/`run`/`is_entry`/`is_exit`/`reverse`；入场判定下沉为可组合 `EntryGate` 闸门链，离场判定下沉为可组合 `ExitPolicy` 策略链（`force` 表达"可覆盖休息中的出场挂单"）；`AlphaTrendGridsSignal` 删除，语义由 `SignalKind.TRIGGER` 承载；`SignalKind` 取代闸门的 bool flag；`PositionLimit` 成为仓位上限与"达到上限止损"的唯一权威来源；**删除 `position_reverse`**（方向直接来自 config，顺势加仓应写新信号 + 正常闸门）；**修掉 `close_position` 手动全平触发止损回调并暂停策略的缺陷**（拆 `stop_loss_reached` 与 `force_all` 两个独立触发源）；`AlphaTrendSignal` 改用 v2 指标的趋势累积计数，去掉 `first_run` 历史反推（该反推含当前 K 线，导致重启后漏信号）；`check_open_position` 由 98 行降到 5 行（只剩闸门调用 + 建仓），策略内不再出现任何入场/离场判定；新增 `ErrorCode.MARKET_DATA_UNAVAILABLE`（设计见 `.memory/03-coding-design.md` 第三节、模型见 `02-domain-model.md` 第八节） | 已完成 |
+| Step 14 | 集成测试三层（行为端到端与账本不变量 / 进程内恢复 / SIGKILL 子进程档，设计见第八节） | 待实施 |
+| Step 15 | 事件载荷统一为 `Kline`（解析点唯一）；新增 `TimerDataEventLoop` 定时拉取型事件循环（周期边界触发 `on_kline_finished` / 周期中点触发 `on_kline`，设计见第九节）；timeframe 换算收敛为 `model.timeframe_seconds` 单一权威；新增独立入口 `run_timer.py` | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -205,9 +207,30 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 
 - `Task` 必须提供 `name`（用于日志定位），并统一经 `Task.safe_run` 调度：
   任务异常在此被捕获并记录，不会中断事件循环，也不会被线程池静默吞掉。
-- 消息解析是纯函数（如 `parse_kline_message`），无法解析时返回 `None` 并记 debug 日志，
-  不允许向上抛异常。
-- `StrategyTask` 按 `symbol + timeframe` 过滤消息，非本任务的 K 线直接忽略。
+- **事件载荷统一为 `Kline` 领域对象**（Step 15）：`Task.run(kline: Kline)` /
+  `DataEventLoop.loop(kline: Kline)`。ws 原始字符串只在 `BinanceDataEventLoop.on_message`
+  解析一次，N 个任务不再各自重复 `json.loads`。
+- 解析是纯函数（`parse_kline_message`，定义于 `data_event_loop.py`，属传输细节），
+  无法解析时返回 `None` 并记 debug 日志，不允许向上抛异常。
+- `StrategyTask` 按 `symbol + timeframe` 过滤 K 线，非本任务的直接忽略。
+
+### 定时拉取型事件循环（`TimerDataEventLoop`，Step 15）
+
+与 WebSocket 推送并列的第二种数据源模式：不建 ws 连接，由本地时钟按 timeframe 节奏
+经 `MarketDataPort.fetch_ohlcv` 拉取 K 线驱动策略：
+
+| 调度点 | 时机 | 拉取 | 触发 |
+| --- | --- | --- | --- |
+| 周期完成 | 每个 timeframe 边界 + `fetch_delay` | `limit=2` 取最后一根 `finished=True`（即"最后一根已完成K线"） | `on_kline_finished` |
+| 周期中点 | timeframe 的 1/2 处 | `limit=1` 取当前进行中 K 线 | `on_kline` |
+
+- 两者都经 `strategy.run(kline)` 分发，保留 DataFrame 维护、历史初始化与回调互斥语义。
+- 错过的调度点自然跳过（只调度未来事件）；多 timeframe 合并调度取最早到期事件，
+  **并列同刻的事件一齐分发**（如 1m 与 5m 边界重合）。
+- fetch 失败 / 重试耗尽只记日志并跳过本周期，不中断循环（同第五节异常策略）；
+  拉到的K线时间戳与本地边界不一致记"时钟漂移"警告。
+- `on_kline` 节奏与 WS 模式不同：定时模式每周期一次（中点），WS 模式随推送多次。
+- 独立入口 `run_timer.py`（与 `run.py` 的 WS 装配互为替代，凭据装配共享 `bootstrap.py`）。
 
 ## 十、持仓记账不变量
 

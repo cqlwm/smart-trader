@@ -21,6 +21,7 @@ from smart_trader.model import (
     OrderSide,
     PositionLimit,
     SignalKind,
+    timeframe_seconds,
 )
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import GridPositionRow
@@ -63,18 +64,8 @@ __all__ = [
 
 logger = log.getLogger(__name__)
 
-# K 线周期 → 秒数; 孤儿回收阈值取 max(600, 周期时长)
-_TIMEFRAME_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+# 孤儿回收阈值取 max(600, 周期时长)
 _ORPHAN_MIN_AGE_SECONDS = 600
-
-
-def _timeframe_seconds(timeframe: str) -> int:
-    """把 "1m" / "1h" / "1d" 之类的周期解析成秒数"""
-    unit = timeframe[-1:].lower()
-    value = timeframe[:-1]
-    if unit not in _TIMEFRAME_UNITS or not value.isdigit():
-        raise ValueError(f"无法解析 K 线周期: {timeframe}")
-    return int(value) * _TIMEFRAME_UNITS[unit]
 
 
 class SignalGridStrategy(SingleTimeframeStrategy):
@@ -407,7 +398,9 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         孤儿回收: active=1 且 quantity<=0 且无任何存活订单, 且存在时长超过
         max(10 分钟, 策略 K 线周期时长) 的空仓位才回收（置 active=0）。
         """
-        threshold = max(_ORPHAN_MIN_AGE_SECONDS, _timeframe_seconds(self.config.timeframe))
+        threshold = max(
+            _ORPHAN_MIN_AGE_SECONDS, timeframe_seconds(self.config.timeframe)
+        )
         archived: list[GridPosition] = []
         for position in self.positions:
             if position.quantity > 0 or position.has_live_orders:
