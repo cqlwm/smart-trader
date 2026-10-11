@@ -1,23 +1,21 @@
 /.idea
 __pycache__
-binance_*.json
 .python-version
 uv.lock
-data
 .env
 .env.*
-data.parquet
 *.log
-backtest_report*.txt
+
+.claude
+.trae
+.zcode
 
 .venv
 .pytest_cache
 .pytest-tmp
-.claude
 .github
-.data
 .vscode
-.workbuddy
-.trae
 
 smart_trader.egg-info
+.data
+logs/
