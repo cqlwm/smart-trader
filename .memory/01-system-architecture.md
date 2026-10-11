@@ -108,20 +108,26 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 
 按优先级：
 
-1. **网格策略关键分支缺测试**：
-   `position_reverse`（反向持仓会翻转 side 与 position_side）、
-   `enable_max_order_stop_loss` + `paused_after_stop_loss`（达到上限止损后暂停策略）、
-   `per_order_qty == 0`、`profit_level` / `profit_and_loss_ratio` 的分档边界、
-   `grid_spacing_rate` 的加仓间隔判定、`close_position` 手动全平。
-   （Step 13 已覆盖：`profit_level` 分档边界、`close_position` 手动全平；
-   `position_reverse` 随该字段删除而作废；其余仍待补。）
+1. ~~**网格策略关键分支缺测试**~~ —— **已全部覆盖**：
+   `enable_max_order_stop_loss` + `paused_after_stop_loss` 见
+   `tests/test_signal_grid_strategy.py`（达到上限全平并暂停 / 不暂停仍不开新仓）与
+   `tests/test_stop_loss.py`（暂停后仍无条件跟踪出场单）；
+   `per_order_qty == 0` 见 `tests/test_signal_grid_strategy.py`（零数量只登记空仓位不发单、
+   账本有仓位行无订单行、间距闸门照常生效）；
+   `grid_spacing_rate` 加仓间隔见闸门级 `tests/test_entry_gate.py`（正负间距语义、
+   含等号边界、极值基准）与策略级 `tests/test_signal_grid_strategy.py`（间距内拦截 /
+   间距外加仓 / 负间距顺势加仓端到端）；
+   `profit_level` / `profit_and_loss_ratio` 分档边界由消费方锁定
+   （`tests/test_exit_policy.py` 的 exactly_at 系列、`tests/test_signal_grid_rules.py` 空头分档）；
+   `close_position` 手动全平见 `tests/test_signal_grid_signal_path.py`；
+   `position_reverse` 随该字段删除作废（Step 13）。
 2. ~~**信号层缺单元测试**~~ —— **已由 Step 13 完成**：`Signal.is_entry` / `is_exit` 与
    `AlphaTrendGridsSignal` 已随职责重构删除；替代覆盖见 `tests/test_market_signal.py`、
    `tests/test_entry_gate.py`、`tests/test_exit_policy.py`、`tests/test_alpha_trend_signal_unit.py`。
 3. ~~**`AlphaTrendGridsSignal` 死代码**~~ —— **已由 Step 13 解决**：整个文件随类一并删除。
-4. **`.memory/03-coding-design.md` 内容与代码脱节**（文件已存在）：`records.py` 的
-   `IdRecord` / `OrderIntent`、`_migrate_legacy_schema`、`confirm_entry` / `confirm_exit`、
-   `order_ids.intent` 四处引用早已失效。**已由 Step 13 一并修正**，并新增第三节
+4. ~~**`.memory/03-coding-design.md` 内容与代码脱节**~~ —— **已由 Step 13 一并修正**：
+   `records.py` 的 `IdRecord` / `OrderIntent`、`_migrate_legacy_schema`、
+   `confirm_entry` / `confirm_exit`、`order_ids.intent` 失效引用已清除，并新增第三节
    「信号与规则层设计」覆盖 strategy 层（此前只覆盖 storage 层）。
 5. **日志与配置模块无测试**（`log.init_logging` 的级别解析、`config` 的必填校验）。
 6. **顺势加仓**：需要"价格顺趋势上涨/下跌到一定距离即加仓"时，

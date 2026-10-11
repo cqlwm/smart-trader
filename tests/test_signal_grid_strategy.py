@@ -167,6 +167,38 @@ def test_skips_open_when_price_inside_grid_spacing():
     assert trading.placed == []
 
 
+def test_negative_spacing_adds_position_in_profit_direction():
+    """负间距(双向距离限制): 盈利方向距离内仍加仓 —— 顺势加仓的既有用法"""
+    strategy, trading, _ = build_strategy(grid_spacing_rate=-0.1)
+    seed_position(strategy)
+
+    push_kline(strategy, 0.525)  # +5%: ratio 0.05 <= 0.1
+
+    assert len(strategy.positions) == 2, "盈利方向距离内应放行加仓"
+    assert [request.side for request in trading.placed] == [OrderSide.BUY]
+
+
+def test_negative_spacing_allows_exactly_at_distance():
+    """负间距含等号: 涨跌幅恰好等于 |rate| 时放行"""
+    strategy, _, _ = build_strategy(grid_spacing_rate=-0.1)
+    seed_position(strategy)
+
+    push_kline(strategy, 0.55)  # +10%: ratio 恰好等于距离阈值
+
+    assert len(strategy.positions) == 2, "恰好等于 |rate| 距离应放行(含等号)"
+
+
+def test_negative_spacing_blocks_beyond_distance():
+    """负间距: 涨跌幅超出 |rate| 距离后拦截"""
+    strategy, trading, _ = build_strategy(grid_spacing_rate=-0.1)
+    seed_position(strategy)
+
+    push_kline(strategy, 0.61)  # +22%: ratio 0.22 > 0.1
+
+    assert len(strategy.positions) == 1, "超出距离阈值应拦截"
+    assert trading.placed == []
+
+
 def test_skips_open_when_price_outside_allowed_range():
     """价格超出可交易区间时不开仓"""
     strategy, trading, _ = build_strategy(lowest_price=0.4, highest_price=0.6)
@@ -199,6 +231,38 @@ def test_empty_position_uses_opening_price_as_grid_reference():
     push_kline(strategy, 0.4995)  # 0.1% < 1% 间距
 
     assert len(strategy.positions) == 1
+    assert trading.placed == []
+
+
+def test_zero_per_order_qty_registers_position_without_order():
+    """per_order_qty=0: 只登记空仓位(网格参考), 不发任何订单"""
+    strategy, trading, journal = build_strategy(per_order_qty=0)
+
+    push_kline(strategy, 0.5)
+
+    assert trading.placed == [], "零数量配置只登记仓位, 不得发单"
+    assert len(strategy.positions) == 1
+    position = strategy.positions[0]
+    assert position.quantity == 0.0, "零数量仓位无任何成交"
+    assert position.phase == "opening"
+    assert position.price == pytest.approx(0.5), "opening_price 作为网格参考基准"
+
+    rows = journal.load_active_positions(DEFAULT_STRATEGY_KEY)
+    assert len(rows) == 1, "空仓位必须落库, 重启后仍可用作网格参考"
+    assert rows[0].opening_price == pytest.approx(0.5)
+    assert journal.load_orders_for_positions([rows[0].id]) == [], (
+        "零数量分支不产生任何订单行"
+    )
+
+
+def test_zero_per_order_qty_respects_grid_spacing():
+    """per_order_qty=0: 闸门链照常生效, 间距内不重复登记空仓位"""
+    strategy, trading, _ = build_strategy(per_order_qty=0)
+
+    push_kline(strategy, 0.5)
+    push_kline(strategy, 0.5005, timestamp=TIMESTAMP + 60_000)  # 0.1% < 1% 间距
+
+    assert len(strategy.positions) == 1, "间距内不得重复登记空仓位"
     assert trading.placed == []
 
 
