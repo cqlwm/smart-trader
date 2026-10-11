@@ -1,5 +1,5 @@
 from smart_trader import log
-from smart_trader.client.binance_client import BinanceSwapClient
+from smart_trader.exchange.ports import Exchange
 from smart_trader.model import OrderSide, PositionSide, SignalKind, Symbol
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
@@ -15,7 +15,7 @@ symbol_ = Symbol(base="doge", quote="usdt")
 timeframe_ = "1m"
 
 
-def grid(client: BinanceSwapClient, journal: OrderJournal) -> StrategyTask:
+def grid(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
     # 空头网格: 以卖单入场、买单出场。原实现靠 position_reverse 反转
     # LONG/BUY 得到该效果, 现改为直接声明真实方向。
     position_side = PositionSide.SHORT
@@ -43,7 +43,7 @@ def grid(client: BinanceSwapClient, journal: OrderJournal) -> StrategyTask:
         order_stop_loss_rate=0.05,
     )
     strategy = SignalGridStrategy(
-        config, trading=client, market=client, journal=journal
+        config, trading=exchange, market=exchange, journal=journal
     )
 
     return StrategyTask(symbol=symbol_, strategy=strategy)

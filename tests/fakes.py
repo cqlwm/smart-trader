@@ -8,6 +8,17 @@ from collections import deque
 from datetime import datetime, timedelta
 from typing import Any
 
+from smart_trader.exchange.binance.binance_exchange import (
+    CcxtClientOrderIdParams,
+    CcxtCoinBalance,
+    CcxtExchange,
+    CcxtOpenOrder,
+    CcxtOrder,
+    CcxtOrderParams,
+    CcxtPosition,
+    CcxtTicker,
+)
+from smart_trader.exchange.ports import MarketDataPort, TradingPort
 from smart_trader.model import (
     Kline,
     MarketSignal,
@@ -223,7 +234,7 @@ def make_klines_df(
     )
 
 
-class FakeTradingPort:
+class FakeTradingPort(TradingPort):
     """内存版 TradingPort: 记录下单请求, 按队列返回预设结果"""
 
     def __init__(
@@ -302,7 +313,7 @@ class FakeTradingPort:
         )
 
 
-class FakeMarketDataPort:
+class FakeMarketDataPort(MarketDataPort):
     """内存版 MarketDataPort"""
 
     def __init__(
@@ -334,8 +345,13 @@ class FakeMarketDataPort:
         return self._klines
 
 
-class FakeCcxtExchange:
-    """内存版 ccxt 交易所, 用于验证 BinanceSwapClient 的翻译逻辑"""
+class FakeCcxtExchange(CcxtExchange):
+    """内存版 raw ccxt 交易所, 显式继承 `CcxtExchange` 接缝 Protocol
+
+    pyright 校验本类签名与接缝一致（Step 17 教训: Fake 签名漂移会掩盖
+    适配器缺陷）。fixture 属性故意保留 CcxtOrder 全量形状(total=False):
+    负路径测试需要注入缺键/非法值的残缺响应, 键名拼写由 pyright 检查。
+    """
 
     def __init__(self) -> None:
         self.create_order_calls: list[dict[str, Any]] = []
@@ -345,26 +361,17 @@ class FakeCcxtExchange:
         self.exchange_info_get_calls = 0
         self.demo_enabled = False
         self.load_markets_calls = 0
-        self.create_order_result: dict[str, Any] = {
-            "id": "1",
+        self.create_order_result: CcxtOrder = {
             "clientOrderId": "cid1",
-            "symbol": "DOGEUSDT",
             "status": "open",
-            "type": "limit",
             "side": "buy",
             "price": "0.5",
             "amount": "10",
             "filled": "0",
             "average": None,
-            "info": {
-                "orderId": "1",
-                "status": "NEW",
-                "executedQty": "0",
-                "avgPrice": "0",
-            },
         }
-        self.fetch_order_result: dict[str, Any] | None = None
-        self.cancel_order_result: dict[str, Any] = {
+        self.fetch_order_result: CcxtOrder | None = None
+        self.cancel_order_result: CcxtOrder = {
             "clientOrderId": "cid1",
             "status": "canceled",
             "side": "buy",
@@ -372,20 +379,20 @@ class FakeCcxtExchange:
         self.create_order_error: Exception | None = None
         self.fetch_order_error: Exception | None = None
         self.cancel_order_error: Exception | None = None
-        self.positions_result: list[dict[str, Any]] = []
-        self.exchange_info: dict[str, Any] = {"symbols": []}
+        self.positions_result: list[CcxtPosition] = []
+        self.exchange_info_response: dict[str, Any] = {"symbols": []}
         self.ohlcv: list[list[float]] = []
         self.ticker_last: float = 0.5
 
     def create_order(
         self,
         symbol: str,
-        type: Any = None,
-        side: Any = None,
-        amount: Any = None,
-        price: Any = None,
-        params: Any = None,
-    ) -> dict[str, Any]:
+        type: str,
+        side: str,
+        amount: float,
+        price: float | None = None,
+        params: CcxtOrderParams | None = None,
+    ) -> CcxtOrder:
         if self.create_order_error is not None:
             raise self.create_order_error
         self.create_order_calls.append(
@@ -400,23 +407,29 @@ class FakeCcxtExchange:
         )
         return self.create_order_result
 
-    def fetch_order(self, id: str, symbol: str, params: Any = None) -> dict[str, Any]:
+    def fetch_order(
+        self, id: str, symbol: str, params: CcxtClientOrderIdParams | None = None
+    ) -> CcxtOrder:
         if self.fetch_order_error is not None:
             raise self.fetch_order_error
         self.fetch_order_calls.append({"id": id, "symbol": symbol, "params": params})
         assert self.fetch_order_result is not None, "测试需先设置 fetch_order_result"
         return self.fetch_order_result
 
-    def cancel_order(self, id: str, symbol: str, params: Any = None) -> dict[str, Any]:
+    def cancel_order(
+        self, id: str, symbol: str, params: CcxtClientOrderIdParams | None = None
+    ) -> CcxtOrder:
         if self.cancel_order_error is not None:
             raise self.cancel_order_error
         self.cancel_order_calls.append({"id": id, "symbol": symbol, "params": params})
         return self.cancel_order_result
 
-    def fetch_positions(self, symbols: list[str] | None = None) -> list[dict[str, Any]]:
+    def fetch_positions(
+        self, symbols: list[str] | None = None
+    ) -> list[CcxtPosition]:
         return self.positions_result
 
-    def fetch_balance(self) -> dict[str, Any]:
+    def fetch_balance(self) -> dict[str, CcxtCoinBalance]:
         return {"USDT": {"free": 100.0}}
 
     def fetch_ohlcv(
@@ -438,7 +451,7 @@ class FakeCcxtExchange:
         )
         return self.ohlcv
 
-    def fetch_ticker(self, symbol: str) -> dict[str, Any]:
+    def fetch_ticker(self, symbol: str) -> CcxtTicker:
         return {"last": self.ticker_last}
 
     def milliseconds(self) -> int:
@@ -446,7 +459,7 @@ class FakeCcxtExchange:
 
     def fapiPublicGetExchangeInfo(self) -> dict[str, Any]:
         self.exchange_info_get_calls += 1
-        return self.exchange_info
+        return self.exchange_info_response
 
     def enable_demo_trading(self, enable: bool) -> None:
         self.demo_enabled = enable
@@ -455,7 +468,5 @@ class FakeCcxtExchange:
         self.load_markets_calls += 1
         return {}
 
-    def fetch_open_orders(
-        self, symbol: str, *args: Any, **kwargs: Any
-    ) -> list[dict[str, Any]]:
+    def fetch_open_orders(self, symbol: str) -> list[CcxtOpenOrder]:
         return []

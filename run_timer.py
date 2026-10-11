@@ -1,6 +1,6 @@
 """定时拉取型入口: 不建 WebSocket, 按 timeframe 节奏经 REST 拉取K线驱动策略
 
-与 run.py(WebSocket 推送)互为替代, 装配同一套 client/template/journal。
+与 run.py(WebSocket 推送)互为替代, 装配同一套 exchange/template/journal。
 调度语义(周期边界触发 on_kline_finished / 周期中点触发 on_kline)
 见 .memory/01-system-architecture.md 第九节。
 
@@ -9,10 +9,10 @@
 
 import dotenv
 
-from bootstrap import create_binance_client
+from bootstrap import create_binance_exchange
 from smart_trader import log
-from smart_trader.client.binance_client import BinanceSwapClient
 from smart_trader.data_event_loop import TimerDataEventLoop
+from smart_trader.exchange.ports import Exchange
 from smart_trader.model import Symbol
 from smart_trader.task.strategy_task import StrategyTask
 
@@ -22,8 +22,8 @@ log.init_logging()
 
 logger = log.getLogger(__name__)
 
-# main binance client
-main_binance_client: BinanceSwapClient = create_binance_client("main")
+# main binance exchange
+main_exchange: Exchange = create_binance_exchange("main")
 
 
 def main():
@@ -32,7 +32,7 @@ def main():
     from template import dogeusdt
 
     journal = OrderJournal(DB_PATH)
-    tasks: list[StrategyTask] = [dogeusdt.grid(main_binance_client, journal)]
+    tasks: list[StrategyTask] = [dogeusdt.grid(main_exchange, journal)]
 
     # 构造期校验非空, 先收集订阅再建循环
     subscriptions: list[tuple[Symbol, str]] = []
@@ -43,7 +43,7 @@ def main():
                 subscriptions.append(subscription)
 
     data_event_loop = TimerDataEventLoop(
-        subscriptions=subscriptions, market=main_binance_client
+        subscriptions=subscriptions, market=main_exchange
     )
     for task in tasks:
         data_event_loop.add_task(task)

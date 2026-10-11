@@ -12,7 +12,7 @@ from typing import Any, cast
 import websocket
 
 from smart_trader import log
-from smart_trader.client.ports import MarketDataPort
+from smart_trader.exchange.ports import MarketDataPort
 from smart_trader.model import Kline, Symbol, timeframe_seconds
 
 logger = log.getLogger(__name__)
@@ -72,7 +72,7 @@ def parse_ws_message(message: str) -> Kline | None:
     if not isinstance(kline, dict):
         return None
 
-    return parse_kline_message(kline, stream)
+    return parse_kline_message(kline, cast(str, stream))
 
 
 class Task:

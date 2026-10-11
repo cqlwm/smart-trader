@@ -14,7 +14,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from smart_trader import log
-from smart_trader.client.ports import MarketDataPort, TradingPort
+from smart_trader.exchange.ports import MarketDataPort, TradingPort
 from smart_trader.execution.order_reconciler import OrderReconciler
 from smart_trader.model import (
     MarketSignal,

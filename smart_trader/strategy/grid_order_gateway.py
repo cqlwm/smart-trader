@@ -3,7 +3,7 @@
 from collections.abc import Callable
 
 from smart_trader import log
-from smart_trader.client.ports import MarketDataPort, TradingPort
+from smart_trader.exchange.ports import MarketDataPort, TradingPort
 from smart_trader.execution.journaled_trading import JournaledTradingPort
 from smart_trader.execution.limit_order_chaser import LimitOrderChaser
 from smart_trader.model import (

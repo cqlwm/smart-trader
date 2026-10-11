@@ -1,5 +1,5 @@
 from smart_trader import log
-from smart_trader.client.binance_client import BinanceSwapClient
+from smart_trader.exchange.ports import Exchange
 from smart_trader.model import OrderSide, PositionSide, SignalKind, Symbol
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
@@ -15,7 +15,7 @@ symbol_ = Symbol(base="xau", quote="usdt")
 timeframe_ = "1m"
 
 
-def long_buy(client: BinanceSwapClient, journal: OrderJournal) -> StrategyTask:
+def long_buy(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
     """多头网格
 
     `grid_spacing_rate` 为**负值**, 表示双向距离限制: 只要相对基准仓位的涨跌幅
@@ -39,7 +39,7 @@ def long_buy(client: BinanceSwapClient, journal: OrderJournal) -> StrategyTask:
         strategy_key=f"signal_grid_long_buy_{symbol_.simple()}_{timeframe_}",
     )
     strategy = SignalGridStrategy(
-        config, trading=client, market=client, journal=journal
+        config, trading=exchange, market=exchange, journal=journal
     )
 
     return StrategyTask(symbol=symbol_, strategy=strategy)

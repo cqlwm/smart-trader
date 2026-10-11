@@ -35,7 +35,7 @@ OBSERVATIONS: list[tuple[str, Any]] = []
 
 
 def build_exchange() -> Any:
-    """按 BinanceSwapClient 的配置构建 ccxt 合约交易所"""
+    """按 BinanceExchange 私有实例的配置构建 ccxt 合约交易所"""
     api_key = os.environ.get("BINANCE_API_KEY_MAIN")
     api_secret = os.environ.get("BINANCE_API_SECRET_MAIN")
     is_test = os.environ.get("BINANCE_IS_TEST_MAIN") == "True"

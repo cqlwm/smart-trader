@@ -6,7 +6,7 @@ from pandas import DataFrame
 from pydantic import BaseModel
 
 from smart_trader import log
-from smart_trader.client.ports import MarketDataPort
+from smart_trader.exchange.ports import MarketDataPort
 from smart_trader.model import Kline
 
 logger = log.getLogger(__name__)

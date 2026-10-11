@@ -1,9 +1,9 @@
 import dotenv
 
-from bootstrap import create_binance_client
+from bootstrap import create_binance_exchange
 from smart_trader import log
-from smart_trader.client.binance_client import BinanceSwapClient
 from smart_trader.data_event_loop import BinanceDataEventLoop
+from smart_trader.exchange.ports import Exchange
 from smart_trader.task.strategy_task import StrategyTask
 
 dotenv.load_dotenv()
@@ -12,8 +12,8 @@ log.init_logging()
 
 logger = log.getLogger(__name__)
 
-# main binance client
-main_binance_client: BinanceSwapClient = create_binance_client("main")
+# main binance exchange
+main_exchange: Exchange = create_binance_exchange("main")
 
 
 def main():
@@ -22,7 +22,7 @@ def main():
     from template import dogeusdt
 
     journal = OrderJournal(DB_PATH)
-    tasks: list[StrategyTask] = [dogeusdt.grid(main_binance_client, journal)]
+    tasks: list[StrategyTask] = [dogeusdt.grid(main_exchange, journal)]
 
     kline_subscribes: list[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)

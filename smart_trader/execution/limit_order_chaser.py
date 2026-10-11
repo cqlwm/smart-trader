@@ -8,8 +8,8 @@
 import time
 
 from smart_trader import log
-from smart_trader.client.ports import MarketDataPort, TradingPort
 from smart_trader.exceptions import ErrorCode, SmartTraderError
+from smart_trader.exchange.ports import MarketDataPort, TradingPort
 from smart_trader.model import (
     OrderRequest,
     OrderResult,

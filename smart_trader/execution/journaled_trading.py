@@ -12,8 +12,8 @@
 """
 
 from smart_trader import log
-from smart_trader.client.ports import TradingPort
 from smart_trader.exceptions import ErrorCode, SmartTraderError
+from smart_trader.exchange.ports import TradingPort
 from smart_trader.model import OrderRequest, OrderResult, Symbol
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import GridPositionRow, OrderRecord
@@ -36,7 +36,7 @@ _SETTLED_ERROR_CODES = frozenset(
 )
 
 
-class JournaledTradingPort:
+class JournaledTradingPort(TradingPort):
     """
     TradingPort 装饰器: place 预写/回写, query/cancel 透传
 

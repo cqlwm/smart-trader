@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from smart_trader.exceptions import ErrorCode, SmartTraderError
+from smart_trader.exchange.ports import TradingPort
 from smart_trader.model import (
     OrderRequest,
     OrderResult,
@@ -66,7 +67,7 @@ def _load_entry(data: dict[str, object]) -> BookEntry:
     )
 
 
-class StatefulFakeExchange:
+class StatefulFakeExchange(TradingPort):
     """内存订单簿交易所, 支持 one-shot 故障注入与 JSON 持久化"""
 
     def __init__(self, persist_path: str | Path | None = None) -> None:

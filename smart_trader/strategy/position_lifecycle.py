@@ -3,8 +3,8 @@
 from collections.abc import Callable
 
 from smart_trader import log
-from smart_trader.client.ports import TradingPort
 from smart_trader.exceptions import SmartTraderError
+from smart_trader.exchange.ports import TradingPort
 from smart_trader.model import OrderResult, OrderStatus
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import OrderRecord

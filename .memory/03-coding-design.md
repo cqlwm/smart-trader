@@ -8,6 +8,9 @@
 1. **记录模型用 Pydantic**：DB 行 → Record → Domain → Dict 的既有转换模式（见 AGENTS.md 第五节），
    禁止用 `dict[str, Any]` 承载业务语义；`extra="forbid"` 保持开启，字段拼写错误立即报错。
 2. **易于测试**：外部依赖必须有内存实现（`tests/fakes.py`）；测试不触网、不落盘、相互独立。
+   内存替身一律**显式继承**所替代的端口/接口 ABC（如 `FakeTradingPort(TradingPort)`），
+   让 pyright 在类定义处校验替身签名漂移；唯一例外是 `FakeCcxtExchange` 显式继承
+   `CcxtExchange` Protocol（第三方形状接缝，见 01 第二节类型准则）。
 3. **可扩展**：一切"复制粘贴的第二份真相"都是缺陷——同一信息只允许有一个权威来源，
    其余位置从权威来源派生或引用。
 4. **可读性**：模块按职责拆分，单文件不允许混装"数据契约 + 表结构 + 查询逻辑"。

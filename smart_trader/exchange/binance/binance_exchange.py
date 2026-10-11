@@ -1,20 +1,27 @@
 """Binance 适配器
 
 职责边界（见 .memory/01-system-architecture.md）:
-1. 领域对象 ⇄ ccxt 参数/响应的翻译;
-2. ccxt 异常 → SmartTraderError + ErrorCode 的翻译。
+1. `CcxtExchange` Protocol: 全项目唯一的 Protocol, 描述 raw ccxt 实例的最小类型化
+   接缝（第三方形状, 测试可换内存实现）, `@runtime_checkable` + 真实实例一致性
+   测试拦截"ccxt 改名/移除方法"的漂移;
+2. `build_public_ccxt` / `build_private_ccxt`: raw 实例构造（选项/demo 开关/预载市场）,
+   `raw_factory` 注入缝供测试打桩;
+3. `BinanceExchange`: 领域对象 ⇄ ccxt 参数/响应的翻译, 实现 `Exchange` 三端口,
+   对 `CcxtExchange` 类型实例的每个调用点受静态校验;
+4. ccxt 异常 → SmartTraderError + ErrorCode 的翻译。
 
 不做的事: 追单编排、重试策略、价格递进(属于 execution 层)。
 """
 
 from collections.abc import Callable
-from typing import Any, Protocol, cast
+from typing import Any, NotRequired, Protocol, TypedDict, runtime_checkable
 
 import ccxt  # pyright: ignore[reportMissingTypeStubs]
 from ccxt.base.types import ConstructorArgs  # pyright: ignore[reportMissingTypeStubs]
 
 from smart_trader import log
 from smart_trader.exceptions import ErrorCode, SmartTraderError
+from smart_trader.exchange.ports import Exchange
 from smart_trader.model import (
     Kline,
     OrderRequest,
@@ -31,36 +38,119 @@ from smart_trader.model import (
 
 logger = log.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# ccxt 方言词汇表 (TypedDict)
+#
+# 入站订单结构 (CcxtOrder) total=False: 交易所返回不可信, "哪些键缺失属响应不完整"
+# 的运行时契约由 to_order_result 的防御式解析强制并有测试锁定, 类型层只负责键名
+# 拼写与消费面文档。其余结构的键按适配器的实际消费方式声明必填性。
+# 值类型保留 float | str —— 交易所数字字段可能以字符串回传。
+# ---------------------------------------------------------------------------
 
+
+class CcxtOrder(TypedDict, total=False):
+    """ccxt 统一订单结构中本项目消费的字段 (下单/查询/撤单共用)
+
+    status / clientOrderId / side 运行时必填: 缺失或非法 → ORDER_RESPONSE_INVALID;
+    其余容忍缺失, 由 _to_float 兜底。
+    """
+
+    status: str
+    clientOrderId: str
+    side: str
+    amount: float | str
+    filled: float | str
+    price: float | str | None
+    average: float | str | None
+
+
+class CcxtOpenOrder(TypedDict, total=False):
+    """fetch_open_orders 条目中本项目消费的字段"""
+
+    clientOrderId: str
+    id: str
+
+
+class CcxtPosition(TypedDict):
+    """ccxt 统一持仓结构中本项目消费的字段
+
+    symbol 必填; side 缺失/为 None = 已平仓占位(适配器跳过)。
+    """
+
+    symbol: str
+    side: NotRequired[str | None]
+    contracts: NotRequired[float | str | None]
+    entryPrice: NotRequired[float | str | None]
+
+
+class CcxtTicker(TypedDict):
+    """ccxt 统一行情结构中本项目消费的字段"""
+
+    last: float
+
+
+class CcxtCoinBalance(TypedDict):
+    """单币种余额中本项目消费的字段"""
+
+    free: float | str
+
+
+class CcxtOrderParams(TypedDict):
+    """下单 params 出站参数"""
+
+    newClientOrderId: str
+    positionSide: str
+    timeInForce: NotRequired[str]
+
+
+class CcxtClientOrderIdParams(TypedDict):
+    """按 clientOrderId 查询/撤单的出站参数 (币安 origClientOrderId)"""
+
+    origClientOrderId: str
+
+
+@runtime_checkable
 class CcxtExchange(Protocol):
     """
-    ccxt 交易所的最小接口, 让适配器可以在测试中用内存实现替换
+    raw ccxt 交易所的最小类型化接缝 —— 全项目唯一的 Protocol
 
-    参数与返回值统一为宽松类型: ccxt 自身使用 Literal 型的 OrderType/OrderSide 等,
-    与领域枚举并不相同, 翻译职责由本模块完成。
+    第三方形状: 真实 ccxt 实例无法继承我们的 ABC, 因此用结构化 Protocol 声明
+    适配器消费的最小表面, 测试用内存实现结构化满足。方法签名必须与 ccxt 原生
+    一致（如 fetch_ohlcv 第三位置参数是 since 而非 limit）, 否则位置传参错位会
+    被类型检查掩盖; `fapiPublicGetExchangeInfo` 是币安隐式端点名 —— 接缝只说
+    ccxt 方言, 领域翻译由 BinanceExchange 完成。
+
+    isinstance(ccxt.binance(), CcxtExchange) 一致性测试拦截"ccxt 改名/移除方法"
+    的漂移（运行时仅校验方法存在, 签名漂移由行为测试锁定）。
     """
 
-    def load_markets(self) -> Any: ...
+    def load_markets(self) -> dict[str, Any]: ...
 
-    def fapiPublicGetExchangeInfo(self, *args: Any, **kwargs: Any) -> Any: ...
+    def fapiPublicGetExchangeInfo(self) -> dict[str, Any]: ...
 
     def create_order(
         self,
         symbol: str,
-        type: Any,
-        side: Any,
-        amount: Any,
-        price: Any = None,
-        params: Any = None,
-    ) -> Any: ...
+        type: str,
+        side: str,
+        amount: float,
+        price: float | None = None,
+        params: CcxtOrderParams | None = None,
+    ) -> CcxtOrder: ...
 
-    def fetch_order(self, id: str, symbol: str, params: Any = None) -> Any: ...
+    def fetch_order(
+        self, id: str, symbol: str, params: CcxtClientOrderIdParams | None = None
+    ) -> CcxtOrder: ...
 
-    def cancel_order(self, id: str, symbol: str, params: Any = None) -> Any: ...
+    def cancel_order(
+        self, id: str, symbol: str, params: CcxtClientOrderIdParams | None = None
+    ) -> CcxtOrder: ...
 
-    def fetch_positions(self, symbols: Any = None) -> Any: ...
+    def fetch_positions(
+        self, symbols: list[str] | None = None
+    ) -> list[CcxtPosition]: ...
 
-    def fetch_balance(self) -> Any: ...
+    def fetch_balance(self) -> dict[str, CcxtCoinBalance]: ...
 
     def fetch_ohlcv(
         self,
@@ -69,11 +159,11 @@ class CcxtExchange(Protocol):
         since: Any = None,
         limit: int | None = None,
         params: Any = None,
-    ) -> Any: ...  # 签名必须与 ccxt 原生一致, 否则位置传参错位会被类型检查掩盖
+    ) -> list[list[float]]: ...
 
-    def fetch_ticker(self, symbol: str, *args: Any, **kwargs: Any) -> Any: ...
+    def fetch_ticker(self, symbol: str) -> CcxtTicker: ...
 
-    def fetch_open_orders(self, symbol: str, *args: Any, **kwargs: Any) -> Any: ...
+    def fetch_open_orders(self, symbol: str) -> list[CcxtOpenOrder]: ...
 
     def milliseconds(self) -> int: ...
 
@@ -126,7 +216,7 @@ def parse_symbol_info(exchange_info: dict[str, Any], symbol: Symbol) -> SymbolIn
     )
 
 
-def to_ccxt_order_params(request: OrderRequest) -> dict[str, Any]:
+def to_ccxt_order_params(request: OrderRequest) -> CcxtOrderParams:
     """
     领域下单请求 → ccxt 下单参数
 
@@ -138,7 +228,7 @@ def to_ccxt_order_params(request: OrderRequest) -> dict[str, Any]:
             ErrorCode.ORDER_REJECTED,
             "custom_id 为空: 下单必须经过 JournaledTradingPort 分配订单号",
         )
-    params: dict[str, Any] = {
+    params: CcxtOrderParams = {
         "newClientOrderId": request.custom_id,
         "positionSide": request.position_side.value.upper(),
     }
@@ -147,10 +237,7 @@ def to_ccxt_order_params(request: OrderRequest) -> dict[str, Any]:
     return params
 
 
-def to_order_result(
-    order: dict[str, Any],
-    symbol: Symbol,
-) -> OrderResult:
+def to_order_result(order: CcxtOrder, symbol: Symbol) -> OrderResult:
     """
     ccxt 订单结构 → 领域订单结果
     @param order: ccxt 统一订单结构
@@ -191,7 +278,7 @@ def to_order_result(
         filled_qty = quantity
 
     return OrderResult(
-        custom_id=str(custom_id),
+        custom_id=custom_id,
         symbol=symbol,
         side=side,
         status=status,
@@ -238,55 +325,74 @@ def _translate_error(error: Exception, action: str) -> SmartTraderError:
     return SmartTraderError(ErrorCode.EXCHANGE_ERROR, message)
 
 
-def create_ccxt_binance(**options: Any) -> Any:
-    """ccxt.binance 构造工厂; 测试注入内存实现"""
-    return ccxt.binance(ConstructorArgs(**options))
+RawCcxtFactory = Callable[[ConstructorArgs], Any]
 
 
-class BinanceSwapClient:
-    """Binance U 本位合约适配器, 实现 MarketDataPort / TradingPort / AccountPort
-
-    双 ccxt 实例按能力分流: `_public_exchange` 只承载行情(生产公共端点,
-    不持有密钥), `_private_exchange` 承载交易与账户(is_test=True 时切到 demo)。
+def build_public_ccxt(raw_factory: RawCcxtFactory = ccxt.binance) -> CcxtExchange:
     """
+    公共实例: 只承载行情, 不携带任何凭据; 构造即预载市场
+    @param raw_factory: raw ccxt 构造缝, 测试注入内存实现
+    """
+    raw = raw_factory(ConstructorArgs(options={"defaultType": "future"}))
+    raw.load_markets()
+    return raw
 
-    def __init__(
-        self,
-        api_key: str,
-        api_secret: str,
-        is_test: bool = False,
-    ):
-        private_exchange = ccxt.binance(ConstructorArgs(
+
+def build_private_ccxt(
+    api_key: str,
+    api_secret: str,
+    is_test: bool = False,
+    raw_factory: RawCcxtFactory = ccxt.binance,
+) -> CcxtExchange:
+    """
+    私有实例: 承载交易与账户; is_test=True 时切到 demo 交易; 构造即预载市场
+    @param api_key: API key
+    @param api_secret: API secret
+    @param is_test: 是否切换 demo 交易
+    @param raw_factory: raw ccxt 构造缝, 测试注入内存实现
+    """
+    raw = raw_factory(
+        ConstructorArgs(
             apiKey=api_key,
             secret=api_secret,
             options={
                 "defaultType": "future",
+                # ccxt 默认关闭该校正, 本机时钟略快时签名时间戳会超出币安 1s 限制(-1021)
                 "adjustForTimeDifference": True,
             },
-        ))
-        public_exchange = ccxt.binance(ConstructorArgs(
-            options={
-                "defaultType": "future",
-            },
-        ))
+        )
+    )
+    if is_test:
+        raw.enable_demo_trading(True)
+    raw.load_markets()
+    return raw
 
-        if is_test:
-            private_exchange.enable_demo_trading(True)
 
-        self._private_exchange: CcxtExchange = cast(CcxtExchange, private_exchange)
-        self._public_exchange: CcxtExchange = cast(CcxtExchange, public_exchange)
-        self._private_exchange.load_markets()
-        self._public_exchange.load_markets()
-        self._exchange_info_cache: dict[str, Any] | None = None
+class BinanceExchange(Exchange):
+    """Binance U 本位合约适配器, 显式实现 MarketDataPort / TradingPort / AccountPort
+
+    只依赖 `CcxtExchange` 最小接口做翻译, 不直接触达 ccxt;
+    生产组装见 `create_binance_exchange`(双实例按能力分流)。
+    """
+
+    def __init__(
+        self, private_exchange: CcxtExchange, public_exchange: CcxtExchange
+    ) -> None:
+        self._private_exchange = private_exchange
+        self._public_exchange = public_exchange
+        self._symbol_info_cache: dict[str, SymbolInfo] = {}
 
     # ---- MarketDataPort ----
 
     def symbol_info(self, symbol: Symbol) -> SymbolInfo:
-        if self._exchange_info_cache is None:
-            self._exchange_info_cache = cast(
-                dict[str, Any], self._public_exchange.fapiPublicGetExchangeInfo()
+        key = symbol.binance()
+        cached = self._symbol_info_cache.get(key)
+        if cached is None:
+            cached = parse_symbol_info(
+                self._public_exchange.fapiPublicGetExchangeInfo(), symbol
             )
-        return parse_symbol_info(self._exchange_info_cache, symbol)
+            self._symbol_info_cache[key] = cached
+        return cached
 
     def latest_price(self, symbol: Symbol) -> float:
         ticker = self._public_exchange.fetch_ticker(symbol.ccxt())
@@ -357,7 +463,7 @@ class BinanceSwapClient:
             raise _translate_error(e, "下单") from e
 
         logger.debug("下单返回: %s", order)
-        return to_order_result(cast(dict[str, Any], order), request.symbol)
+        return to_order_result(order, request.symbol)
 
     def query(self, custom_id: str, symbol: Symbol) -> OrderResult | None:
         try:
@@ -373,7 +479,7 @@ class BinanceSwapClient:
             raise _translate_error(e, "查询订单") from e
 
         logger.debug("查询订单返回: %s", order)
-        return to_order_result(cast(dict[str, Any], order), symbol)
+        return to_order_result(order, symbol)
 
     def cancel(self, custom_id: str, symbol: Symbol) -> OrderResult | None:
         try:
@@ -389,7 +495,7 @@ class BinanceSwapClient:
             raise _translate_error(e, "撤单") from e
 
         logger.debug("撤单返回: %s", order)
-        return to_order_result(cast(dict[str, Any], order), symbol)
+        return to_order_result(order, symbol)
 
     # ---- AccountPort ----
 
@@ -412,7 +518,7 @@ class BinanceSwapClient:
                 continue
             positions.append(
                 Position(
-                    symbol=Symbol.from_ccxt(str(raw["symbol"])),
+                    symbol=Symbol.from_ccxt(raw["symbol"]),
                     side=PositionSide(side),
                     quantity=quantity,
                     entry_price=_to_float(raw.get("entryPrice")) or 0.0,
@@ -420,17 +526,17 @@ class BinanceSwapClient:
             )
         return positions
 
+    # ---- 非端口能力 ----
+
     def cancel_open_orders(self, symbol: Symbol) -> list[OrderResult]:
-        """撤销该交易对所有挂单"""
-        raw_orders = cast(
-            list[dict[str, Any]], self._private_exchange.fetch_open_orders(symbol.ccxt())
-        )
+        """撤销该交易对所有挂单（非端口能力, 仅 demo 使用）"""
+        raw_orders = self._private_exchange.fetch_open_orders(symbol.ccxt())
         results: list[OrderResult] = []
         for raw in raw_orders:
             custom_id = raw.get("clientOrderId") or raw.get("id")
             if not custom_id:
                 continue
-            canceled = self.cancel(str(custom_id), symbol)
+            canceled = self.cancel(custom_id, symbol)
             if canceled is not None:
                 results.append(canceled)
         return results
@@ -449,3 +555,13 @@ class BinanceSwapClient:
             raise SmartTraderError(
                 ErrorCode.EXCHANGE_ERROR, f"不支持的K线周期: {timeframe}"
             ) from error
+
+
+def create_binance_exchange(
+    api_key: str, api_secret: str, is_test: bool = False
+) -> BinanceExchange:
+    """生产组装入口: 私有实例承载交易/账户(is_test 切 demo), 公共实例只做行情零凭据"""
+    return BinanceExchange(
+        private_exchange=build_private_ccxt(api_key, api_secret, is_test),
+        public_exchange=build_public_ccxt(),
+    )

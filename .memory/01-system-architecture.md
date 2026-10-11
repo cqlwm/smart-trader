@@ -10,16 +10,16 @@ strategy / task / template              (业务编排: 网格、信号、止损)
         │          │  └──▶ storage (smart_trader/storage/)   订单日志: id/仓位/流水表 (sqlite, SQLAlchemy Core)
         │          │
         │          ▼
-        │      ports (smart_trader/client/ports.py)   零实现、零第三方依赖
+        │      ports (smart_trader/exchange/ports.py)   零实现、零第三方依赖
         │          ▲
         │          │  适配器实现端口
-        └──────────┴── adapters (smart_trader/client/binance_client.py)
+        └──────────┴── adapters (smart_trader/exchange/binance/binance_exchange.py)
                            ccxt / REST 细节只存在于这里
 ```
 
 依赖规则（强制）：
 
-1. **业务层不得 import ccxt**，不得出现 `exchange`、`setup_*` 等交易所 SDK 概念；需要行情/交易/账户能力时依赖端口。
+1. **业务层不得 import ccxt 或任何交易所 SDK 概念**（`setup_*`、raw 交易所对象等）；需要行情/交易/账户能力时只依赖 `smart_trader.exchange.ports` 的端口。raw ccxt 实例（`CcxtExchange` 的实现对象）不得越过适配器边界。
 2. **适配器只做翻译**：领域对象 ⇄ 交易所参数/响应。不做重试编排、不做下单策略、不碰数据库。
 3. **领域对象是唯一契约**：跨层传递的订单/持仓必须是 `OrderRequest` / `OrderResult` / `Position`，禁止使用 `dict[str, Any]` 承载订单语义。
 4. 交易所异常在适配器内统一翻译为 `SmartTraderError` + `ErrorCode`，业务层不感知 ccxt 异常类型。
@@ -28,15 +28,22 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 
 ## 二、端口定义
 
-`smart_trader/client/ports.py`，全部为 `Protocol`，按调用方需求拆分（接口隔离）：
+`smart_trader/exchange/ports.py`，全部为 `abc.ABC` + `@abstractmethod`，按调用方需求拆分（接口隔离）：
 
 | 端口 | 职责 | 方法 |
 | --- | --- | --- |
 | `MarketDataPort` | 只读行情与交易规则 | `symbol_info` / `latest_price` / `fetch_ohlcv` |
 | `TradingPort` | 下单与订单查询 | `place` / `query` / `cancel` |
 | `AccountPort` | 账户与持仓 | `balance` / `positions` |
+| `Exchange` | 三端口组合接口（`Exchange(MarketDataPort, TradingPort, AccountPort, ABC)`） | 供装配层（bootstrap / template / demo）持有完整交易所能力 |
 
 调用方按需注入，例如 `SignalGridStrategy` 只接受 `trading` + `market`，不持有账户能力。
+
+**实现与替身一律显式继承端口**：`BinanceExchange(Exchange)`、测试侧 `FakeTradingPort(TradingPort)` / `FakeMarketDataPort(MarketDataPort)` / `StatefulFakeExchange(TradingPort)`。缺方法在实例化时立即报错，pyright 在类定义处校验签名（含测试替身，防 Fake 漂移掩盖适配器缺陷——Step 17 教训）。
+
+**类型准则（Protocol vs ABC）**：
+- **内部接口一律 `abc.ABC` + 显式继承**——实现都是我们自己的代码，层次可见、实例化强制完整、isinstance 可用。
+- **Protocol 仅用于第三方形状接缝**——全项目唯一 Protocol 是适配器内的 `CcxtExchange`：它描述 raw ccxt 实例必须提供的最小表面，我们无法让 ccxt 继承我们的 ABC，测试 Fake 结构化满足。它标 `@runtime_checkable`，由一致性测试 `isinstance(ccxt.binance(), CcxtExchange)`（构造不触网）拦截"ccxt 改名/移除方法"的漂移。
 
 ## 三、执行策略（追单）的位置
 
@@ -74,8 +81,8 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | 模块 | 职责 |
 | --- | --- |
 | `smart_trader/model.py` | 领域对象与枚举（Symbol / SymbolInfo / Kline / Order* / Position） |
-| `smart_trader/client/ports.py` | 端口（Protocol） |
-| `smart_trader/client/binance_client.py` | Binance 适配器 + ccxt ⇄ 领域对象翻译。双 ccxt 实例按能力分流：`_public_exchange`（生产、无密钥）承载行情，`_private_exchange`（`is_test=True` 时 demo）承载交易/账户 |
+| `smart_trader/exchange/ports.py` | 端口（ABC）+ `Exchange` 组合接口，零第三方依赖 |
+| `smart_trader/exchange/binance/binance_exchange.py` | Binance 适配器，两层职责：`CcxtExchange` Protocol（ccxt 最小类型化接口，`@runtime_checkable`，入站载荷/出站参数用 TypedDict 词汇表声明消费面）+ builder 函数（`build_public_ccxt` / `build_private_ccxt`：构造选项/demo 开关/构造即 `load_markets`，`raw_factory` 注入缝供测试打桩）→ `BinanceExchange(Exchange)`（领域对象 ⇄ ccxt 翻译，只依赖注入的 `CcxtExchange`，双实例按能力分流）。组装入口 `create_binance_exchange`：公共实例（无密钥）承载行情，私有实例（`is_test=True` 时 demo）承载交易/账户。附带非端口能力 `cancel_open_orders`（demo 专用） |
 | `smart_trader/storage/records.py` | 存储记录模型（Pydantic）：`GridPositionRow` / `OrderRecord`，存储层对外的数据契约 |
 | `smart_trader/storage/schema.py` | 表结构元数据（SQLAlchemy Core）：schema 唯一来源（列/约束/索引），建库走 `metadata.create_all` |
 | `smart_trader/storage/order_journal.py` | 订单日志仓储（SQLAlchemy Core 语句 + 事务）：`grid_positions`（逻辑仓位）+ `orders`（订单，`status` 为空承担 WAL） |
@@ -107,6 +114,8 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 15 | 事件载荷统一为 `Kline`（解析点唯一）；新增 `TimerDataEventLoop` 定时拉取型事件循环（周期边界触发 `on_kline_finished` / 周期中点触发 `on_kline`，设计见第九节）；timeframe 换算收敛为 `model.timeframe_seconds` 单一权威；新增独立入口 `run_timer.py` | 已完成 |
 | Step 16 | 适配器双 ccxt 实例按能力分流：`_public_exchange`（生产、**无密钥**）承载行情，`_private_exchange`（`is_test=True` 时 demo）承载交易/账户——与 WS 模式"生产行情流 + demo 交易"语义对齐，行情路径零凭据 | 已完成 |
 | Step 17 | **修复 `fetch_ohlcv` 位置传参缺陷**：适配器把 `limit` 传入 ccxt `fetch_ohlcv(symbol, timeframe, since, limit)` 的 `since` 槽（`startTime≈1970`），恒拉数据集最老 500 根K线——定时模式的"陈旧K线"告警与 **WS 模式的历史初始化（300 根"历史"实为 2020 年数据）** 皆源于此；`CcxtExchange` Protocol 与 `FakeCcxtExchange` 的 `fetch_ohlcv` 签名随之对齐 ccxt 原生（否则错位会被类型检查与测试双重掩盖），并补回归测试。此前记录的"demo 行情镜像不稳定"结论有误，实为此缺陷 | 已完成 |
+| Step 18 | **`CcxtExchange` 契约双侧静态校验 + 组装缝**：此前 Protocol 只校验测试侧 Fake，真实 ccxt 侧经 `cast`/`Any` 赋值盲信（声明了 ccxt 上不存在的方法只有运行时才暴露）。新增 `CcxtBinanceExchange` 显式继承 Protocol（pyright 从此校验真实实现侧），入站载荷与出站参数引入 TypedDict 词汇表（`CcxtOrder` / `CcxtPosition` / `CcxtOrderParams` 等，键按实际消费方式声明必填性，`CcxtOrder` 保持 total=False 以允许注入残缺响应），适配器内 4 处 `cast` 清零；`BinanceSwapClient` 改为纯依赖注入（删除 `__new__` 注入 hack 与死代码 `create_ccxt_binance`），组装入口 `create_binance_swap_client`；修复 7cc0f9d 遗留红测试（测试引用从未实现的 `create_exchange` 参数），构造期契约测试改经 wrapper 的 `raw_factory` 注入打桩；顺手修复存量 `data_event_loop.py` 的 pyright strict 报错（恢复被误删的 `cast` 用法，运行时零变化）。后续收敛：Protocol 成员 `fapiPublicGetExchangeInfo` 更名 `exchange_info`（seam 只表达需求，币安端点名归 wrapper 委托实现），client 交易规则缓存领域化为 parsed `SymbolInfo`（按 `symbol.binance()` 键，raw dict 不再滞留 client 状态） | 已完成 |
+| Step 19 | **client 包整体迁入 exchange 包 + 端口 ABC 化（两层适配器）**：`client/ports.py` → `exchange/ports.py`、`client/binance_client.py` → `exchange/binance/binance_exchange.py`，`client/` 包删除。三端口由 `typing.Protocol` 改为 `abc.ABC` + `@abstractmethod`，新增 `Exchange` 组合接口（装配层持有完整能力）；`BinanceExchange` 与测试 Fake（`FakeTradingPort` / `FakeMarketDataPort` / `StatefulFakeExchange` / `JournaledTradingPort`）显式继承端口。Protocol 收敛为唯一第三方接缝 `CcxtExchange`（标 `@runtime_checkable`，新增真实 ccxt 实例一致性测试）。**删除纯委托层 `CcxtBinanceExchange`**：构造逻辑（public/private/demo/load_markets）收进 builder 函数 `build_public_ccxt` / `build_private_ccxt`（`raw_factory` 注入缝保留），适配器从三层收敛为两层——`BinanceExchange` 对 `CcxtExchange` 类型双实例的每个调用点从此直接受 Protocol 静态校验（Step 17 的 limit/since 槽位错位正属此类错误）；接缝成员 `exchange_info` 随之回归 ccxt 方言名 `fapiPublicGetExchangeInfo`（Step 18 的"seam 只表达需求"改名依附于 wrapper 委托层，wrapper 删除后接缝必须描述 raw 实例的真实表面，一致性测试才能拦截成员漂移）。命名对齐：`BinanceSwapClient`→`BinanceExchange`、`create_binance_swap_client`→`create_binance_exchange`、`bootstrap.create_binance_client`→`create_binance_exchange`；`cancel_open_orders` 保留为非端口能力（demo 专用）。类型准则（内部 ABC / Protocol 仅限第三方接缝）见第二节 | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -185,8 +194,8 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 
 ## 八、测试策略
 
-- 内存实现优先：`tests/fakes.py` 提供 `FakeCcxtExchange` / `FakeTradingPort` / `FakeMarketDataPort` / `FakeSignal` / `RecordingGate`，以及 `make_position_row` / `make_order_record` / `make_market_signal` 等构造工厂，默认测试不触网（集成测试标记 `@pytest.mark.integration`）。
-- 端口契约测试通过假端口验证业务行为，适配器测试通过假 ccxt 验证翻译规则。
+- 内存实现优先：`tests/fakes.py` 提供 `FakeCcxtExchange`（显式继承 `CcxtExchange` Protocol，pyright 校验 Fake 侧签名）/ `FakeTradingPort` / `FakeMarketDataPort`（显式继承端口 ABC）/ `FakeSignal` / `RecordingGate`，以及 `make_position_row` / `make_order_record` / `make_market_signal` 等构造工厂，默认测试不触网（集成测试标记 `@pytest.mark.integration`）。
+- 端口契约测试通过假端口验证业务行为，适配器测试通过假 ccxt 验证翻译规则；ccxt 实例构造契约（凭据/demo 只进私有实例、构造即预载市场）经 builder 函数的 `raw_factory` 打桩锁定；`fetch_ohlcv` 的 limit 必须关键字传参的回归锁，落在 `BinanceExchange` 对 `FakeCcxtExchange` 的调用断言上；`CcxtExchange` 接缝由真实 ccxt 实例一致性测试（`isinstance`，构造不触网）再锁一道。
 - 信号与规则层分层测试（Step 13）：值对象（`test_market_signal.py`）→ 闸门（`test_entry_gate.py`）
   → 离场策略与止盈/止损分档（`test_exit_policy.py`）→ 信号实现（`test_alpha_trend_signal_unit.py`）
   → 仓位对象与还原（`test_grid_position.py`）→ 编排（`test_signal_grid_strategy.py`）
