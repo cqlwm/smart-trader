@@ -50,7 +50,9 @@ def build_client() -> tuple[BinanceSwapClient, FakeCcxtExchange]:
     client = BinanceSwapClient.__new__(BinanceSwapClient)
     exchange = FakeCcxtExchange()
     exchange.exchange_info = EXCHANGE_INFO
-    client._exchange = exchange
+    # 翻译逻辑测试不关心路由, 双属性指向同一 fake; 路由契约由 TestExchangeRouting 锁定
+    client._private_exchange = exchange
+    client._public_exchange = exchange
     client._exchange_info_cache = exchange.exchange_info
     return client, exchange
 
@@ -439,6 +441,21 @@ class TestMarketData:
         assert client.fetch_ohlcv(SYMBOL, "1m", limit=0) == []
         assert exchange.ohlcv_calls == [], "limit 非法时不应请求交易所"
 
+    def test_fetch_ohlcv_passes_limit_as_limit_not_since(self):
+        """回归: limit 曾被位置传参进 ccxt fetch_ohlcv 的 since 槽(since=limit
+        → startTime≈1970), 导致永远拉到数据集最老的K线(2020)而非最新K线"""
+        client, exchange = build_client()
+        exchange.ohlcv = [[1_600_000_000_000, 1.0, 2.0, 0.5, 1.5, 100.0]]
+
+        klines = client.fetch_ohlcv(SYMBOL, "1m", limit=2)
+
+        call = exchange.ohlcv_calls[0]
+        assert call["since"] is None, (
+            "limit 不得落入 ccxt fetch_ohlcv 的 since 位置参数"
+        )
+        assert call["limit"] == 2
+        assert len(klines) == 1 and klines[0].close == 1.5
+
 
 class TestAccount:
     def test_positions_maps_to_domain_objects(self):
@@ -470,3 +487,75 @@ class TestAccount:
         client, _ = build_client()
 
         assert client.balance("usdt") == 100.0
+
+
+class TestExchangeRouting:
+    """双实例路由契约: 行情走公共实例, 交易/账户走私有实例"""
+
+    @staticmethod
+    def build_split_client() -> tuple[BinanceSwapClient, FakeCcxtExchange, FakeCcxtExchange]:
+        client = BinanceSwapClient.__new__(BinanceSwapClient)
+        public, private = FakeCcxtExchange(), FakeCcxtExchange()
+        public.exchange_info = EXCHANGE_INFO
+        client._public_exchange = public
+        client._private_exchange = private
+        client._exchange_info_cache = public.exchange_info
+        return client, public, private
+
+    def test_market_data_methods_use_public_exchange(self):
+        client, public, private = self.build_split_client()
+
+        client.latest_price(SYMBOL)
+        client.fetch_ohlcv(SYMBOL, "1m", limit=2)
+
+        assert len(public.ohlcv_calls) == 1, "行情方法必须走公共实例"
+        assert private.ohlcv_calls == [], "行情不得打到私有(交易)实例"
+
+    def test_trading_methods_use_private_exchange(self):
+        client, public, private = self.build_split_client()
+
+        client.place(build_request())
+
+        assert len(private.create_order_calls) == 1, "下单必须走私有实例"
+        assert public.create_order_calls == [], "交易不得打到公共(行情)实例"
+
+
+class TestConstruction:
+    """构造期契约: 凭据与 demo 开关只进私有实例, 双实例都预载市场"""
+
+    @staticmethod
+    def build_with_factory(is_test: bool) -> list[tuple[dict[str, Any], FakeCcxtExchange]]:
+        created: list[tuple[dict[str, Any], FakeCcxtExchange]] = []
+
+        def factory(**kwargs: Any) -> FakeCcxtExchange:
+            fake = FakeCcxtExchange()
+            created.append((kwargs, fake))
+            return fake
+
+        BinanceSwapClient(
+            "key123", "secret456", is_test=is_test, create_exchange=factory
+        )
+        return created
+
+    def test_public_exchange_carries_no_credentials(self):
+        created = self.build_with_factory(is_test=False)
+
+        private = next(kwargs for kwargs, _ in created if "apiKey" in kwargs)
+        public = next(kwargs for kwargs, _ in created if "apiKey" not in kwargs)
+
+        assert private["apiKey"] == "key123" and private["secret"] == "secret456"
+        assert public == {"options": {"defaultType": "future"}}, (
+            "公共实例只做行情, 不得携带任何凭据"
+        )
+
+    def test_is_test_enables_demo_only_on_private_exchange(self):
+        created = self.build_with_factory(is_test=True)
+
+        private = next(fake for kwargs, fake in created if "apiKey" in kwargs)
+        public = next(fake for kwargs, fake in created if "apiKey" not in kwargs)
+
+        assert private.demo_enabled is True, "demo 开关只作用于私有实例"
+        assert public.demo_enabled is False
+        assert private.load_markets_calls == 1 and public.load_markets_calls == 1, (
+            "双实例构造时都预载市场, 启动即暴露网络问题"
+        )

@@ -343,6 +343,8 @@ class FakeCcxtExchange:
         self.fetch_order_calls: list[dict[str, Any]] = []
         self.ohlcv_calls: list[dict[str, Any]] = []
         self.exchange_info_get_calls = 0
+        self.demo_enabled = False
+        self.load_markets_calls = 0
         self.create_order_result: dict[str, Any] = {
             "id": "1",
             "clientOrderId": "cid1",
@@ -418,10 +420,21 @@ class FakeCcxtExchange:
         return {"USDT": {"free": 100.0}}
 
     def fetch_ohlcv(
-        self, symbol: str, timeframe: str, limit: int = 100
+        self,
+        symbol: str,
+        timeframe: str,
+        since: Any = None,
+        limit: int | None = None,
+        params: Any = None,
     ) -> list[list[float]]:
+        # 签名与 ccxt 原生一致: 第三个位置参数是 since 而非 limit
         self.ohlcv_calls.append(
-            {"symbol": symbol, "timeframe": timeframe, "limit": limit}
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "since": since,
+                "limit": limit,
+            }
         )
         return self.ohlcv
 
@@ -435,7 +448,11 @@ class FakeCcxtExchange:
         self.exchange_info_get_calls += 1
         return self.exchange_info
 
+    def enable_demo_trading(self, enable: bool) -> None:
+        self.demo_enabled = enable
+
     def load_markets(self) -> dict[str, Any]:
+        self.load_markets_calls += 1
         return {}
 
     def fetch_open_orders(

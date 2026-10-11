@@ -7,6 +7,7 @@
 不做的事: 追单编排、重试策略、价格递进(属于 execution 层)。
 """
 
+from collections.abc import Callable
 from typing import Any, Protocol, cast
 
 import ccxt  # pyright: ignore[reportMissingTypeStubs]
@@ -61,7 +62,14 @@ class CcxtExchange(Protocol):
 
     def fetch_balance(self) -> Any: ...
 
-    def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int) -> Any: ...
+    def fetch_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str,
+        since: Any = None,
+        limit: int | None = None,
+        params: Any = None,
+    ) -> Any: ...  # 签名必须与 ccxt 原生一致, 否则位置传参错位会被类型检查掩盖
 
     def fetch_ticker(self, symbol: str, *args: Any, **kwargs: Any) -> Any: ...
 
@@ -230,26 +238,45 @@ def _translate_error(error: Exception, action: str) -> SmartTraderError:
     return SmartTraderError(ErrorCode.EXCHANGE_ERROR, message)
 
 
-class BinanceSwapClient:
-    """Binance U 本位合约适配器, 实现 MarketDataPort / TradingPort / AccountPort"""
+def create_ccxt_binance(**options: Any) -> Any:
+    """ccxt.binance 构造工厂; 测试注入内存实现"""
+    return ccxt.binance(ConstructorArgs(**options))
 
-    def __init__(self, api_key: str, api_secret: str, is_test: bool = False):
-        ccxt_exchange = ccxt.binance(
-            ConstructorArgs(
-                apiKey=api_key,
-                secret=api_secret,
-                options={
-                    "defaultType": "future",
-                    # ccxt 默认关闭该校正, 本机时钟略快时签名时间戳会超出币安 1s 限制(-1021)
-                    "adjustForTimeDifference": True,
-                },
-            )
-        )
+
+class BinanceSwapClient:
+    """Binance U 本位合约适配器, 实现 MarketDataPort / TradingPort / AccountPort
+
+    双 ccxt 实例按能力分流: `_public_exchange` 只承载行情(生产公共端点,
+    不持有密钥), `_private_exchange` 承载交易与账户(is_test=True 时切到 demo)。
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        api_secret: str,
+        is_test: bool = False,
+    ):
+        private_exchange = ccxt.binance(ConstructorArgs(
+            apiKey=api_key,
+            secret=api_secret,
+            options={
+                "defaultType": "future",
+                "adjustForTimeDifference": True,
+            },
+        ))
+        public_exchange = ccxt.binance(ConstructorArgs(
+            options={
+                "defaultType": "future",
+            },
+        ))
+
         if is_test:
-            # 币安合约已不支持 sandbox 测试网, 只能使用 demo trading
-            ccxt_exchange.enable_demo_trading(True)
-        self._exchange: CcxtExchange = cast(CcxtExchange, ccxt_exchange)
-        self._exchange.load_markets()
+            private_exchange.enable_demo_trading(True)
+
+        self._private_exchange: CcxtExchange = cast(CcxtExchange, private_exchange)
+        self._public_exchange: CcxtExchange = cast(CcxtExchange, public_exchange)
+        self._private_exchange.load_markets()
+        self._public_exchange.load_markets()
         self._exchange_info_cache: dict[str, Any] | None = None
 
     # ---- MarketDataPort ----
@@ -257,12 +284,12 @@ class BinanceSwapClient:
     def symbol_info(self, symbol: Symbol) -> SymbolInfo:
         if self._exchange_info_cache is None:
             self._exchange_info_cache = cast(
-                dict[str, Any], self._exchange.fapiPublicGetExchangeInfo()
+                dict[str, Any], self._public_exchange.fapiPublicGetExchangeInfo()
             )
         return parse_symbol_info(self._exchange_info_cache, symbol)
 
     def latest_price(self, symbol: Symbol) -> float:
-        ticker = self._exchange.fetch_ticker(symbol.ccxt())
+        ticker = self._public_exchange.fetch_ticker(symbol.ccxt())
         return float(ticker["last"])
 
     def fetch_ohlcv(
@@ -271,10 +298,14 @@ class BinanceSwapClient:
         if limit < 1:
             return []
 
-        now_ms = self._exchange.milliseconds()
+        now_ms = self._public_exchange.milliseconds()
         timeframe_ms = self._parse_timeframe_ms(timeframe)
         klines: list[Kline] = []
-        for ohlcv in self._exchange.fetch_ohlcv(symbol.ccxt(), timeframe, limit):
+        # limit 必须关键字传参: ccxt fetch_ohlcv 第三个位置参数是 since,
+        # 位置传参会把 limit 当成 since(≈1970), 恒拉数据集最老的K线
+        for ohlcv in self._public_exchange.fetch_ohlcv(
+            symbol.ccxt(), timeframe, limit=limit
+        ):
             timestamp = int(ohlcv[0])
             klines.append(
                 Kline(
@@ -305,7 +336,7 @@ class BinanceSwapClient:
 
         params = to_ccxt_order_params(request)
         try:
-            order = self._exchange.create_order(
+            order = self._private_exchange.create_order(
                 symbol=request.symbol.ccxt(),
                 type=request.type.value,
                 side=request.side.value,
@@ -330,7 +361,7 @@ class BinanceSwapClient:
 
     def query(self, custom_id: str, symbol: Symbol) -> OrderResult | None:
         try:
-            order = self._exchange.fetch_order(
+            order = self._private_exchange.fetch_order(
                 id="",
                 symbol=symbol.ccxt(),
                 params={"origClientOrderId": custom_id},
@@ -346,7 +377,7 @@ class BinanceSwapClient:
 
     def cancel(self, custom_id: str, symbol: Symbol) -> OrderResult | None:
         try:
-            order = self._exchange.cancel_order(
+            order = self._private_exchange.cancel_order(
                 id="",
                 symbol=symbol.ccxt(),
                 params={"origClientOrderId": custom_id},
@@ -363,14 +394,14 @@ class BinanceSwapClient:
     # ---- AccountPort ----
 
     def balance(self, coin: str) -> float:
-        balance = self._exchange.fetch_balance()
+        balance = self._private_exchange.fetch_balance()
         return float(balance[coin.upper()]["free"])
 
     def positions(self, symbol: Symbol | None = None) -> list[Position]:
         raw_positions = (
-            self._exchange.fetch_positions([symbol.ccxt()])
+            self._private_exchange.fetch_positions([symbol.ccxt()])
             if symbol is not None
-            else self._exchange.fetch_positions()
+            else self._private_exchange.fetch_positions()
         )
         positions: list[Position] = []
         for raw in raw_positions:
@@ -392,7 +423,7 @@ class BinanceSwapClient:
     def cancel_open_orders(self, symbol: Symbol) -> list[OrderResult]:
         """撤销该交易对所有挂单"""
         raw_orders = cast(
-            list[dict[str, Any]], self._exchange.fetch_open_orders(symbol.ccxt())
+            list[dict[str, Any]], self._private_exchange.fetch_open_orders(symbol.ccxt())
         )
         results: list[OrderResult] = []
         for raw in raw_orders:

@@ -75,7 +75,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | --- | --- |
 | `smart_trader/model.py` | 领域对象与枚举（Symbol / SymbolInfo / Kline / Order* / Position） |
 | `smart_trader/client/ports.py` | 端口（Protocol） |
-| `smart_trader/client/binance_client.py` | Binance 适配器 + ccxt ⇄ 领域对象翻译 |
+| `smart_trader/client/binance_client.py` | Binance 适配器 + ccxt ⇄ 领域对象翻译。双 ccxt 实例按能力分流：`_public_exchange`（生产、无密钥）承载行情，`_private_exchange`（`is_test=True` 时 demo）承载交易/账户 |
 | `smart_trader/storage/records.py` | 存储记录模型（Pydantic）：`GridPositionRow` / `OrderRecord`，存储层对外的数据契约 |
 | `smart_trader/storage/schema.py` | 表结构元数据（SQLAlchemy Core）：schema 唯一来源（列/约束/索引），建库走 `metadata.create_all` |
 | `smart_trader/storage/order_journal.py` | 订单日志仓储（SQLAlchemy Core 语句 + 事务）：`grid_positions`（逻辑仓位）+ `orders`（订单，`status` 为空承担 WAL） |
@@ -105,6 +105,8 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 13 | **信号抽象重构（职责边界）**：`Signal` 只输出行情状态（`MarketSignal` / `SignalDirection`），删 `side`/`run`/`is_entry`/`is_exit`/`reverse`；入场判定下沉为可组合 `EntryGate` 闸门链，离场判定下沉为可组合 `ExitPolicy` 策略链（`force` 表达"可覆盖休息中的出场挂单"）；`AlphaTrendGridsSignal` 删除，语义由 `SignalKind.TRIGGER` 承载；`SignalKind` 取代闸门的 bool flag；`PositionLimit` 成为仓位上限与"达到上限止损"的唯一权威来源；**删除 `position_reverse`**（方向直接来自 config，顺势加仓应写新信号 + 正常闸门）；**修掉 `close_position` 手动全平触发止损回调并暂停策略的缺陷**（拆 `stop_loss_reached` 与 `force_all` 两个独立触发源）；`AlphaTrendSignal` 改用 v2 指标的趋势累积计数，去掉 `first_run` 历史反推（该反推含当前 K 线，导致重启后漏信号）；`check_open_position` 由 98 行降到 5 行（只剩闸门调用 + 建仓），策略内不再出现任何入场/离场判定；新增 `ErrorCode.MARKET_DATA_UNAVAILABLE`（设计见 `.memory/03-coding-design.md` 第三节、模型见 `02-domain-model.md` 第八节） | 已完成 |
 | Step 14 | 集成测试三层（行为端到端与账本不变量 / 进程内恢复 / SIGKILL 子进程档，设计见第八节） | 待实施 |
 | Step 15 | 事件载荷统一为 `Kline`（解析点唯一）；新增 `TimerDataEventLoop` 定时拉取型事件循环（周期边界触发 `on_kline_finished` / 周期中点触发 `on_kline`，设计见第九节）；timeframe 换算收敛为 `model.timeframe_seconds` 单一权威；新增独立入口 `run_timer.py` | 已完成 |
+| Step 16 | 适配器双 ccxt 实例按能力分流：`_public_exchange`（生产、**无密钥**）承载行情，`_private_exchange`（`is_test=True` 时 demo）承载交易/账户——与 WS 模式"生产行情流 + demo 交易"语义对齐，行情路径零凭据 | 已完成 |
+| Step 17 | **修复 `fetch_ohlcv` 位置传参缺陷**：适配器把 `limit` 传入 ccxt `fetch_ohlcv(symbol, timeframe, since, limit)` 的 `since` 槽（`startTime≈1970`），恒拉数据集最老 500 根K线——定时模式的"陈旧K线"告警与 **WS 模式的历史初始化（300 根"历史"实为 2020 年数据）** 皆源于此；`CcxtExchange` Protocol 与 `FakeCcxtExchange` 的 `fetch_ohlcv` 签名随之对齐 ccxt 原生（否则错位会被类型检查与测试双重掩盖），并补回归测试。此前记录的"demo 行情镜像不稳定"结论有误，实为此缺陷 | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -229,8 +231,12 @@ strategy / task / template              (业务编排: 网格、信号、止损)
   **并列同刻的事件一齐分发**（如 1m 与 5m 边界重合）。
 - 拉取失败或尚无已完成K线（本地时钟落后）→ 记日志、本周期不分发，**不等待重试**，
   由下一个边界自然补上；**同一根K线（按 symbol+timeframe+时间戳）不重复分发**
-  ——时钟漂移时防止重复触发 `on_kline_finished`。时间戳与本地边界不一致记
-  "时钟漂移"警告（数据迟到的可观测信号）。
+  ——时钟漂移时防止重复触发 `on_kline_finished`。
+- **陈旧K线拒绝分发**：落后预期边界超过一个周期 → 判定数据源异常，记 error 并拒绝，
+  不写入去重记录（恢复后正常K线仍可分发）；落后 ≤1 个周期或超前 → 记"时钟漂移"
+  警告后照常分发。中点拉到已收盘K线同样拒绝并记录实际时间戳。实例：Step 17 之前
+  适配器把 `limit` 位置传参进 ccxt `fetch_ohlcv` 的 `since` 槽（`startTime≈1970`），
+  恒拉数据集最老 500 根K线（2020 年），该规则在首个边界就拒绝了它们。
 - `on_kline` 节奏与 WS 模式不同：定时模式每周期一次（中点），WS 模式随推送多次。
 - 独立入口 `run_timer.py`（与 `run.py` 的 WS 装配互为替代，凭据装配共享 `bootstrap.py`）。
 

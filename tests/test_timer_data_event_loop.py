@@ -322,6 +322,75 @@ class TestFetchFinishedKline:
 
         assert first is not None and other is not None, "去重状态必须按 (symbol, timeframe) 隔离"
 
+    def test_rejects_kline_stale_beyond_one_period(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """数据源返回数据集头部这类陈旧K线(落后超过一个周期)必须拒绝, 不能进入策略"""
+        loop, _, market = build_loop()
+        market.responses.append(
+            [
+                make_kline(finished=False),
+                make_kline(finished=True, timestamp=456 - 600_000),
+            ]
+        )
+
+        with caplog.at_level(logging.ERROR):
+            kline = loop._fetch_finished_kline(SYMBOL, "1m", expected_open_ms=456)
+
+        assert kline is None, "落后超过一个周期的K线不得分发给策略"
+        assert any(
+            "陈旧" in record.message and record.levelno == logging.ERROR
+            for record in caplog.records
+        ), "数据源陈旧必须记 error 并提示检查数据源"
+
+    def test_rejected_stale_kline_does_not_block_future_dispatch(self):
+        """被拒的陈旧K线不写入去重记录: 数据源恢复后, 匹配边界的K线仍能分发"""
+        loop, _, market = build_loop()
+        market.responses.append(
+            [
+                make_kline(finished=False),
+                make_kline(finished=True, timestamp=456 - 600_000),
+            ]
+        )
+
+        rejected = loop._fetch_finished_kline(SYMBOL, "1m", expected_open_ms=456)
+
+        market.responses.append(
+            [make_kline(finished=False), make_kline(finished=True, timestamp=516)]
+        )
+        recovered = loop._fetch_finished_kline(SYMBOL, "1m", expected_open_ms=516)
+
+        assert rejected is None
+        assert recovered is not None, "数据源恢复后必须恢复正常分发"
+
+    def test_allows_kline_one_period_behind(self):
+        """恰好落后一个周期(交易所滚出稍慢)仍分发, 重复由去重挡住"""
+        loop, _, market = build_loop()
+        market.responses.append(
+            [
+                make_kline(finished=False),
+                make_kline(finished=True, timestamp=456 - 60_000),
+            ]
+        )
+
+        kline = loop._fetch_finished_kline(SYMBOL, "1m", expected_open_ms=456)
+
+        assert kline is not None and kline.timestamp == 456 - 60_000
+
+    def test_allows_kline_ahead_of_expected(self):
+        """比预期更新(本地时钟落后)仍分发最新已完成K线"""
+        loop, _, market = build_loop()
+        market.responses.append(
+            [
+                make_kline(finished=False),
+                make_kline(finished=True, timestamp=456 + 60_000),
+            ]
+        )
+
+        kline = loop._fetch_finished_kline(SYMBOL, "1m", expected_open_ms=456)
+
+        assert kline is not None and kline.timestamp == 456 + 60_000
+
     def test_timestamp_mismatch_is_logged_as_drift(
         self, caplog: pytest.LogCaptureFixture
     ):
@@ -364,7 +433,7 @@ class TestFetchCurrentKline:
     def test_finished_kline_at_midpoint_is_rejected(
         self, caplog: pytest.LogCaptureFixture
     ):
-        """中点拉到已收盘K线 = 时钟漂移, 不能当作盘中更新分发"""
+        """中点拉到已收盘K线 = 本地时钟落后或数据源陈旧, 不能当作盘中更新分发"""
         loop, _, market = build_loop()
         market.responses.append([make_kline(finished=True)])
 
@@ -372,7 +441,10 @@ class TestFetchCurrentKline:
             kline = loop._fetch_current_kline(SYMBOL, "1m")
 
         assert kline is None
-        assert any("时钟漂移" in record.message for record in caplog.records)
+        assert any(
+            "已收盘" in record.message and "1700000000000" in record.message
+            for record in caplog.records
+        ), "拒绝时必须记录实际K线时间戳, 便于辨认数据源异常"
 
     def test_empty_result_returns_none(self):
         loop, _, market = build_loop()
@@ -389,7 +461,15 @@ class TestFetchCurrentKline:
 
 class TestFire:
     def test_boundary_dispatches_finished_kline_and_triggers_on_kline_finished(self):
-        loop, _, _ = build_loop()
+        loop, _, market = build_loop()
+        # 与 fire_at=BASE+2 推算的期望开仓时间一致(否则会被陈旧拒绝规则拦截)
+        expected_open_ms = int(BASE * 1000) - 60_000
+        market.responses.append(
+            [
+                make_kline(finished=False),
+                make_kline(finished=True, timestamp=expected_open_ms),
+            ]
+        )
         strategy = CallbackRecordingStrategy()
         loop.add_task(StrategyTask(SYMBOL, strategy))
         loop.running = True  # 等效 start() 的运行态, 但不进入阻塞调度

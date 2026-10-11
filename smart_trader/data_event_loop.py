@@ -62,17 +62,17 @@ def parse_ws_message(message: str) -> Kline | None:
 
     if not isinstance(payload, dict):
         return None
-    envelope = cast(dict[str, Any], payload)
+    envelope = payload
 
     stream = envelope.get("stream", "")
     data = envelope.get("data", {})
     if not isinstance(data, dict):
         return None
-    kline = cast(dict[str, Any], data).get("k")
+    kline = data.get("k")
     if not isinstance(kline, dict):
         return None
 
-    return parse_kline_message(cast(dict[str, Any], kline), stream)
+    return parse_kline_message(kline, stream)
 
 
 class Task:
@@ -379,11 +379,13 @@ class TimerDataEventLoop(DataEventLoop):
     def _fetch_finished_kline(
         self, symbol: Symbol, timeframe: str, expected_open_ms: int
     ) -> Kline | None:
-        """拉取最后一根已完成K线; 不等待重试, 已分发过的同一根K线返回 None
+        """拉取最后一根已完成K线; 陈旧或已分发过的返回 None, 不等待重试
 
-        交易所尚未滚出收盘K线(本地时钟落后)或拉取失败时直接返回 None,
-        本周期不分发, 由下一个边界自然补上; 去重防止时钟漂移时
-        同一根K线重复触发 on_kline_finished。
+        - 落后预期边界超过一个周期 → 数据源异常(如 demo 环境把数据集头部当最新
+          数据返回), 拒绝分发且不写入去重记录, 数据源恢复后仍能正常分发;
+        - 交易所尚未滚出收盘K线(本地时钟落后)或拉取失败 → 直接返回 None,
+          本周期不分发, 由下一个边界自然补上;
+        - 去重防止同一根K线(时钟漂移/数据迟到)重复触发 on_kline_finished。
         """
         finished = [
             k for k in self._safe_fetch(symbol, timeframe, limit=2) if k.finished
@@ -391,6 +393,18 @@ class TimerDataEventLoop(DataEventLoop):
         if not finished:
             return None
         kline = finished[-1]
+        tf_ms = timeframe_seconds(timeframe) * 1000
+        behind_ms = expected_open_ms - kline.timestamp
+        if behind_ms > tf_ms:
+            logger.error(
+                "行情数据源返回陈旧K线, 拒绝分发: 期望开仓 %s, 实际 %s (落后 %.0f 个周期), %s %s —— 请检查行情数据源",
+                expected_open_ms,
+                kline.timestamp,
+                behind_ms / tf_ms,
+                symbol.ccxt(),
+                timeframe,
+            )
+            return None
         if kline.timestamp != expected_open_ms:
             logger.warning(
                 "K线时间戳 %s 与本地边界 %s 不一致(时钟漂移): %s %s",
@@ -414,9 +428,10 @@ class TimerDataEventLoop(DataEventLoop):
         kline = klines[-1]
         if kline.finished:
             logger.warning(
-                "中点拉到已收盘K线(时钟漂移?) %s %s, 跳过盘中更新",
+                "中点拉到已收盘K线(本地时钟落后或数据源陈旧) %s %s, 时间戳 %s, 跳过盘中更新",
                 symbol.ccxt(),
                 timeframe,
+                kline.timestamp,
             )
             return None
         return kline
