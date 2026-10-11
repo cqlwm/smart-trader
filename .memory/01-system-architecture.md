@@ -189,6 +189,17 @@ strategy / task / template              (业务编排: 网格、信号、止损)
   → 装配契约（`test_signal_grid_rules.py`），底层先测。
 - sqlite 日志测试统一使用 `:memory:` 数据库（StaticPool 共享单连接），不落盘、不共享状态。
 - 库结构由 `tests/test_storage_schema.py` 以冻结的旧版 DDL 快照做等价性校验：metadata 建出的库与历史契约（列/约束/默认值/索引）不一致即失败。
+- **集成层（Step 14）**：真实装配链（策略 + Gateway + `JournaledTradingPort` + `OrderReconciler`）
+  对接**真实 sqlite 文件账本**（tmp_path，WAL 生效）与**状态化交易所** `tests/fake_exchange.py`
+  （订单簿 + 成交脚本 + one-shot 故障注入 `lose_response_next` / `drop_request_next` + 可选 JSON 持久化），
+  由 `tests/integration_harness.py` 装配（`KlineDriver` 走 `run()` 公开入口；`restart` 走真实重启路径
+  = 构造函数内对账 + `load_positions`；`assert_ledger_matches_exchange` 做账本 ⇄ 交易所双向对账）。
+  三个观察维度对应三个文件：行为端到端与账本不变量（`test_signal_grid_integration.py`）、
+  进程内恢复（`test_signal_grid_recovery.py`，崩溃点逐个注入）、SIGKILL 子进程档
+  （`test_crash_subprocess.py`，标 `@pytest.mark.integration` 默认排除，`uv run pytest -m integration` 运行）。
+  对账断言的"已观察"语义：策略对成交是惰性感知（只在离场决策/盘中路径/出场跟踪时 query），
+  账本保存最近一次查询时的事实 —— 委托事实（side/quantity/price）始终比对，
+  执行事实（status/filled/avg_price）仅在该单已被策略查询过时比对（簿条目 `observed` 标记）。
 
 ## 九、事件循环与任务
 
