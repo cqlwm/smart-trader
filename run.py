@@ -49,10 +49,10 @@ def main():
     from template import dogeusdt, zecusdt, wusdt
 
     tasks: list[StrategyTask] = [
-        dogeusdt.grid_reverse_long(main_binance_client),
-        dogeusdt.grid_reverse_short(main_binance_client),
-        zecusdt.grid_reverse_long(main_binance_client),
-        zecusdt.grid_reverse_short(main_binance_client),
+        # dogeusdt.grid_reverse_long(main_binance_client),
+        # dogeusdt.grid_reverse_short(main_binance_client),
+        # zecusdt.grid_reverse_long(main_binance_client),
+        # zecusdt.grid_reverse_short(main_binance_client),
 
         wusdt.grid_reverse_long(main_binance_client),
     ]
