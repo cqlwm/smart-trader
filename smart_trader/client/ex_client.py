@@ -22,7 +22,7 @@ class ExClient(ABC):
 
     @abstractmethod
     def query_order(self, custom_id: str, symbol: Symbol) -> dict[str, Any] | None:
-        pass
+        """查询订单; 订单不存在返回 None, 其他异常向上抛"""
 
     def place_order_v2(
         self,

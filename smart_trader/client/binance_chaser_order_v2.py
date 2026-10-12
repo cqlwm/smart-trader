@@ -1,4 +1,3 @@
-import secrets
 import time
 from typing import Any, Protocol
 
@@ -38,6 +37,7 @@ class LimitOrderChaserV2:
         quantity: float,
         position_side: str = "LONG",
         place_order_behavior: PlaceOrderBehavior = PlaceOrderBehavior.CHASER,
+        custom_id: str = "",
         max_iterations: int = 40,
         max_retry: int = 10,
         poll_interval: float = 1.0,
@@ -57,23 +57,24 @@ class LimitOrderChaserV2:
         self.side: OrderSide = side
         self.quantity: float = quantity
         self.place_order_behavior: PlaceOrderBehavior = place_order_behavior
+        self.custom_id: str = custom_id
         self.max_iterations: int = max_iterations
         self.max_retry: int = max_retry
         self.poll_interval: float = poll_interval
         self.wait_timeout: float = wait_timeout
-        self.custom_id: str | None = None
         self.chase_result: bool = False
         self.first_price: float | None = None
 
     def place_order_gtx(self, limit_price: float) -> str | None:
         """
         按 limit_price 挂 GTX 限价单，成功返回 custom_id
-        @param limit_price: 挂单价
+
+        custom_id 在整个追单过程中复用: 提交超时后重试不会产生重复订单;
+        已在交易所存在的订单 (上一次"失败"的请求实际已到达) 通过查单确认并直接接管。
         """
-        custom_id = f"{self.side.value}{secrets.token_hex(nbytes=5)}"
         logger.info(
             "下单：%s, %s, %s, Qty: %s, Price: %s",
-            custom_id,
+            self.custom_id,
             self.symbol.ccxt(),
             self.side.name,
             self.quantity,
@@ -81,7 +82,7 @@ class LimitOrderChaserV2:
         )
         try:
             result = self.client.place_order_v2(
-                custom_id=custom_id,
+                custom_id=self.custom_id,
                 symbol=self.symbol,
                 order_side=self.side,
                 quantity=self.quantity,
@@ -91,22 +92,43 @@ class LimitOrderChaserV2:
             )
         except OrderNotFillable:
             # {"code":-5022,"msg":"由于订单无法以挂单方式成交，此挂单将被拒绝，不会记录在订单历史记录中。"}
+            # 被拒绝的挂单不占用 custom_id, 可复用递进重试
             logger.info("价格将触发市价, GTX限价订单自动取消")
             return None
-        except (InvalidOrder, SmartTraderError) as e:
-            # 名义价值/精度等确定性拒绝, 递进价格重试无意义
+        except SmartTraderError as e:
+            # 本地预检(名义价值/精度)的确定性拒绝, 请求未发出, 递进重试无意义
+            logger.error("订单被拒绝, 停止追单: %s", e)
+            raise
+        except InvalidOrder as e:
+            # 请求已到达交易所; custom_id 复用场景下可能是重复ID: 上次请求实际已成功
+            if self._order_exists():
+                logger.info("订单 %s 已存在于交易所, 接管该订单", self.custom_id)
+                return self.custom_id
             logger.error("订单被拒绝, 停止追单: %s", e)
             raise
         except Exception:
             logger.exception("下单时出错")
+            # 超时等未知结果: 订单可能已到达交易所, 查单确认后再决定是否重试
+            if self._order_exists():
+                logger.info("订单 %s 已存在于交易所, 接管该订单", self.custom_id)
+                return self.custom_id
             return None
         logger.debug("下单返回：%s", result)
         if result and result.get("status") in [
             OrderStatus.OPEN.value,
             OrderStatus.CLOSED.value,
         ]:
-            return custom_id
+            return self.custom_id
         return None
+
+    def _order_exists(self) -> bool:
+        """查询 custom_id 订单是否已存在于交易所; 查询失败视为不存在(下轮重试再判定)"""
+        try:
+            result = self.client.query_order(self.custom_id, self.symbol)
+        except Exception:
+            logger.exception("查单失败: %s", self.custom_id)
+            return False
+        return result is not None
 
     def query_order(self, custom_id: str) -> dict[str, Any] | None:
         try:
@@ -173,13 +195,11 @@ class LimitOrderChaserV2:
         return bool(order) and float(order["info"]["executedQty"]) > 0
 
     def chase(self, price: float) -> bool:
-        custom_id = self.chase_open_only(price)
-        if custom_id is None:
+        if self.chase_open_only(price) is None:
             return False
 
-        self.custom_id = custom_id
         if self.place_order_behavior == PlaceOrderBehavior.CHASER:
-            return self.chase_closed(custom_id)
+            return self.chase_closed(self.custom_id)
         return True
 
     def start(self) -> None:

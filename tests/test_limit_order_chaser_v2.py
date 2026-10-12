@@ -33,6 +33,7 @@ def build_chaser(
     side: OrderSide = OrderSide.BUY,
     max_retry: int = 3,
     wait_timeout: float = 0.0,
+    custom_id: str = "cid1",
 ) -> tuple[LimitOrderChaserV2, Mock]:
     client = Mock(spec=ExSwapClient)
     client.symbol_info.return_value = SymbolInfo(
@@ -52,6 +53,7 @@ def build_chaser(
         quantity=100.0,
         position_side="LONG",
         place_order_behavior=behavior,
+        custom_id=custom_id,
         max_retry=max_retry,
         poll_interval=0.0,
         wait_timeout=wait_timeout,
@@ -109,6 +111,7 @@ def test_chase_open_only_keeps_going_on_unexpected_error():
     chaser, client = build_chaser(
         FakePriceProvider(0.5), PlaceOrderBehavior.CHASER_OPEN
     )
+    client.query_order.return_value = None  # 超时后查无此单, 才继续递进重试
     client.place_order_v2.side_effect = [
         RuntimeError("网络超时"),
         open_order(),
@@ -123,6 +126,7 @@ def test_chase_open_only_stops_on_invalid_order():
     chaser, client = build_chaser(
         FakePriceProvider(0.5), PlaceOrderBehavior.CHASER_OPEN
     )
+    client.query_order.return_value = None  # 查无此单: 确定性拒绝而非重复ID
     client.place_order_v2.side_effect = ccxt.InvalidOrder("notional too small")
 
     with pytest.raises(ccxt.InvalidOrder):
@@ -193,7 +197,7 @@ def test_chase_returns_true_without_waiting_for_chaser_open():
     client.place_order_v2.return_value = open_order()
 
     assert chaser.chase(0.5) is True
-    assert chaser.custom_id is not None
+    assert chaser.custom_id == "cid1"
     client.query_order.assert_not_called()
 
 
@@ -202,7 +206,7 @@ def test_chase_returns_false_when_order_never_placed():
     client.place_order_v2.side_effect = GTX_REJECTED
 
     assert chaser.chase(0.5) is False
-    assert chaser.custom_id is None
+    assert client.place_order_v2.call_count == chaser.max_retry
 
 
 def test_start_uses_first_price_only_on_first_round():
@@ -234,3 +238,69 @@ def test_start_gives_up_after_max_iterations():
 
     assert chaser.run() is False
     assert provider.calls == 3
+
+
+# ------------------------------------------------- custom_id 复用与孤儿单防御
+
+
+def test_chase_reuses_custom_id_across_retries():
+    """所有递进重试复用同一 custom_id: 提交超时后重试不会产生重复订单"""
+    chaser, client = build_chaser(
+        FakePriceProvider(0.5), PlaceOrderBehavior.CHASER_OPEN
+    )
+    client.query_order.return_value = None
+    client.place_order_v2.side_effect = [GTX_REJECTED, RuntimeError("超时"), open_order()]
+
+    assert chaser.chase_open_only(0.5) == "cid1"
+    custom_ids = [
+        call.kwargs["custom_id"] for call in client.place_order_v2.call_args_list
+    ]
+    assert custom_ids == ["cid1", "cid1", "cid1"], "重试必须复用同一 custom_id"
+
+
+def test_timeout_with_existing_order_takes_over_without_reorder():
+    """提交超时但订单实际已到达交易所: 查单确认后直接接管, 不重复下单"""
+    chaser, client = build_chaser(
+        FakePriceProvider(0.5), PlaceOrderBehavior.CHASER_OPEN
+    )
+    client.place_order_v2.side_effect = RuntimeError("超时")
+    client.query_order.return_value = open_order()
+
+    assert chaser.place_order_gtx(0.5) == "cid1"
+    assert client.place_order_v2.call_count == 1, "订单已存在时不应重复下单"
+    client.query_order.assert_called_once_with("cid1", SYMBOL)
+
+
+def test_invalid_order_with_existing_order_takes_over():
+    """InvalidOrder 但订单已存在(上次请求实际成功): 查单确认后接管而非报错"""
+    chaser, client = build_chaser(
+        FakePriceProvider(0.5), PlaceOrderBehavior.CHASER_OPEN
+    )
+    client.place_order_v2.side_effect = ccxt.InvalidOrder("duplicate client order id")
+    client.query_order.return_value = open_order()
+
+    assert chaser.place_order_gtx(0.5) == "cid1"
+    client.query_order.assert_called_once_with("cid1", SYMBOL)
+
+
+def test_invalid_order_without_existing_order_still_raises():
+    """InvalidOrder 且查无此单: 确定性拒绝, 停止追单"""
+    chaser, client = build_chaser(
+        FakePriceProvider(0.5), PlaceOrderBehavior.CHASER_OPEN
+    )
+    client.place_order_v2.side_effect = ccxt.InvalidOrder("bad params")
+    client.query_order.return_value = None
+
+    with pytest.raises(ccxt.InvalidOrder):
+        chaser.place_order_gtx(0.5)
+
+
+def test_order_exists_query_failure_treated_as_missing():
+    """恢复性查单失败: 视为不存在, 交由下一轮重试再判定 (不吞掉异常也不误接管)"""
+    chaser, client = build_chaser(
+        FakePriceProvider(0.5), PlaceOrderBehavior.CHASER_OPEN
+    )
+    client.place_order_v2.side_effect = RuntimeError("超时")
+    client.query_order.side_effect = RuntimeError("查单也超时")
+
+    assert chaser.place_order_gtx(0.5) is None, "查单失败时不应误判为订单已存在"

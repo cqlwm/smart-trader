@@ -2,6 +2,7 @@ from typing import Any
 
 import ccxt  # pyright: ignore[reportMissingTypeStubs]
 import requests
+from ccxt.base.errors import OrderNotFound  # pyright: ignore[reportMissingTypeStubs]
 from ccxt.base.types import ConstructorArgs  # pyright: ignore[reportMissingTypeStubs]
 
 from smart_trader import log
@@ -104,6 +105,7 @@ class BinanceSwapClient(ExSwapClient):
         quantity: float,
         position_side: str,
         place_order_behavior: PlaceOrderBehavior,
+        custom_id: str,
     ) -> LimitOrderChaserV2:
         return LimitOrderChaserV2(
             client=self,
@@ -113,6 +115,7 @@ class BinanceSwapClient(ExSwapClient):
             quantity=quantity,
             position_side=position_side,
             place_order_behavior=place_order_behavior,
+            custom_id=custom_id,
         )
 
     def balance(self, coin: str) -> float:
@@ -129,14 +132,18 @@ class BinanceSwapClient(ExSwapClient):
         )
 
     def query_order(self, custom_id: str, symbol: Symbol):
-        order = self.exchange.fetch_order(
-            id="",
-            symbol=symbol.ccxt(),
-            params={  # type: ignore
-                "origClientOrderId": custom_id
-            },
-        )
-        return order
+        """查询订单; 订单不存在返回 None (状态机依赖该契约), 其他异常向上抛"""
+        try:
+            return self.exchange.fetch_order(
+                id="",
+                symbol=symbol.ccxt(),
+                params={  # type: ignore
+                    "origClientOrderId": custom_id
+                },
+            )
+        except OrderNotFound:
+            logger.info("订单不存在: %s", custom_id)
+            return None
 
     def place_order_v2(
         self,
@@ -167,16 +174,20 @@ class BinanceSwapClient(ExSwapClient):
             behavior_value = PlaceOrderBehavior.NORMAL.value
 
         if "chaser" in behavior_value:
+            # 追单全程复用调用方 custom_id: 提交超时后重试不会产生重复订单
             order_chaser = self.create_chaser(
                 symbol,
                 order_side,
                 quantity,
                 position_side,
                 PlaceOrderBehavior(behavior_value),
+                custom_id,
             )
             order_chaser.first_price = kwargs.pop("first_price", None)
 
-            if order_chaser.run() and order_chaser.custom_id:
+            if order_chaser.run():
+                # 追单已成功, 查单失败会向上抛; 调用方以已知 custom_id 入账,
+                # 由状态机下根K线核实, 不会产生孤儿单
                 return self.query_order(order_chaser.custom_id, symbol)
 
             logger.error("追单失败, 执行常规订单, price: %s", price)

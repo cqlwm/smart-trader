@@ -28,7 +28,17 @@ class DataEventLoop:
 
     def loop(self, data: str):
         for task in self.tasks:
-            self.executor.submit(task.run, data)
+            future = self.executor.submit(task.run, data)
+            future.add_done_callback(self._log_task_exception)
+
+    @staticmethod
+    def _log_task_exception(future: "concurrent.futures.Future[Any]") -> None:
+        """记录任务异常; 线程池会静默吞掉 run 内的异常, 必须显式回收进日志"""
+        exc = future.exception()
+        if exc is not None:
+            logger.error(
+                "任务执行异常: %s", exc, exc_info=(type(exc), exc, exc.__traceback__)
+            )
 
     def start(self):
         pass

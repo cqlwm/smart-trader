@@ -116,6 +116,19 @@ class OrderStatus(Enum):
         return OrderStatus.compare(status, OrderStatus.CANCELED)
 
 
+class OrderPhase(Enum):
+    """订单生命周期 (账本视角)
+
+    区别于 status: status 是入场单在交易所的状态快照, phase 驱动账本行为
+    (平仓检查 / 网格间距锚点 / 仓位对账口径)
+    """
+
+    ENTRY_PENDING = "entry_pending"  # 入场单已提交未成交, 尚无持仓
+    HOLDING = "holding"  # 入场已成交, 持仓中
+    EXIT_PENDING = "exit_pending"  # 平仓单已提交, 待确认成交
+    CLOSED = "closed"  # 已完结 (历史订单)
+
+
 class PlaceOrderBehavior(Enum):
     CHASER = "chaser"  # 追单且成交
     CHASER_OPEN = "chaser_open"  # 追单只下单

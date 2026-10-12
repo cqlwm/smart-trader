@@ -30,5 +30,6 @@ def test_limit_order_chaser():
         quantity=102,
         position_side="Long",
         place_order_behavior=PlaceOrderBehavior.CHASER_OPEN,
+        custom_id="integrationchaser01",
     )
     chaser.run()

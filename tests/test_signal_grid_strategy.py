@@ -1,7 +1,7 @@
 from unittest.mock import Mock
 
 from smart_trader.client.ex_client import ExSwapClient
-from smart_trader.model import Kline, OrderSide, Symbol
+from smart_trader.model import Kline, OrderPhase, OrderSide, Symbol
 from smart_trader.strategy.grids_strategy_v2 import (
     Order,
     SignalGridStrategy,
@@ -34,6 +34,7 @@ def build_order(entry_id: str, price: float, quantity: float) -> Order:
         fixed_take_profit_rate=0.01,
         signal_min_take_profit_rate=0.002,
         status="closed",
+        phase=OrderPhase.HOLDING,
     )
 
 
@@ -56,7 +57,11 @@ def test_close_position_ratio():
 
     flat_orders = strategy.check_close_order()
 
-    assert len(flat_orders) == 1
+    assert len(flat_orders.exited_orders) == 1
+    assert flat_orders.exited_orders[0].phase == OrderPhase.EXIT_PENDING
+    assert (
+        strategy.order_manager.orders == flat_orders.exited_orders
+    ), "平仓在途订单应保留在账本, 由状态机确认成交后移入历史"
     ex_client.place_order_v2.assert_called_once()
     # 平仓数量 = 原数量 * 平仓比例
     assert ex_client.place_order_v2.call_args[1]["quantity"] == 100.0 * 0.99
@@ -82,7 +87,7 @@ def test_close_position_ratio_default():
 
     flat_orders = strategy.check_close_order()
 
-    assert len(flat_orders) == 1
+    assert len(flat_orders.exited_orders) == 1
     # 完全平仓
     assert ex_client.place_order_v2.call_args[1]["quantity"] == 100.0
 
@@ -107,7 +112,8 @@ def test_close_position_ratio_multiple_orders():
 
     flat_orders = strategy.check_close_order()
 
-    assert len(flat_orders) == 2
+    assert len(flat_orders.exited_orders) == 2
+    assert strategy.order_manager.orders == flat_orders.exited_orders
     # 总数量 = 100 + 50 = 150, 平仓数量 = 150 * 0.95
     assert ex_client.place_order_v2.call_args[1]["quantity"] == 150.0 * 0.95
 
@@ -119,6 +125,7 @@ def test_open_order_allowed_when_no_close_in_kline():
         timeframe=TIMEFRAME,
         per_order_qty=100,
         order_file_path="",
+        reconcile_interval_sec=0,
     )
     ex_client = Mock(spec=ExSwapClient)
     ex_client.place_order_v2.return_value = {

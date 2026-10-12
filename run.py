@@ -46,7 +46,7 @@ main_binance_client: BinanceSwapClient = create_binance_client("main")
 
 
 def main():
-    from template import dogeusdt, zecusdt, wusdt
+    from template import dogeusdt, wusdt, zecusdt
 
     tasks: list[StrategyTask] = [
         dogeusdt.grid_reverse_long(main_binance_client),

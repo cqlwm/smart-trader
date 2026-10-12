@@ -1,10 +1,11 @@
 from unittest.mock import Mock
 
 import pytest
+from ccxt.base.errors import OrderNotFound  # pyright: ignore[reportMissingTypeStubs]
 
 from smart_trader.client.binance_client import BinanceSwapClient, parse_symbol_info
 from smart_trader.exceptions import ErrorCode, SmartTraderError
-from smart_trader.model import OrderSide, Symbol, SymbolInfo
+from smart_trader.model import OrderSide, PlaceOrderBehavior, Symbol, SymbolInfo
 
 SYMBOL = Symbol(base="DOGE", quote="USDC")
 EXCHANGE_INFO = {
@@ -116,3 +117,53 @@ def test_place_order_submits_when_notional_is_enough():
 
     assert order == {"clientOrderId": "cid1"}
     assert client.exchange.create_order.call_args.kwargs["amount"] == 100.0
+
+
+def test_query_order_returns_none_when_order_not_found():
+    """订单不存在时返回 None 而不是抛出 (状态机依赖该契约)"""
+    client = build_client()
+    client.exchange.fetch_order.side_effect = OrderNotFound(
+        "binance {'code':-2011,'msg':'Unknown order sent.'}"
+    )
+
+    assert client.query_order("missing", SYMBOL) is None
+
+
+def test_query_order_returns_order_when_found():
+    """订单存在时返回交易所订单数据"""
+    client = build_client()
+    client.exchange.fetch_order.return_value = {"id": "1", "status": "open"}
+
+    assert client.query_order("buy123", SYMBOL) == {"id": "1", "status": "open"}
+
+
+def test_place_order_v2_chaser_reuses_caller_custom_id():
+    """追单路径全程复用调用方 custom_id: 提交超时重试不会产生无人跟踪的重复订单"""
+    client = build_client()
+    client.exchange.create_order.return_value = {
+        "clientOrderId": "cid1",
+        "status": "open",
+    }
+    client.exchange.fetch_order.return_value = {
+        "clientOrderId": "cid1",
+        "status": "open",
+        "price": 100.0,
+    }
+
+    order = client.place_order_v2(
+        custom_id="cid1",
+        symbol=SYMBOL,
+        order_side=OrderSide.BUY,
+        quantity=100.0,
+        price=100.0,
+        position_side="LONG",
+        place_order_behavior=PlaceOrderBehavior.CHASER_OPEN,
+        first_price=100.0,
+    )
+
+    assert order is not None
+    assert order["clientOrderId"] == "cid1"
+    for call in client.exchange.create_order.call_args_list:
+        assert call.kwargs["params"]["newClientOrderId"] == "cid1", (
+            "追单的所有下单尝试都必须复用调用方 custom_id"
+        )

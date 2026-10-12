@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 from smart_trader.client.ex_client import ExSwapClient
-from smart_trader.model import Kline, OrderSide, Symbol
+from smart_trader.model import Kline, OrderPhase, OrderSide, Symbol
 from smart_trader.strategy.grids_strategy_v2 import (
     Order,
     SignalGridStrategy,
@@ -61,6 +61,7 @@ def test_order_stop_loss_buy():
             fixed_take_profit_rate=0.01,
             signal_min_take_profit_rate=0.002,
             status="closed",
+            phase=OrderPhase.HOLDING,
             stop_loss_rate=0.05,
             enable_stop_loss=True,
             current_stop_price=95.0,
@@ -70,8 +71,12 @@ def test_order_stop_loss_buy():
 
     flat_orders = strategy.check_close_order()
 
-    assert len(flat_orders) == 1
-    assert flat_orders[0].exit_price == 94.0
+    assert len(flat_orders.exited_orders) == 1
+    assert flat_orders.exited_orders[0].exit_price == 94.0
+    assert flat_orders.exited_orders[0].phase == OrderPhase.EXIT_PENDING
+    assert (
+        strategy.order_manager.orders == flat_orders.exited_orders
+    ), "止损平仓在途订单应保留在账本"
 
 
 def test_order_stop_loss_sell():
@@ -98,6 +103,7 @@ def test_order_stop_loss_sell():
             fixed_take_profit_rate=0.01,
             signal_min_take_profit_rate=0.002,
             status="closed",
+            phase=OrderPhase.HOLDING,
             stop_loss_rate=0.05,
             enable_stop_loss=True,
             current_stop_price=105.0,
@@ -107,8 +113,12 @@ def test_order_stop_loss_sell():
 
     flat_orders = strategy.check_close_order()
 
-    assert len(flat_orders) == 1
-    assert flat_orders[0].exit_price == 106.0
+    assert len(flat_orders.exited_orders) == 1
+    assert flat_orders.exited_orders[0].exit_price == 106.0
+    assert flat_orders.exited_orders[0].phase == OrderPhase.EXIT_PENDING
+    assert (
+        strategy.order_manager.orders == flat_orders.exited_orders
+    ), "止损平仓在途订单应保留在账本"
 
 
 def test_trailing_stop_buy():
@@ -118,6 +128,7 @@ def test_trailing_stop_buy():
         timeframe=TIMEFRAME,
         per_order_qty=100,
         order_file_path="",
+        reconcile_interval_sec=0,
         enable_trailing_stop=True,
         trailing_stop_rate=0.02,
         trailing_stop_activation_profit_rate=0.01,
@@ -133,6 +144,7 @@ def test_trailing_stop_buy():
         fixed_take_profit_rate=0.01,
         signal_min_take_profit_rate=0.002,
         status="closed",
+        phase=OrderPhase.HOLDING,
         trailing_stop_rate=0.02,
         enable_trailing_stop=True,
         trailing_stop_activation_profit_rate=0.01,
@@ -155,6 +167,7 @@ def test_trailing_stop_sell():
         master_side=OrderSide.SELL,
         per_order_qty=100,
         order_file_path="",
+        reconcile_interval_sec=0,
         enable_trailing_stop=True,
         trailing_stop_rate=0.02,
         trailing_stop_activation_profit_rate=0.01,
@@ -170,6 +183,7 @@ def test_trailing_stop_sell():
         fixed_take_profit_rate=0.01,
         signal_min_take_profit_rate=0.002,
         status="closed",
+        phase=OrderPhase.HOLDING,
         trailing_stop_rate=0.02,
         enable_trailing_stop=True,
         trailing_stop_activation_profit_rate=0.01,
@@ -191,6 +205,7 @@ def test_trailing_stop_not_activated():
         timeframe=TIMEFRAME,
         per_order_qty=100,
         order_file_path="",
+        reconcile_interval_sec=0,
         enable_trailing_stop=True,
         trailing_stop_rate=0.02,
         trailing_stop_activation_profit_rate=0.01,
@@ -206,6 +221,7 @@ def test_trailing_stop_not_activated():
         fixed_take_profit_rate=0.01,
         signal_min_take_profit_rate=0.002,
         status="closed",
+        phase=OrderPhase.HOLDING,
         trailing_stop_rate=0.02,
         enable_trailing_stop=True,
         trailing_stop_activation_profit_rate=0.01,
@@ -227,6 +243,7 @@ def test_stop_loss_takes_priority_over_open_order():
         timeframe=TIMEFRAME,
         per_order_qty=100,
         order_file_path="",
+        reconcile_interval_sec=0,
         enable_order_stop_loss=True,
         order_stop_loss_rate=0.05,
         grid_spacing_rate=0.01,
@@ -243,6 +260,7 @@ def test_stop_loss_takes_priority_over_open_order():
             fixed_take_profit_rate=0.01,
             signal_min_take_profit_rate=0.002,
             status="closed",
+            phase=OrderPhase.HOLDING,
             stop_loss_rate=0.05,
             enable_stop_loss=True,
             current_stop_price=95.0,
@@ -253,11 +271,13 @@ def test_stop_loss_takes_priority_over_open_order():
 
     strategy._on_kline_finished()
 
-    # 只下了止损单, 且方向为反向
+    # 只下了止损平仓单, 且方向为反向
     ex_client.place_order_v2.assert_called_once()
     assert ex_client.place_order_v2.call_args[1]["order_side"] == OrderSide.SELL
-    # 本根K线不再补新仓
-    assert strategy.order_manager.orders == [], "止损所在K线不应再开新仓"
+    # 本根K线不再补新仓: 账本中只有原订单(已转平仓在途), 没有新入场单
+    remaining_ids = [order.entry_id for order in strategy.order_manager.orders]
+    assert remaining_ids == ["buy1"], "止损所在K线不应开新仓"
+    assert strategy.order_manager.orders[0].phase == OrderPhase.EXIT_PENDING
 
 
 def test_order_initialization_with_stop_loss():
