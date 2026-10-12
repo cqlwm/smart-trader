@@ -118,7 +118,7 @@ class OrderRecorder(BaseModel):
 
         if refresh_orders and self.order_file_path:
             with open(self.order_file_path, "w") as f:
-                f.write(self.model_dump_json())
+                f.write(self.model_dump_json() + '\n\n')
 
     def check_reload(self, force: bool = False) -> list[Order] | None:
         """
