@@ -184,6 +184,37 @@ v2 的累积计数不存在此问题，`first_run` 已删除。
 
 信号状态（去重方向）**留内存不落库**。本轮明确不引入 `signals` 表。
 
+### 10. `TrendSpacingGate` 与 `GridSpacingGate` 的方向对称
+
+两个间距闸门是同一判定式的镜像：
+
+| 闸门 | 基准（极值层） | 判定 | 语义 |
+| --- | --- | --- | --- |
+| `GridSpacingGate` | 亏损方向极值（多头=最低价层） | `ratio <= -rate`（正值） | 逆势补仓 / 双向距离限制 |
+| `TrendSpacingGate` | 盈利方向极值（多头=最高价层） | `ratio >= rate` | 顺势阶梯加仓 |
+
+互斥原因：同一链内 AND 组合要求价格同时"低于最低层 − r₁"且"高于最高层 + r₂"，
+堆栈有宽度时无解 —— 它们不是可组合的两个条件，而是同一条件（间距基准）的两种口径。
+因此由 config 的 `trend_spacing_rate` 二选一装配（非空 → 顺势闸门替换网格闸门），
+而不是提供两个可叠加的闸门。
+
+### 11. `LayeredReducePolicy` 与 `ExitContext.positions`
+
+- **为什么 `ExitContext` 需要仓位列表**：逐层减仓要回答"我是不是最外层"，这是跨仓位
+  判定；`EntryContext.positions` 早有先例（`MaxPositionsGate` / `GridSpacingGate` /
+  `TrendSpacingGate` 都是跨仓位判定），两个上下文保持对称，同为纯数据。
+- **一次只剥一层怎么保证**：策略逐仓位询问策略链，只有最外层返回 `should_exit`；
+  该层已有未成交出场单时按 `force` 语义撤单重挂，而此时下一层仍不是最外层 ——
+  自然等待，不需要额外的节流状态或计数器。
+- **为什么 `force=True`**：逆势减仓必须实际减仓。普通止盈可以"挂价等回撤"，但下跌
+  趋势中挂着不成交会让逐层推进停滞；force 让每根完成 K 线撤单重挂到最新收盘价
+  （与 `StopLossPolicy` 同属"必须执行"类）。
+- **为什么与 `SignalExitPolicy` 二选一**：两者都表达"信号命中 → 该层该走"，同时装配
+  会在反向当根既逐层剥又全平所有盈利层，语义互相拆台。`enable_exit_signal` 保持为
+  信号离场的总开关，`enable_layered_reduce` 只是口味开关。
+- **不要求盈利**：与 `SignalExitPolicy` 的止盈语义不同，逆势减仓是去风险动作，
+  亏损也减；该差异由 `tests/test_exit_policy.py` 的 `test_layered_reduce_*` 锁定。
+
 ## 四、数据事件循环设计（data_event_loop / task）
 
 ### 1. 载荷统一为 Kline

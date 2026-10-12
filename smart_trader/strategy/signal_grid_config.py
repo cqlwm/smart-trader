@@ -25,6 +25,9 @@ class SignalGridStrategyConfig(BaseModel):
     #   正数: 单向 —— 仅亏损方向走出间距后加仓
     #   负数: 双向距离限制 —— 距基准仓位不超过 |值| 即加仓(盈利方向也放行)
     grid_spacing_rate: float = 0.01
+    # 顺势加仓间距: 非空时装配 TrendSpacingGate（以最外层仓位为基准, 盈利方向
+    # 走出间距才加仓）, 并替换 grid_spacing_rate 的间距口径（二者语义互斥）
+    trend_spacing_rate: float | None = None
     max_order: int = 10000
     highest_price: float = 1000000
     lowest_price: float = 0
@@ -34,8 +37,11 @@ class SignalGridStrategyConfig(BaseModel):
     # 信号种类: TRIGGER=无方向倾向(任何非中性信号都触发) / DIRECTIONAL=有方向倾向
     signal_kind: SignalKind = SignalKind.DIRECTIONAL
 
-    # 启用退出信号
+    # 启用退出信号（信号离场总开关）
     enable_exit_signal: bool = True
+    # 逆势逐层减仓: 启用后信号离场改为"每根完成K线只减最外层一层"（亏损也减），
+    # 替代信号止盈离场（enable_exit_signal 仍是总开关）
+    enable_layered_reduce: bool = False
     # 退出信号最小止盈率
     exit_signal_take_profit_min_rate: float = 0.002
 

@@ -154,6 +154,35 @@ class GridSpacingGate(EntryGate):
         return benchmark.profit_and_loss_ratio(ctx.close) <= -self._spacing_rate
 
 
+class TrendSpacingGate(EntryGate):
+    """顺势间距: 顺盈利方向走出间距才加仓（顺势阶梯）
+
+    判定 `profit_and_loss_ratio(close) >= spacing_rate`（含等号），基准取
+    **最外层仓位**（盈利方向极值: 多头取最高价层、空头取最低价层）。
+    无仓位时直接放行（第一单不受间距约束）。
+
+    与 `GridSpacingGate` 方向相反（后者以亏损方向极值为基准, 只放行逆势补仓）,
+    二者语义互斥, 由配置二选一装配。
+
+    @param spacing_rate 顺势间距阈值
+    @param master_side 网格主攻方向, 决定取哪一端为最外层基准
+    """
+
+    def __init__(self, spacing_rate: float, master_side: OrderSide) -> None:
+        self._spacing_rate = spacing_rate
+        self._master_side = master_side
+
+    def allow(self, ctx: EntryContext) -> bool:
+        if not ctx.positions:
+            return True
+        if ctx.close is None:
+            return False
+        benchmark = self._master_side.reversal().extremum_fun()(
+            ctx.positions, key=lambda position: position.price
+        )
+        return benchmark.profit_and_loss_ratio(ctx.close) >= self._spacing_rate
+
+
 class MaxOrderStopLossGate(EntryGate):
     """达到仓位上限已触发全部止损时, 不再开新仓
 

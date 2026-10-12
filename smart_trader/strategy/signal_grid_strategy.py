@@ -36,6 +36,7 @@ from smart_trader.strategy.entry_gate import (
     MaxPositionsGate,
     PriceRangeGate,
     SignalTriggerGate,
+    TrendSpacingGate,
 )
 from smart_trader.strategy.exit_policy import (
     ExitContext,
@@ -43,6 +44,7 @@ from smart_trader.strategy.exit_policy import (
     ExitPolicyChain,
     FixedTakeProfitPolicy,
     ForceExitPolicy,
+    LayeredReducePolicy,
     RestingTakeProfitPolicy,
     SignalExitPolicy,
     StopLossPolicy,
@@ -148,12 +150,21 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                 MaxPositionsGate(self._limit),
                 signal_gate,
                 PriceRangeGate(self.config.lowest_price, self.config.highest_price),
-                GridSpacingGate(
-                    self.config.grid_spacing_rate, self.config.master_side
-                ),
+                self._build_spacing_gate(),
                 MaxOrderStopLossGate(self._limit),
             ]
         )
+
+    def _build_spacing_gate(self) -> EntryGate:
+        """间距口径二选一: trend_spacing_rate 非空走顺势阶梯, 否则网格间距
+
+        两个闸门语义互斥（同一链内 AND 组合会拦死绝大多数行情）, 只装配其一。
+        """
+        if self.config.trend_spacing_rate is not None:
+            return TrendSpacingGate(
+                self.config.trend_spacing_rate, self.config.master_side
+            )
+        return GridSpacingGate(self.config.grid_spacing_rate, self.config.master_side)
 
     def _build_exit_policies(self) -> ExitPolicyChain:
         """装配离场策略链（顺序不影响合并结果）"""
@@ -167,14 +178,19 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         ]
         if self.config.fixed_rate_take_profit:
             policies.append(FixedTakeProfitPolicy())
-        policies.append(
-            SignalExitPolicy(
-                self.config.signal_kind,
-                self.config.master_side.reversal(),
-                self.config.enable_exit_signal,
-            )
-        )
+        if self.config.enable_exit_signal:
+            policies.append(self._build_signal_exit_policy())
         return ExitPolicyChain(policies)
+
+    def _build_signal_exit_policy(self) -> ExitPolicy:
+        """信号离场口味二选一: 逐层减仓 / 信号止盈离场（语义重叠, 只装配其一）"""
+        if self.config.enable_layered_reduce:
+            return LayeredReducePolicy(
+                self.config.signal_kind, self.config.master_side.reversal()
+            )
+        return SignalExitPolicy(
+            self.config.signal_kind, self.config.master_side.reversal()
+        )
 
     # ---- 逻辑仓位登记表 ----
 
@@ -234,6 +250,7 @@ class SignalGridStrategy(SingleTimeframeStrategy):
     def _exit_context(self) -> ExitContext:
         kline = self.latest_kline_obj
         return ExitContext(
+            positions=self.positions,
             close=kline.close if kline is not None else 0.0,
             market_signal=self._current_market_signal(),
         )

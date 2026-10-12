@@ -7,9 +7,22 @@
 本文件只补信号相关路径（重构前这两处逻辑零覆盖）。
 """
 
-from smart_trader.model import OrderSide, PositionSide, SignalDirection, SignalKind
-from tests.fakes import FakeSignal
-from tests.test_signal_grid_strategy import build_strategy, push_kline, seed_position
+from smart_trader.model import (
+    OrderResult,
+    OrderSide,
+    OrderStatus,
+    PositionSide,
+    SignalDirection,
+    SignalKind,
+)
+from smart_trader.strategy.signal_grid_strategy import GridPosition, SignalGridStrategy
+from tests.fakes import DEFAULT_SYMBOL, FakeSignal
+from tests.test_signal_grid_strategy import (
+    TIMESTAMP,
+    build_strategy,
+    push_kline,
+    seed_position,
+)
 
 
 def _long(**overrides: object):
@@ -21,6 +34,23 @@ def _long(**overrides: object):
     fields.setdefault("signal", FakeSignal())
     fields.update(overrides)
     return build_strategy(**fields)  # pyright: ignore[reportArgumentType]
+
+
+def _layered_reduce(**overrides: object):
+    """多头 + 逐层减仓; 默认反向信号（看跌）"""
+    fields: dict[str, object] = {
+        "signal_kind": SignalKind.DIRECTIONAL,
+        "enable_layered_reduce": True,
+        "signal": FakeSignal([SignalDirection.SHORT]),
+    }
+    fields.update(overrides)
+    return build_strategy(**fields)  # pyright: ignore[reportArgumentType]
+
+
+def _position_by_id(strategy: SignalGridStrategy, position_id: str) -> GridPosition:
+    return next(
+        position for position in strategy.positions if position.id == position_id
+    )
 
 
 # ---- 入场: 信号闸门 ----
@@ -175,6 +205,84 @@ def test_directional_signal_exit_requires_opposite_direction():
     push_kline(strategy, 0.505)
 
     assert trading.placed == [], "看涨信号与出场方向(卖出)相反, 不应平仓"
+
+
+# ---- 离场: 逆势逐层减仓 ----
+
+def test_layered_reduce_peels_only_outermost_layer():
+    """逆势减仓: 反向信号命中时只挂最外层一层的出场单, 其余层不动"""
+    strategy, trading, _ = _layered_reduce()
+    seed_position(strategy, "INNER", entry_price=0.5, quantity=100.0)
+    outer = seed_position(strategy, "OUTER", entry_price=0.6, quantity=100.0)
+
+    push_kline(strategy, 0.55)
+
+    assert [request.side for request in trading.placed] == [OrderSide.SELL], (
+        "只应挂出一张出场单"
+    )
+    assert outer.has_pending_exit is True, "最外层应被减仓"
+    assert _position_by_id(strategy, "INNER").has_pending_exit is False, (
+        "内层不得被同时平仓"
+    )
+
+
+def test_layered_reduce_waits_before_peeling_next_layer():
+    """最外层仍在减仓中（出场单未成交）时, 下一层等待, 不齐平"""
+    strategy, trading, _ = _layered_reduce()
+    seed_position(strategy, "INNER", entry_price=0.5, quantity=100.0)
+    seed_position(strategy, "OUTER", entry_price=0.6, quantity=100.0)
+
+    push_kline(strategy, 0.55, timestamp=TIMESTAMP)
+    placed_before = len(trading.placed)
+
+    push_kline(strategy, 0.54, timestamp=TIMESTAMP + 60_000)
+
+    assert len(trading.placed) > placed_before, (
+        "最外层出场单未成交时 force 应撤单重挂（继续尝试减仓）"
+    )
+    assert all(request.side is OrderSide.SELL for request in trading.placed), (
+        "减仓路径不得产生入场单"
+    )
+    assert _position_by_id(strategy, "INNER").has_pending_exit is False, (
+        "最外层未走完之前不得剥下一层"
+    )
+    assert _position_by_id(strategy, "OUTER").has_pending_exit is True
+
+
+def test_layered_reduce_peels_next_layer_after_outermost_closed():
+    """最外层出场单成交归档后, 同一根 K 线轮到次外层"""
+    strategy, trading, _ = _layered_reduce()
+    seed_position(strategy, "INNER", entry_price=0.5, quantity=100.0)
+    outer = seed_position(strategy, "OUTER", entry_price=0.6, quantity=100.0)
+
+    push_kline(strategy, 0.55, timestamp=TIMESTAMP)
+    exit_order = outer.pending_exit_order
+    assert exit_order is not None, "前置条件: 最外层应已挂出出场单"
+
+    # 让最外层的出场单在下一根 K 线被观察为完全成交 -> 结算归档
+    trading.queue_query(
+        OrderResult(
+            custom_id=exit_order.order_id,
+            symbol=DEFAULT_SYMBOL,
+            side=OrderSide.SELL,
+            status=OrderStatus.CLOSED,
+            quantity=exit_order.quantity,
+            filled_qty=exit_order.quantity,
+            price=exit_order.price,
+        )
+    )
+    push_kline(strategy, 0.54, timestamp=TIMESTAMP + 60_000)
+
+    assert [position.id for position in strategy.positions] == ["INNER"], (
+        "最外层成交后应归档, 只剩内层"
+    )
+    assert _position_by_id(strategy, "INNER").has_pending_exit is True, (
+        "归档后次外层应接力减仓"
+    )
+    assert [request.side for request in trading.placed] == [
+        OrderSide.SELL,
+        OrderSide.SELL,
+    ], "两根 K 线各挂出一张出场单, 均为减仓方向"
 
 
 # ---- 优先级: 信号离场 vs 休息挂单 ----

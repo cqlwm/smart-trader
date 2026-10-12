@@ -18,7 +18,7 @@
 | `Signal` | `strategy/signal.py` | 行情信号分析器（ABC）：无持仓语义、无入场/离场概念 |
 | `EntryContext` | `strategy/entry_gate.py` | 入场闸门上下文（纯数据）：仓位列表 + 最新收盘价 + 行情信号 |
 | `EntryGate` | `strategy/entry_gate.py` | 入场闸门（ABC）+ `EntryGateChain` |
-| `ExitContext` | `strategy/exit_policy.py` | 离场策略上下文（纯数据）：最新收盘价 + 行情信号 |
+| `ExitContext` | `strategy/exit_policy.py` | 离场策略上下文（纯数据）：最新收盘价 + 行情信号 + 仓位列表 |
 | `ExitDecision` | `strategy/exit_policy.py` | 离场决策：`should_exit` + `force`（force 可覆盖休息中的出场挂单） |
 | `ExitPolicy` | `strategy/exit_policy.py` | 离场策略（ABC）+ `ExitPolicyChain` |
 
@@ -245,6 +245,7 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 | `DirectionalSignalGate` | `signal is None or direction == of_order_side(entry_side)` | —— |
 | `PriceRangeGate` | `close is not None and lowest <= close <= highest` | **闭区间**（含等号） |
 | `GridSpacingGate` | 无仓位直接放行；否则极值仓位 `profit_and_loss_ratio(close) <= -grid_spacing_rate` | **`<=` 含等号**；**正负号改变语义，见下** |
+| `TrendSpacingGate` | 无仓位直接放行；否则最外层仓位（盈利方向极值）`profit_and_loss_ratio(close) >= trend_spacing_rate` | **`>=` 含等号**；**顺势阶梯，见 3.2** |
 | `MaxOrderStopLossGate` | `not limit.stop_loss_triggered(len(positions))` | —— |
 
 `EntryGateChain` 短路 AND，空链恒放行。
@@ -273,12 +274,31 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 不是待修的缺陷。该语义由 `tests/test_entry_gate.py` 的
 `test_negative_spacing_*` / `test_positive_spacing_*` 五个测试锁定。
 
+### 3.2 `TrendSpacingGate`（顺势阶梯加仓）
+
+判定式 `profit_and_loss_ratio(close) >= trend_spacing_rate`（含等号），基准取
+**最外层仓位**（盈利方向极值：多头取最高价层、空头取最低价层，即
+`master_side.reversal().extremum_fun()`）。无仓位直接放行（第一层不受间距约束）。
+
+- 与 `GridSpacingGate` 的**方向相反**：后者基准是亏损方向极值层（多头取最低价层），
+  只放行"走出亏损间距"的加仓（逆势补仓）；前者只放行"顺盈利方向再加一层"的加仓。
+- 二者**语义互斥**（同一链内 AND 组合会把绝大多数行情拦死），由
+  `SignalGridStrategyConfig.trend_spacing_rate` 二选一装配：非空 → 装配
+  `TrendSpacingGate` 并替换 `GridSpacingGate`；为空 → 保持 `grid_spacing_rate` 语义。
+- "层"的节奏由编排层保证（每根完成 K 线最多建一层）；加仓的**方向许可**由信号闸门
+  决定 —— `AlphaTrendSignal` 是翻转事件信号，若需"趋势延续中每隔 X% 加一层"，
+  需配合状态型信号（趋势持续期间恒输出方向）。
+
+该语义由 `tests/test_entry_gate.py` 的 `test_trend_spacing_*` 与
+`tests/test_signal_grid_rules.py` 的装配契约测试锁定。
+
 ### 4. 离场策略（`ExitPolicy`）
 
 | 策略 | 规则 | force |
 | --- | --- | --- |
 | `ForceExitPolicy` | `trigger()` 为真（达到上限止损 / 手动 `close_position`） | **True** |
 | `StopLossPolicy` | 读仓位的 `enable_stop_loss` / `trailing_stop_price` / `entry_side` | **True** |
+| `LayeredReducePolicy` | 信号反向命中，且自己是**最外层**（盈利方向极值、`quantity > 0` 的层） | **True** |
 | `FixedTakeProfitPolicy` | `profit_level(close) == 2` | False |
 | `SignalExitPolicy` | `profit_level(close) == 1` 且行情方向命中 | False |
 
@@ -287,7 +307,16 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 `RestingTakeProfitPolicy` 不进链：它只提供盘中休息限价止盈单的挂单价，不判断是否离场。
 
 **`force` 不变量**：已有未成交出场单时，只有 `force=True` 的决策可覆盖（撤单结算后重挂）；
-普通止盈保留原挂单，不重复下单。
+普通止盈保留原挂单，不重复下单。`LayeredReducePolicy` 是第三个 force 来源：逆势减仓
+必须实际减仓，每根完成 K 线撤单重挂到最新收盘价（否则下跌途中限价单挂着不成交，
+逐层推进停滞）。
+
+**逆势逐层减仓（`LayeredReducePolicy`）**：信号反向命中时只对**最外层一层**
+（`quantity > 0` 的盈利方向极值层）产出离场决策，每根完成 K 线最多推进一层 ——
+顺序由既有不变量保证：被选中的层存在未成交出场单时，下一层仍不是最外层，
+自然等待重挂/成交，无需额外节流状态。它**不要求盈利**（逆势去风险，亏损也减），
+且与 `SignalExitPolicy` 语义重叠，装配时二选一：`enable_exit_signal` 是信号离场的
+总开关，`enable_layered_reduce` 选择口味（True → 逐层减仓；False → 止盈离场）。
 
 ### 5. 止损参数与止盈阈值的权威来源
 

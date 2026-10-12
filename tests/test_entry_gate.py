@@ -4,6 +4,7 @@
 判定口径（与既有实现逐字一致）：
 - `PriceRangeGate` 闭区间（含等号）
 - `GridSpacingGate` 无仓位放行，间距判定 `<=` 含等号
+- `TrendSpacingGate` 无仓位放行，间距判定 `>=` 含等号（基准为最外层）
 """
 
 import pytest
@@ -23,6 +24,7 @@ from smart_trader.strategy.entry_gate import (
     MaxPositionsGate,
     PriceRangeGate,
     SignalTriggerGate,
+    TrendSpacingGate,
 )
 from tests.fakes import (
     RecordingGate,
@@ -297,6 +299,110 @@ def test_grid_spacing_gate_uses_position_quantity_for_reference_price():
 
     ctx = make_entry_context(positions, close=0.495)
     assert gate.allow(ctx) is True, "空仓位仍应提供网格参考价"
+
+
+# ---- TrendSpacingGate: 顺势阶梯加仓 ----
+
+
+def test_trend_spacing_gate_allows_when_no_positions():
+    """无仓位时直接放行（第一单不受间距约束）"""
+    gate = TrendSpacingGate(0.01, OrderSide.BUY)
+
+    assert gate.allow(make_entry_context()) is True, "空仓时应放行第一单"
+
+
+def test_trend_spacing_gate_blocks_inside_spacing():
+    """盈利方向未走出间距时不加仓"""
+    gate = TrendSpacingGate(0.01, OrderSide.BUY)
+    ctx = make_entry_context(
+        [make_position("P1", opening_price=0.5, opening_quantity=100)], close=0.502
+    )
+
+    assert gate.allow(ctx) is False, "上涨 0.4% 未达 1% 间距, 不应顺势加仓"
+
+
+def test_trend_spacing_gate_allows_exactly_at_spacing_rate():
+    """恰好等于间距时放行（>= 含等号）"""
+    gate = TrendSpacingGate(0.01, OrderSide.BUY)
+    ctx = make_entry_context(
+        [make_position("P1", opening_price=0.5, opening_quantity=100)], close=0.505
+    )
+
+    assert gate.allow(ctx) is True, "恰好等于间距时应放行"
+
+
+def test_trend_spacing_gate_allows_beyond_spacing():
+    """盈利方向走出间距后放行"""
+    gate = TrendSpacingGate(0.01, OrderSide.BUY)
+    ctx = make_entry_context(
+        [make_position("P1", opening_price=0.5, opening_quantity=100)], close=0.52
+    )
+
+    assert gate.allow(ctx) is True, "上涨 4% 走出 1% 间距, 应放行"
+
+
+def test_trend_spacing_gate_blocks_loss_direction():
+    """亏损方向一律拦截（与 GridSpacingGate 的关键差异）"""
+    gate = TrendSpacingGate(0.01, OrderSide.BUY)
+    ctx = make_entry_context(
+        [make_position("P1", opening_price=0.5, opening_quantity=100)], close=0.49
+    )
+
+    assert gate.allow(ctx) is False, "顺势闸门不得在亏损方向加仓"
+
+
+def test_trend_spacing_gate_blocks_when_close_is_none():
+    """尚无行情时拦截"""
+    gate = TrendSpacingGate(0.01, OrderSide.BUY)
+    ctx = make_entry_context(
+        [make_position("P1", opening_price=0.5, opening_quantity=100)], close=None
+    )
+
+    assert gate.allow(ctx) is False, "无收盘价时不能判定顺势间距"
+
+
+def test_trend_spacing_gate_uses_outermost_layer_as_benchmark():
+    """做多: 取价格最高的仓位作为基准（最外层）
+
+    若误取最低价层, 相对 0.5 的 +5% 早已放行 —— 但正确的基准是最外层 0.6,
+    +5% 相对它仍是亏损方向, 必须拦截。
+    """
+    gate = TrendSpacingGate(0.01, OrderSide.BUY)
+    positions = [
+        make_position("LOW", opening_price=0.5, opening_quantity=100),
+        make_position("HIGH", opening_price=0.6, opening_quantity=100),
+    ]
+
+    allowed = make_entry_context(positions, close=0.606)
+    assert gate.allow(allowed) is True, "相对最外层上涨 1% 应放行"
+
+    blocked = make_entry_context(positions, close=0.525)
+    assert gate.allow(blocked) is False, "相对最外层未走出间距时应拦截"
+
+
+def test_trend_spacing_gate_short_side_uses_lowest_price_layer():
+    """做空: 基准取最低价层, 价格顺盈利方向下跌走出间距才放行"""
+    gate = TrendSpacingGate(0.01, OrderSide.SELL)
+    positions = [
+        make_position(
+            "HIGH",
+            position_side=PositionSide.SHORT,
+            opening_price=0.6,
+            opening_quantity=100,
+        ),
+        make_position(
+            "LOW",
+            position_side=PositionSide.SHORT,
+            opening_price=0.5,
+            opening_quantity=100,
+        ),
+    ]
+
+    falling = make_entry_context(positions, close=0.495)
+    assert gate.allow(falling) is True, "做空应取最低价层为基准, 顺下跌方向放行"
+
+    rising = make_entry_context(positions, close=0.606)
+    assert gate.allow(rising) is False, "做空不得在上涨方向加仓"
 
 
 # ---- MaxOrderStopLossGate ----

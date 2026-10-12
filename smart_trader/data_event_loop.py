@@ -62,17 +62,18 @@ def parse_ws_message(message: str) -> Kline | None:
 
     if not isinstance(payload, dict):
         return None
-    envelope = payload
+    envelope = cast("dict[str, Any]", payload)
 
-    stream = envelope.get("stream", "")
-    data = envelope.get("data", {})
+    stream: Any = envelope.get("stream", "")
+    data: Any = envelope.get("data", {})
     if not isinstance(data, dict):
         return None
-    kline = data.get("k")
+    kline_data = cast("dict[str, Any]", data)
+    kline: Any = kline_data.get("k")
     if not isinstance(kline, dict):
         return None
 
-    return parse_kline_message(kline, cast(str, stream))
+    return parse_kline_message(cast("dict[str, Any]", kline), cast(str, stream))
 
 
 class Task:

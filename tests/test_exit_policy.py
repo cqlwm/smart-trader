@@ -4,6 +4,8 @@
 判定口径（与既有实现逐字一致）：
 - `StopLossPolicy` 用 `>=` / `<=`（含等号）
 - `FixedTakeProfitPolicy` / `SignalExitPolicy` 依赖 `profit_level` 的严格 `>`（不含等号）
+- `LayeredReducePolicy` 只对最外层（`quantity > 0` 的盈利方向极值层）产出决策，
+  恒为 force；不要求盈利
 """
 
 import pytest
@@ -12,6 +14,7 @@ from smart_trader.exceptions import SmartTraderError
 from smart_trader.model import (
     MarketSignal,
     OrderSide,
+    OrderStatus,
     PositionSide,
     SignalDirection,
     SignalKind,
@@ -23,22 +26,24 @@ from smart_trader.strategy.exit_policy import (
     ExitPolicyChain,
     FixedTakeProfitPolicy,
     ForceExitPolicy,
+    LayeredReducePolicy,
     RestingTakeProfitPolicy,
     SignalExitPolicy,
     StopLossPolicy,
 )
 from smart_trader.strategy.grid_position import GridPosition
-from tests.fakes import make_market_signal, make_position_row
+from tests.fakes import make_market_signal, make_order_record, make_position_row
 
 # ---- ExitContext / ExitDecision ----
 
 
 def test_exit_context_defaults_to_zero_close_and_no_signal():
-    """默认值: 收盘价 0, 无信号"""
+    """默认值: 收盘价 0, 无信号, 无仓位"""
     ctx = ExitContext()
 
     assert ctx.close == 0.0, "默认收盘价为 0"
     assert ctx.market_signal is None, "默认无信号"
+    assert ctx.positions == [], "默认无仓位"
 
 
 def test_exit_decision_defaults_to_no_exit_and_no_force():
@@ -254,17 +259,6 @@ def test_signal_exit_policy_blocks_neutral_in_trigger_mode():
     assert policy.evaluate(position, ctx).should_exit is False
 
 
-def test_signal_exit_policy_blocks_when_disabled():
-    """未启用信号离场时永不触发（隔离）"""
-    policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL, enabled=False)
-    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
-    ctx = ExitContext(close=0.505, market_signal=_signal(SignalDirection.LONG))
-
-    assert policy.evaluate(position, ctx).should_exit is False, (
-        "enable_exit_signal=False 时信号不得触发离场"
-    )
-
-
 def test_signal_exit_policy_blocks_when_no_signal_configured():
     """未配置信号时不触发（空值）"""
     policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
@@ -339,6 +333,129 @@ def test_signal_exit_policy_requires_profit_level_one():
     # 0.5025 处于 1 级（超过 0.2% 但未达 1%）
     ctx = ExitContext(close=0.5025, market_signal=_signal(SignalDirection.LONG))
     assert policy.evaluate(position, ctx).should_exit is True, "1 级盈利应由信号离场"
+
+
+# ---- LayeredReducePolicy ----
+
+
+def test_layered_reduce_only_selects_outermost_layer():
+    """只对最外层（最高价层）产出离场决策, 其余层不动"""
+    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
+    inner = _holding("INNER", entry_price=0.5)
+    outer = _holding("OUTER", entry_price=0.6)
+    ctx = _exit_ctx([inner, outer], close=0.58, direction=SignalDirection.SHORT)
+
+    assert policy.evaluate(outer, ctx).should_exit is True, "最外层应被选中"
+    assert policy.evaluate(inner, ctx).should_exit is False, (
+        "非最外层不得离场（一次只剥一层）"
+    )
+
+
+def test_layered_reduce_is_force():
+    """逐层减仓恒为强制离场（撤单重挂到最新价, 保证实际减仓）"""
+    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
+    outer = _holding("OUTER", entry_price=0.6)
+    ctx = _exit_ctx([outer], close=0.58, direction=SignalDirection.SHORT)
+
+    decision = policy.evaluate(outer, ctx)
+
+    assert decision.should_exit is True
+    assert decision.force is True, "逆势减仓必须能覆盖休息中的挂单"
+
+
+def test_layered_reduce_requires_opposite_direction():
+    """DIRECTIONAL: 未命中出场方向（同向/中性）不减仓"""
+    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
+    outer = _holding("OUTER", entry_price=0.6)
+
+    same_direction = _exit_ctx([outer], close=0.58, direction=SignalDirection.LONG)
+    neutral = _exit_ctx([outer], close=0.58, direction=SignalDirection.NEUTRAL)
+
+    assert policy.evaluate(outer, same_direction).should_exit is False, (
+        "看涨信号与出场方向相反, 不减仓"
+    )
+    assert policy.evaluate(outer, neutral).should_exit is False, "中性信号不减仓"
+
+
+def test_layered_reduce_trigger_kind_accepts_any_non_neutral():
+    """TRIGGER: 任何非中性信号都可触发减仓"""
+    policy = LayeredReducePolicy(SignalKind.TRIGGER, OrderSide.SELL)
+    outer = _holding("OUTER", entry_price=0.6)
+
+    for direction in (SignalDirection.LONG, SignalDirection.SHORT):
+        ctx = _exit_ctx([outer], close=0.58, direction=direction)
+        assert policy.evaluate(outer, ctx).should_exit is True, (
+            f"TRIGGER 模式下 {direction.value} 信号均可触发减仓"
+        )
+
+
+def test_layered_reduce_does_not_exit_without_signal():
+    """未配置信号时不减仓（空值）"""
+    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
+    outer = _holding("OUTER", entry_price=0.6)
+
+    assert policy.evaluate(outer, ExitContext(positions=[outer], close=0.58)).should_exit is False, (
+        "空信号不得触发减仓"
+    )
+
+
+def test_layered_reduce_reduces_at_loss():
+    """逆势减仓不要求盈利（与 SignalExitPolicy 的止盈语义不同）"""
+    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
+    lost = _holding("LOST", entry_price=0.5)
+    ctx = _exit_ctx([lost], close=0.45, direction=SignalDirection.SHORT)
+
+    assert policy.evaluate(lost, ctx).should_exit is True, (
+        "信号反向时亏损层也应减仓（去风险）"
+    )
+
+
+def test_layered_reduce_short_selects_lowest_price_layer():
+    """做空: 最外层是最低价层, 需看涨信号"""
+    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.BUY)
+    outer = _holding("LOW", position_side=PositionSide.SHORT, entry_price=0.5)
+    inner = _holding("HIGH", position_side=PositionSide.SHORT, entry_price=0.6)
+    ctx = _exit_ctx([outer, inner], close=0.52, direction=SignalDirection.LONG)
+
+    assert policy.evaluate(outer, ctx).should_exit is True, "做空最外层是最低价层"
+    assert policy.evaluate(inner, ctx).should_exit is False
+
+
+def test_layered_reduce_ignores_empty_layers_in_selection():
+    """零数量层不参与选择（虚拟空仓位不得成为最外层）"""
+    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
+    empty = _holding("EMPTY", entry_price=0.7, quantity=0.0)
+    real = _holding("REAL", entry_price=0.5)
+    ctx = _exit_ctx([real, empty], close=0.55, direction=SignalDirection.SHORT)
+
+    assert policy.evaluate(real, ctx).should_exit is True, (
+        "价格更高的零数量层应被跳过, 选中真实持仓层"
+    )
+    assert policy.evaluate(empty, ctx).should_exit is False, "零数量层不得离场"
+
+
+def test_layered_reduce_keeps_selecting_layer_with_pending_exit():
+    """最外层已有未成交出场单时仍被选中（force 撤单重挂, 不越过它去剥下一层）"""
+    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
+    outer = _holding("OUTER", entry_price=0.6)
+    outer.orders.append(
+        make_order_record(
+            "o-OUTER-exit",
+            "OUTER",
+            side=OrderSide.SELL,
+            price=0.6,
+            quantity=100.0,
+            status=OrderStatus.OPEN,
+        )
+    )
+    inner = _holding("INNER", entry_price=0.5)
+    ctx = _exit_ctx([inner, outer], close=0.58, direction=SignalDirection.SHORT)
+
+    assert outer.has_pending_exit is True, "前置条件: 最外层应有未成交出场单"
+    assert policy.evaluate(outer, ctx).should_exit is True, "仍选中在减仓中的最外层"
+    assert policy.evaluate(inner, ctx).should_exit is False, (
+        "不得越过最外层去剥下一层（一次只剥一层）"
+    )
 
 
 # ---- ExitPolicyChain ----
@@ -451,6 +568,44 @@ def test_resting_take_profit_price_for_short_position():
 def _position(position_id: str = "POS1", **overrides: object) -> GridPosition:
     row = make_position_row(position_id, **overrides)
     return GridPosition.from_row(row, [])
+
+
+def _holding(
+    position_id: str = "POS1",
+    *,
+    entry_price: float = 0.5,
+    quantity: float = 100.0,
+    **row_overrides: object,
+) -> GridPosition:
+    """构造持仓中的逻辑仓位（附一条按 `quantity` 成交的入场单）
+
+    逐层减仓的选中口径要求 `quantity > 0`, 因此不能用 `_position`（无成交）。
+    """
+    row = make_position_row(position_id, **row_overrides)
+    entry_side = (
+        OrderSide.BUY if row.position_side == PositionSide.LONG else OrderSide.SELL
+    )
+    order = make_order_record(
+        f"o-{position_id}",
+        position_id,
+        side=entry_side,
+        price=entry_price,
+        quantity=quantity,
+        filled_qty=quantity,
+        avg_price=entry_price,
+        status=OrderStatus.CLOSED,
+    )
+    return GridPosition.from_row(row, [order])
+
+
+def _exit_ctx(
+    positions: list[GridPosition],
+    close: float,
+    direction: SignalDirection,
+) -> ExitContext:
+    return ExitContext(
+        positions=positions, close=close, market_signal=make_market_signal(direction)
+    )
 
 
 def _signal(direction: SignalDirection) -> MarketSignal:

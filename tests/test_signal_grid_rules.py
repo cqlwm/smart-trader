@@ -14,11 +14,15 @@ from smart_trader.model import OrderSide, PositionSide, SignalDirection, SignalK
 from smart_trader.strategy.entry_gate import (
     DirectionalSignalGate,
     EntryGate,
+    GridSpacingGate,
     SignalTriggerGate,
+    TrendSpacingGate,
 )
 from smart_trader.strategy.exit_policy import (
     FixedTakeProfitPolicy,
+    LayeredReducePolicy,
     RestingTakeProfitPolicy,
+    SignalExitPolicy,
 )
 from smart_trader.strategy.signal_grid_strategy import SignalGridStrategy
 from tests.fakes import FakeSignal
@@ -101,6 +105,82 @@ def test_fixed_take_profit_enabled_adds_policy():
     assert _has_fixed_take_profit_policy(strategy), (
         "启用固定止盈时必须装配该策略"
     )
+
+
+# ---- 装配契约: 间距口径（网格 vs 顺势） ----
+
+
+def test_trend_spacing_rate_assembles_trend_spacing_gate():
+    """trend_spacing_rate 非空时装配顺势闸门并替换网格闸门"""
+    strategy, _, _ = build_strategy(trend_spacing_rate=0.01)
+
+    assert _entry_gate_of(strategy, TrendSpacingGate) is not None, (
+        "trend_spacing_rate 非空应装配 TrendSpacingGate"
+    )
+    assert _entry_gate_of(strategy, GridSpacingGate) is None, (
+        "顺势闸门与网格闸门语义互斥, 不得同时装配"
+    )
+
+
+def test_default_config_keeps_grid_spacing_gate():
+    """默认（trend_spacing_rate 为空）保持网格间距口径"""
+    strategy, _, _ = build_strategy()
+
+    assert _entry_gate_of(strategy, GridSpacingGate) is not None
+    assert _entry_gate_of(strategy, TrendSpacingGate) is None
+
+
+def test_entry_gate_chain_order_with_trend_spacing():
+    """闸门链顺序: 上限 → 信号 → 价格区间 → 顺势间距 → 上限止损"""
+    strategy, _, _ = build_strategy(trend_spacing_rate=0.01, lowest_price=0.4)
+
+    names = [type(gate).__name__ for gate in strategy.entry_gates.gates]
+
+    assert names == [
+        "MaxPositionsGate",
+        "DirectionalSignalGate",
+        "PriceRangeGate",
+        "TrendSpacingGate",
+        "MaxOrderStopLossGate",
+    ], "顺势间距闸门必须占据网格间距闸门的位置"
+
+
+# ---- 装配契约: 信号离场口味（止盈 vs 逐层减仓） ----
+
+
+def test_default_config_assembles_signal_exit_policy():
+    """默认装配信号止盈离场, 不装配逐层减仓"""
+    strategy, _, _ = build_strategy()
+
+    policies = strategy.exit_policies.policies
+    assert any(isinstance(policy, SignalExitPolicy) for policy in policies), (
+        "默认应装配 SignalExitPolicy"
+    )
+    assert not any(isinstance(policy, LayeredReducePolicy) for policy in policies)
+
+
+def test_enable_layered_reduce_replaces_signal_exit_policy():
+    """启用逐层减仓后替代信号止盈离场（语义重叠, 二选一）"""
+    strategy, _, _ = build_strategy(enable_layered_reduce=True)
+
+    policies = strategy.exit_policies.policies
+    assert any(isinstance(policy, LayeredReducePolicy) for policy in policies), (
+        "enable_layered_reduce=True 应装配 LayeredReducePolicy"
+    )
+    assert not any(isinstance(policy, SignalExitPolicy) for policy in policies), (
+        "逐层减仓与信号止盈离场二选一"
+    )
+
+
+def test_exit_signal_disabled_omits_both_signal_exit_policies():
+    """enable_exit_signal 是信号离场总开关: 关闭时两种口味都不装配"""
+    strategy, _, _ = build_strategy(
+        enable_layered_reduce=True, enable_exit_signal=False
+    )
+
+    policies = strategy.exit_policies.policies
+    assert not any(isinstance(policy, LayeredReducePolicy) for policy in policies)
+    assert not any(isinstance(policy, SignalExitPolicy) for policy in policies)
 
 
 def test_resting_take_profit_only_when_limit_order_enabled():

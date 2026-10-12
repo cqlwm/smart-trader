@@ -116,6 +116,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 17 | **修复 `fetch_ohlcv` 位置传参缺陷**：适配器把 `limit` 传入 ccxt `fetch_ohlcv(symbol, timeframe, since, limit)` 的 `since` 槽（`startTime≈1970`），恒拉数据集最老 500 根K线——定时模式的"陈旧K线"告警与 **WS 模式的历史初始化（300 根"历史"实为 2020 年数据）** 皆源于此；`CcxtExchange` Protocol 与 `FakeCcxtExchange` 的 `fetch_ohlcv` 签名随之对齐 ccxt 原生（否则错位会被类型检查与测试双重掩盖），并补回归测试。此前记录的"demo 行情镜像不稳定"结论有误，实为此缺陷 | 已完成 |
 | Step 18 | **`CcxtExchange` 契约双侧静态校验 + 组装缝**：此前 Protocol 只校验测试侧 Fake，真实 ccxt 侧经 `cast`/`Any` 赋值盲信（声明了 ccxt 上不存在的方法只有运行时才暴露）。新增 `CcxtBinanceExchange` 显式继承 Protocol（pyright 从此校验真实实现侧），入站载荷与出站参数引入 TypedDict 词汇表（`CcxtOrder` / `CcxtPosition` / `CcxtOrderParams` 等，键按实际消费方式声明必填性，`CcxtOrder` 保持 total=False 以允许注入残缺响应），适配器内 4 处 `cast` 清零；`BinanceSwapClient` 改为纯依赖注入（删除 `__new__` 注入 hack 与死代码 `create_ccxt_binance`），组装入口 `create_binance_swap_client`；修复 7cc0f9d 遗留红测试（测试引用从未实现的 `create_exchange` 参数），构造期契约测试改经 wrapper 的 `raw_factory` 注入打桩；顺手修复存量 `data_event_loop.py` 的 pyright strict 报错（恢复被误删的 `cast` 用法，运行时零变化）。后续收敛：Protocol 成员 `fapiPublicGetExchangeInfo` 更名 `exchange_info`（seam 只表达需求，币安端点名归 wrapper 委托实现），client 交易规则缓存领域化为 parsed `SymbolInfo`（按 `symbol.binance()` 键，raw dict 不再滞留 client 状态） | 已完成 |
 | Step 19 | **client 包整体迁入 exchange 包 + 端口 ABC 化（两层适配器）**：`client/ports.py` → `exchange/ports.py`、`client/binance_client.py` → `exchange/binance/binance_exchange.py`，`client/` 包删除。三端口由 `typing.Protocol` 改为 `abc.ABC` + `@abstractmethod`，新增 `Exchange` 组合接口（装配层持有完整能力）；`BinanceExchange` 与测试 Fake（`FakeTradingPort` / `FakeMarketDataPort` / `StatefulFakeExchange` / `JournaledTradingPort`）显式继承端口。Protocol 收敛为唯一第三方接缝 `CcxtExchange`（标 `@runtime_checkable`，新增真实 ccxt 实例一致性测试）。**删除纯委托层 `CcxtBinanceExchange`**：构造逻辑（public/private/demo/load_markets）收进 builder 函数 `build_public_ccxt` / `build_private_ccxt`（`raw_factory` 注入缝保留），适配器从三层收敛为两层——`BinanceExchange` 对 `CcxtExchange` 类型双实例的每个调用点从此直接受 Protocol 静态校验（Step 17 的 limit/since 槽位错位正属此类错误）；接缝成员 `exchange_info` 随之回归 ccxt 方言名 `fapiPublicGetExchangeInfo`（Step 18 的"seam 只表达需求"改名依附于 wrapper 委托层，wrapper 删除后接缝必须描述 raw 实例的真实表面，一致性测试才能拦截成员漂移）。命名对齐：`BinanceSwapClient`→`BinanceExchange`、`create_binance_swap_client`→`create_binance_exchange`、`bootstrap.create_binance_client`→`create_binance_exchange`；`cancel_open_orders` 保留为非端口能力（demo 专用）。类型准则（内部 ABC / Protocol 仅限第三方接缝）见第二节 | 已完成 |
+| Step 20 | **顺势逐层加仓 + 逆势逐层减仓**：新增 `TrendSpacingGate`（顺势阶梯闸门：以最外层仓位为基准，盈利方向走出间距才加仓；与 `GridSpacingGate` 互斥装配，由 `trend_spacing_rate` 选择，见 `02-domain-model.md` 八.3.2）与 `LayeredReducePolicy`（信号反向命中时每根完成 K 线只减最外层一层、亏损也减、`force=True` 撤单重挂保证实际减仓；与 `SignalExitPolicy` 二选一，`enable_exit_signal` 仍为总开关）；`ExitContext` 增加 `positions` 字段（与 `EntryContext` 对称，纯数据）；config 新增 `trend_spacing_rate` / `enable_layered_reduce`（设计见 `03-coding-design.md` 三.10/三.11） | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -143,9 +144,9 @@ strategy / task / template              (业务编排: 网格、信号、止损)
    `confirm_entry` / `confirm_exit`、`order_ids.intent` 失效引用已清除，并新增第三节
    「信号与规则层设计」覆盖 strategy 层（此前只覆盖 storage 层）。
 5. **日志与配置模块无测试**（`log.init_logging` 的级别解析、`config` 的必填校验）。
-6. **顺势加仓**：需要"价格顺趋势上涨/下跌到一定距离即加仓"时，
-   可用**负 `grid_spacing_rate`**（双向距离限制：盈利与亏损方向都会放行，
-   见 `02-domain-model.md` 第八节），或写新信号 + 正常闸门组合。
+6. ~~**顺势加仓**~~ —— **已由 Step 20 解决**：需要"价格顺趋势上涨/下跌到一定距离即加仓"时，
+   用 `TrendSpacingGate`（`trend_spacing_rate` 装配后替换 `GridSpacingGate`，见
+   `02-domain-model.md` 八.3.2）；"逆势逐层减仓"由 `LayeredReducePolicy` 承担。
    `Step 13` 已删除 `position_reverse` 这个反向开关，方向直接由 config 声明。
 
 ### 已修复缺陷（记录）

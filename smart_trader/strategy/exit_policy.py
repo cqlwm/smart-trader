@@ -16,12 +16,14 @@ from smart_trader.strategy.grid_position import GridPosition
 class ExitContext(BaseModel):
     """离场策略上下文: 纯数据, 不含 Kline / DataFrame
 
+    @param positions 当前逻辑仓位快照（逐层减仓需要跨仓位选择, 与 EntryContext 对称）
     @param close 最新收盘价
     @param market_signal 本根 K 线的行情信号; None 表示未配置信号
     """
 
     model_config = ConfigDict(extra="forbid")
 
+    positions: list[GridPosition] = []
     close: float = 0.0
     market_signal: MarketSignal | None = None
 
@@ -126,26 +128,17 @@ class SignalExitPolicy(ExitPolicy):
 
     止盈阈值直接用 `position.signal_min_take_profit_rate`（`profit_level` 已在用）,
     不持有第二份参数, 避免参数源分裂。
+    是否启用由"是否放进策略链"表达（`enable_exit_signal` 由装配处决定）, 不设开关字段。
 
     @param kind TRIGGER: 任何非中性信号即可; DIRECTIONAL: 仅命中出场方向时
     @param exit_side 策略的实际出场方向（多头仓位的出场方向为 SELL）
-    @param enabled 是否启用信号离场
     """
 
-    def __init__(
-        self,
-        kind: SignalKind,
-        exit_side: OrderSide,
-        enabled: bool = True,
-    ) -> None:
+    def __init__(self, kind: SignalKind, exit_side: OrderSide) -> None:
         self._kind = kind
         self._exit_side = exit_side
-        self._enabled = enabled
 
     def evaluate(self, position: GridPosition, ctx: ExitContext) -> ExitDecision:
-        if not self._enabled:
-            return ExitDecision()
-
         signal = ctx.market_signal
         if signal is None or signal.direction is SignalDirection.NEUTRAL:
             return ExitDecision()
@@ -159,6 +152,49 @@ class SignalExitPolicy(ExitPolicy):
         if position.profit_level(ctx.close) == 1:
             return ExitDecision(should_exit=True)
         return ExitDecision()
+
+
+class LayeredReducePolicy(ExitPolicy):
+    """逆势逐层减仓: 信号反向命中时, 每根 K 线只减最外层一层
+
+    - 只对**最外层**（盈利方向极值且 `quantity > 0` 的持仓层）产出离场决策,
+      其余层不动 —— 策略逐仓位询问策略链, 只有一个返回 True;
+    - 已有未成交出场单的层仍被选中（`force=True` 撤单重挂, 不越过它去剥下一层）;
+    - **不要求盈利**: 逆势去风险, 亏损也减（与 `SignalExitPolicy` 的止盈语义不同）;
+    - `force=True`: 逆势减仓必须实际减仓, 每根完成 K 线撤单重挂到最新收盘价。
+
+    与 `SignalExitPolicy` 语义重叠, 装配时二选一（`enable_layered_reduce` 选择口味）。
+
+    @param kind TRIGGER: 任何非中性信号即可; DIRECTIONAL: 仅命中出场方向时
+    @param exit_side 策略的实际出场方向（多头仓位的出场方向为 SELL）
+    """
+
+    def __init__(self, kind: SignalKind, exit_side: OrderSide) -> None:
+        self._kind = kind
+        self._exit_side = exit_side
+
+    def evaluate(self, position: GridPosition, ctx: ExitContext) -> ExitDecision:
+        signal = ctx.market_signal
+        if signal is None or signal.direction is SignalDirection.NEUTRAL:
+            return ExitDecision()
+
+        if (
+            self._kind is SignalKind.DIRECTIONAL
+            and signal.direction is not SignalDirection.of_order_side(self._exit_side)
+        ):
+            return ExitDecision()
+
+        outermost = self._outermost(ctx.positions)
+        if outermost is None or outermost.id != position.id:
+            return ExitDecision()
+        return ExitDecision(should_exit=True, force=True)
+
+    def _outermost(self, positions: list[GridPosition]) -> GridPosition | None:
+        """最外层: 盈利方向极值且 `quantity > 0` 的持仓层; 无持仓层时为 None"""
+        holding = [item for item in positions if item.quantity > 0]
+        if not holding:
+            return None
+        return self._exit_side.extremum_fun()(holding, key=lambda item: item.price)
 
 
 class RestingTakeProfitPolicy:
