@@ -279,7 +279,9 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         )
 
         trailing_stop_price = None
-        if self.config.enable_order_stop_loss or self.config.enable_trailing_stop:
+        if self.config.enable_trailing_stop:
+            # 字段只归属跟踪止损（播种 ratchet 下限）; 固定止损由 StopLossPolicy
+            # 按 仓位均价 × (1 ∓ stop_loss_rate) 实时判定, 不写死快照（Step 22）
             if self.config.master_side == OrderSide.BUY:
                 trailing_stop_price = close_price * (1 - stop_loss_rate)
             else:  # SELL
@@ -465,15 +467,23 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         self._archive(archived)
 
     def _on_kline(self):
-        """盘中路径: 跟踪休息中的出场单, 必要时挂出休息限价止盈单"""
+        """盘中路径: 结算入场单成交, 跟踪休息中的出场单, 必要时挂出休息限价止盈单
+
+        入场单结算是记账职责, 每 tick 无条件执行 —— 不受限价止盈开关影响
+        （Step 21 修复: 原实现以 resting_take_profit is None 整体短路,
+        未开启限价止盈的配置下入场单成交永远无人结算）。
+        """
         latest_kline = self.latest_kline_obj
-        resting_take_profit = self._resting_take_profit
-        if latest_kline is None or resting_take_profit is None:
+        if latest_kline is None:
             return
 
+        resting_take_profit = self._resting_take_profit
         for position in self.positions:
-            if position.quantity <= 0 and not position.pending_entry_orders:
-                continue
+            # 入场单成交结算: 只回写事实, 不撤单（撤单语义属于出场流程）
+            self._lifecycle.settle_entry_fills(position)
+
+            if resting_take_profit is None:
+                continue  # 限价止盈未启用: 无休息单可跟踪/挂出
 
             pending_exit = position.pending_exit_order
             if pending_exit is not None:
@@ -484,14 +494,13 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                         self._archive([position])
                 continue
 
-            if self._lifecycle.settle_pending_entries(position):
-                continue
-            if not position.pending_entry_orders:
-                exit_price = resting_take_profit.limit_price(position)
-                self._gateway.place_and_append(
-                    position,
-                    position.exit_side,
-                    position.quantity,
-                    exit_price,
-                    first_price=exit_price,
-                )
+            if position.quantity <= 0 or position.pending_entry_orders:
+                continue  # 无可平量或入场单未了结: 不挂休息止盈单
+            exit_price = resting_take_profit.limit_price(position)
+            self._gateway.place_and_append(
+                position,
+                position.exit_side,
+                position.quantity,
+                exit_price,
+                first_price=exit_price,
+            )

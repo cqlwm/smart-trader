@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from smart_trader.model import OrderSide, PositionSide
+from smart_trader.model import OrderSide, OrderStatus, PositionSide
 from smart_trader.storage.order_journal import OrderJournal
 from tests.fake_exchange import StatefulFakeExchange
 from tests.integration_harness import (
@@ -88,7 +88,7 @@ class TestBehaviorEndToEnd:
         assert_ledger_matches_exchange(ledger, exchange, DEFAULT_STRATEGY_KEY)
 
     def test_entry_fill_then_spacing_adds_second_position(self, ledger: str) -> None:
-        """入场成交后价格走出间距(恰为 -1%, 含等号)再加仓第二仓位"""
+        """入场成交在盘中即被结算回写, 价格走出间距(恰为 -1%, 含等号)再加仓第二仓位"""
         exchange = StatefulFakeExchange()
         strategy = make_strategy(exchange, OrderJournal(ledger))
         driver = KlineDriver(strategy)
@@ -101,9 +101,14 @@ class TestBehaviorEndToEnd:
         assert len(entry_ids) == 2, "走出间距后应加仓第二笔入场单"
         positions = read_positions(ledger, DEFAULT_STRATEGY_KEY)
         assert len(positions) == 2, f"应有两条仓位行, got {len(positions)}"
-        rows = ledger_side_rows(ledger, LONG_ENTRY, "open")
-        assert len(rows) == 2, "两笔入场单都应挂在簿"
-        assert {row["price"] for row in rows} == {0.5, 0.495}, "两笔入场价应为 0.5 与 0.495"
+        closed_rows = ledger_side_rows(ledger, LONG_ENTRY, "closed")
+        assert len(closed_rows) == 1 and closed_rows[0]["price"] == 0.5, (
+            "第一笔入场单的成交应在盘中被结算回写(closed)"
+        )
+        open_rows = ledger_side_rows(ledger, LONG_ENTRY, "open")
+        assert len(open_rows) == 1 and open_rows[0]["price"] == 0.495, (
+            "第二笔入场单应挂在簿(open)"
+        )
         assert_ledger_matches_exchange(ledger, exchange, DEFAULT_STRATEGY_KEY)
 
     def test_take_profit_places_exit_and_archives(self, ledger: str) -> None:
@@ -460,3 +465,64 @@ class TestLedgerInvariants:
         restarted = make_strategy(exchange, journal, strategy_key=long_key)
         assert len(restarted.positions) == 1, "重启只加载自己键的仓位"
         assert_ledger_matches_exchange(ledger, exchange, [long_key, short_key])
+
+
+class TestIntraBarEntrySettlement:
+    """盘中入场单成交结算（Step 21 回归锁, 事故见 03-coding-design 三.12）
+
+    事故: _on_kline 以 resting_take_profit is None 整体短路, 未开启限价止盈的
+    配置下入场单成交永远无人结算 —— 账本停 open、仓位数量恒 0。
+    """
+
+    def test_intra_bar_settles_entry_fill_without_limit_tp(self, ledger: str) -> None:
+        """限价止盈未开启(信号离场配置): 盘中 tick 也必须结算入场单成交"""
+        exchange = StatefulFakeExchange()
+        strategy = make_strategy(exchange, OrderJournal(ledger))
+        driver = KlineDriver(strategy)
+
+        driver.push(0.5)
+        entry_id = book_ids_by_side(exchange, LONG_ENTRY)[0]
+        assert exchange.book[entry_id].status is OrderStatus.OPEN, "入场单应挂在簿"
+        exchange.fill(entry_id, 100.0, avg_price=0.5)  # 交易所成交, 策略尚未感知
+        driver.push(0.5, finished=False)  # 盘中 tick
+
+        rows = ledger_side_rows(ledger, LONG_ENTRY)
+        assert len(rows) == 1, f"应只有一条入场单行, got {len(rows)}"
+        assert rows[0]["status"] == "closed", (
+            f"盘中 tick 应把成交回写账本, got {rows[0]['status']}"
+        )
+        assert rows[0]["filled_qty"] == 100.0, (
+            f"账本成交量应为 100.0, got {rows[0]['filled_qty']}"
+        )
+        assert strategy.positions[0].quantity == 100.0, (
+            f"仓位派生数量应为 100.0, got {strategy.positions[0].quantity}"
+        )
+        assert exchange.book[entry_id].status is OrderStatus.CLOSED, (
+            "结算只回写事实, 交易所侧订单不得被撤销"
+        )
+        assert_ledger_matches_exchange(ledger, exchange, DEFAULT_STRATEGY_KEY)
+
+    def test_intra_bar_keeps_unfilled_entry_resting_in_tp_mode(
+        self, ledger: str
+    ) -> None:
+        """限价止盈开启: 盘中 tick 不得撤掉未成交的入场单(撤单语义只在出场流程)"""
+        exchange = StatefulFakeExchange()
+        strategy = make_strategy(
+            exchange, OrderJournal(ledger), take_profit_use_limit_order=True
+        )
+        driver = KlineDriver(strategy)
+
+        driver.push(0.5)
+        entry_id = book_ids_by_side(exchange, LONG_ENTRY)[0]
+        driver.push(0.5, finished=False)  # 盘中 tick, 入场单未成交
+
+        assert exchange.book[entry_id].status is OrderStatus.OPEN, (
+            f"未成交入场单应继续挂在簿, got {exchange.book[entry_id].status}"
+        )
+        rows = ledger_side_rows(ledger, LONG_ENTRY)
+        assert rows[0]["status"] == "open", (
+            f"未成交入场单账本应保持 open, got {rows[0]['status']}"
+        )
+        assert not book_ids_by_side(exchange, LONG_EXIT), (
+            "入场单未成交时不得挂出休息止盈单"
+        )

@@ -1,6 +1,14 @@
-"""订单生命周期: 结算 / 丢弃 / 撤单复查 / 入场单了结 / 出场单跟踪"""
+"""订单生命周期: 结算 / 丢弃 / 撤单复查 / 入场单了结 / 出场单跟踪
+
+入场单的两条结算路径职责互斥（设计见 .memory/03-coding-design.md 三.12）:
+
+- `settle_entry_fills`（盘中每 tick）: 只查询并回写成交事实, 不撤单 ——
+  入场单由追单器刻意挂出, 盘中撤掉等于推翻追单成果;
+- `settle_pending_entries`（出场流程）: 撤剩余入场单防继续建仓, 再按终态结算。
+"""
 
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from smart_trader import log
 from smart_trader.exceptions import SmartTraderError
@@ -12,6 +20,10 @@ from smart_trader.strategy.grid_position import GridPosition
 from smart_trader.strategy.signal_grid_config import SignalGridStrategyConfig
 
 logger = log.getLogger(__name__)
+
+# 查询不到的订单按 EXPIRED 结算前的最小年龄(防交易所 settle 延迟),
+# 与 OrderReconciler.min_age_seconds 同口径
+_MIN_QUERY_AGE_SECONDS = 5.0
 
 
 class PositionLifecycle:
@@ -64,6 +76,53 @@ class PositionLifecycle:
         """
         self._trading.cancel(custom_id, self._config.symbol)
         return self._trading.query(custom_id, self._config.symbol)
+
+    def settle_entry_fills(self, position: GridPosition) -> None:
+        """查询并回写入场单的成交事实（盘中路径, 每 tick 无条件调用）
+
+        只 settle 不撤单: 未成交入场单继续挂在交易所等成交;
+        撤销未成交入场单（防继续建仓）属于出场流程（settle_pending_entries）。
+
+        容错语义与出场单跟踪同源:
+        - 查询异常 → 跳过, 下一根再试;
+        - 查询不到 → 距创建过近先跳过（防交易所 settle 延迟）, 足够老才按
+          EXPIRED 结算（交易所从未存在该单）; created_at 为空的内存行按过近处理。
+        """
+        for order in list(position.pending_entry_orders):
+            try:
+                result = self._trading.query(order.order_id, self._config.symbol)
+            except SmartTraderError:
+                logger.warning("查询入场单失败, 保留待结算: %s", order.order_id)
+                continue
+            if result is None:
+                if self._too_fresh(order.created_at):
+                    continue
+                self.settle_order(
+                    position,
+                    order,
+                    OrderResult(
+                        custom_id=order.order_id,
+                        symbol=self._config.symbol,
+                        side=order.side,
+                        status=OrderStatus.EXPIRED,
+                        quantity=order.quantity,
+                        filled_qty=order.filled_qty,
+                        price=order.price,
+                    ),
+                )
+                continue
+            self.settle_order(position, order, result)
+
+    @staticmethod
+    def _too_fresh(created_at: str) -> bool:
+        """订单是否距创建过近（查询不到时不能贸然判 EXPIRED）"""
+        if not created_at:
+            return True  # 年龄未知（运行中刚下的内存行）→ 保守跳过
+        try:
+            created = datetime.fromisoformat(created_at)
+        except ValueError:
+            return False
+        return datetime.now(UTC) - created < timedelta(seconds=_MIN_QUERY_AGE_SECONDS)
 
     def refresh_pending_entries(self, position: GridPosition) -> None:
         """查询并了结未成交的入场单, 防止继续建仓"""

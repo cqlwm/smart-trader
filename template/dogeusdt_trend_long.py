@@ -38,15 +38,15 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         position_side=position_side,
         master_side=master_side,
         per_order_qty=500,
-        # 顺势加仓间距: 越过最外层 0.5% 才加一层（顺势阶梯, 替代网格间距口径）
-        trend_spacing_rate=0.005,
-        max_order=5,
+        # 顺势加仓间距: 越过最外层 0.01% 才加一层（顺势阶梯, 替代网格间距口径）
+        trend_spacing_rate=0.0001,
+        max_order=10,
         # 信号离场: 反向翻转且该层盈利 0.3% 以上时离场
-        enable_exit_signal=True,
-        exit_signal_take_profit_min_rate=0.003,
-        # 固定比例止盈: 单层盈利 1% 落袋
+        enable_exit_signal=False,
+        exit_signal_take_profit_min_rate=0,
+        # 固定比例止盈: 单层盈利 10% 落袋
         fixed_rate_take_profit=True,
-        fixed_take_profit_rate=0.01,
+        fixed_take_profit_rate=0.1,
         signal=AlphaTrendSignal(),
         signal_kind=SignalKind.DIRECTIONAL,
         strategy_key=(
@@ -55,7 +55,7 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         ),
         # 单层止损: 价格维度保护
         enable_order_stop_loss=True,
-        order_stop_loss_rate=0.05,
+        order_stop_loss_rate=0.005,
     )
     strategy = SignalGridStrategy(
         config, trading=exchange, market=exchange, journal=journal

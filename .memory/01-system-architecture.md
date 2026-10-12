@@ -89,7 +89,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | `smart_trader/execution/limit_order_chaser.py` | 追单执行策略 |
 | `smart_trader/execution/journaled_trading.py` | 记账下单包装（TradingPort 装饰器）：预写仓位/订单 → 下单 → 回写结果 |
 | `smart_trader/execution/order_reconciler.py` | 启动对账：扫 `status IS NULL` 的订单 → 查交易所 → 回写 |
-| `smart_trader/strategy/` | 策略基类与网格策略。**四层职责边界**：`signal`（`Signal` ABC，只回答"行情现在是什么状态"）/ `entry_gate`（`EntryGate` 可组合入场闸门链）/ `exit_policy`（`ExitPolicy` 可组合离场策略链）/ `signal_grid_strategy`（**只做装配 + 仓位与订单管理**，不做任何入场/离场判定）。网格策略其余模块：`grid_position`（仓位对象 + `load_positions` 批量还原）/ `signal_grid_config`（配置 + `CloseOutcome`）/ `grid_order_gateway`（记账下单入口）/ `position_lifecycle`（订单结算与出场单跟踪）/ `alpha_trend_signal`（`AlphaTrendSignal` 实现，`alpha_trend_grids_signal.py` 已删除，语义由 `SignalKind.TRIGGER` 承载） |
+| `smart_trader/strategy/` | 策略基类与网格策略。**四层职责边界**：`signal`（`Signal` ABC，只回答"行情现在是什么状态"）/ `entry_gate`（`EntryGate` 可组合入场闸门链）/ `exit_policy`（`ExitPolicy` 可组合离场策略链）/ `signal_grid_strategy`（**只做装配 + 仓位与订单管理**，不做任何入场/离场判定）。网格策略其余模块：`grid_position`（仓位对象 + `load_positions` 批量还原）/ `signal_grid_config`（配置 + `CloseOutcome`）/ `grid_order_gateway`（记账下单入口）/ `position_lifecycle`（订单结算：入场单成交结算[盘中] / 撤剩余入场单[出场流程] / 出场单跟踪[每根完成K线]）/ `alpha_trend_signal`（`AlphaTrendSignal` 实现，`alpha_trend_grids_signal.py` 已删除，语义由 `SignalKind.TRIGGER` 承载） |
 | `smart_trader/data_event_loop.py` / `task/` | 数据事件循环与任务分发。两种数据源模式：`BinanceDataEventLoop`（WebSocket 推送，解析一次为 Kline 后分发）与 `TimerDataEventLoop`（按 timeframe 定时经 REST 拉取，见第九节）；事件载荷统一为 `Kline` 领域对象 |
 
 ## 七、演进状态
@@ -117,6 +117,8 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 18 | **`CcxtExchange` 契约双侧静态校验 + 组装缝**：此前 Protocol 只校验测试侧 Fake，真实 ccxt 侧经 `cast`/`Any` 赋值盲信（声明了 ccxt 上不存在的方法只有运行时才暴露）。新增 `CcxtBinanceExchange` 显式继承 Protocol（pyright 从此校验真实实现侧），入站载荷与出站参数引入 TypedDict 词汇表（`CcxtOrder` / `CcxtPosition` / `CcxtOrderParams` 等，键按实际消费方式声明必填性，`CcxtOrder` 保持 total=False 以允许注入残缺响应），适配器内 4 处 `cast` 清零；`BinanceSwapClient` 改为纯依赖注入（删除 `__new__` 注入 hack 与死代码 `create_ccxt_binance`），组装入口 `create_binance_swap_client`；修复 7cc0f9d 遗留红测试（测试引用从未实现的 `create_exchange` 参数），构造期契约测试改经 wrapper 的 `raw_factory` 注入打桩；顺手修复存量 `data_event_loop.py` 的 pyright strict 报错（恢复被误删的 `cast` 用法，运行时零变化）。后续收敛：Protocol 成员 `fapiPublicGetExchangeInfo` 更名 `exchange_info`（seam 只表达需求，币安端点名归 wrapper 委托实现），client 交易规则缓存领域化为 parsed `SymbolInfo`（按 `symbol.binance()` 键，raw dict 不再滞留 client 状态） | 已完成 |
 | Step 19 | **client 包整体迁入 exchange 包 + 端口 ABC 化（两层适配器）**：`client/ports.py` → `exchange/ports.py`、`client/binance_client.py` → `exchange/binance/binance_exchange.py`，`client/` 包删除。三端口由 `typing.Protocol` 改为 `abc.ABC` + `@abstractmethod`，新增 `Exchange` 组合接口（装配层持有完整能力）；`BinanceExchange` 与测试 Fake（`FakeTradingPort` / `FakeMarketDataPort` / `StatefulFakeExchange` / `JournaledTradingPort`）显式继承端口。Protocol 收敛为唯一第三方接缝 `CcxtExchange`（标 `@runtime_checkable`，新增真实 ccxt 实例一致性测试）。**删除纯委托层 `CcxtBinanceExchange`**：构造逻辑（public/private/demo/load_markets）收进 builder 函数 `build_public_ccxt` / `build_private_ccxt`（`raw_factory` 注入缝保留），适配器从三层收敛为两层——`BinanceExchange` 对 `CcxtExchange` 类型双实例的每个调用点从此直接受 Protocol 静态校验（Step 17 的 limit/since 槽位错位正属此类错误）；接缝成员 `exchange_info` 随之回归 ccxt 方言名 `fapiPublicGetExchangeInfo`（Step 18 的"seam 只表达需求"改名依附于 wrapper 委托层，wrapper 删除后接缝必须描述 raw 实例的真实表面，一致性测试才能拦截成员漂移）。命名对齐：`BinanceSwapClient`→`BinanceExchange`、`create_binance_swap_client`→`create_binance_exchange`、`bootstrap.create_binance_client`→`create_binance_exchange`；`cancel_open_orders` 保留为非端口能力（demo 专用）。类型准则（内部 ABC / Protocol 仅限第三方接缝）见第二节 | 已完成 |
 | Step 20 | **顺势逐层加仓 + 逆势逐层减仓**：新增 `TrendSpacingGate`（顺势阶梯闸门：以最外层仓位为基准，盈利方向走出间距才加仓；与 `GridSpacingGate` 互斥装配，由 `trend_spacing_rate` 选择，见 `02-domain-model.md` 八.3.2）与 `LayeredReducePolicy`（信号反向命中时每根完成 K 线只减最外层一层、亏损也减、`force=True` 撤单重挂保证实际减仓；与 `SignalExitPolicy` 二选一，`enable_exit_signal` 仍为总开关）；`ExitContext` 增加 `positions` 字段（与 `EntryContext` 对称，纯数据）；config 新增 `trend_spacing_rate` / `enable_layered_reduce`（设计见 `03-coding-design.md` 三.10/三.11） | 已完成 |
+| Step 21 | **修复入场单成交永不结算的职责耦合缺陷**：`_on_kline` 原以 `resting_take_profit is None → return` 整体短路，未开启限价止盈的配置下入场单成交永远无人结算（`position.quantity` 恒 0、账本停 `open`、止盈/止损/间距全失真；实测事故见 `03-coding-design.md` 三.12）。拆分：`PositionLifecycle.settle_entry_fills`（盘中每 tick 无条件只结算不撤单，None 时按同 `OrderReconciler` 的 5s 最小年龄口径防 settle 延迟）与 `settle_pending_entries`（撤剩余入场单 + 结算，仅出场流程调用）；`_on_kline` 休息止盈块独立守卫 | 已完成 |
+| Step 22 | **修复固定止损费率开仓后冻结的缺陷（实测事故）**：原实现开仓时把 `stop_loss_rate` 一次性烘焙进 `trailing_stop_price`，`StopLossPolicy` 也只读该字段 —— 之后修改 config 的 `order_stop_loss_rate` 或库里的 `stop_loss_rate` 对存量仓位永远无效（字段看着是活参数，实际是死快照）。拆分语义：**固定止损**按 `仓位均价 × (1 ∓ stop_loss_rate)` 实时判定（活参数，`_open_position` 不再为纯固定止损写快照字段）；**跟踪止损**独占 `trailing_stop_price`（ratchet 字段，播种口径不变）；`enable_stop_loss` 仍是总开关，`enable_trailing_stop` 只选模式（设计见 `02-domain-model.md` 八.5、`03-coding-design.md` 三.13） | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -173,6 +175,25 @@ strategy / task / template              (业务编排: 网格、信号、止损)
   并在 `paused_after_stop_loss` 下把 `is_running` 置 `False` —— 手动动作被当成止损。
   修复：拆成两个独立触发源，`stop_loss_reached` 只管回调与暂停，
   `force_all`（`stop_loss_reached or close_position`）只管离场判定。离场行为不变。
+- **入场单成交永不结算（Step 21 修复，实测事故）**：`_on_kline` 把"入场单结算"
+  与"休息止盈单挂单"用同一守卫短路（`resting_take_profit is None → return`），
+  未开启限价止盈的配置下入场单成交后 `position.quantity` 恒为 0、账本行停在
+  `open`，止盈/止损/间距加仓全部失真，直至信号反转才可能被 `settle_pending_entries`
+  顺带纠正；孤儿回收也因内存行仍是 `open` 而永不触发。实测：入场单 14:38 成交、
+  进程存活且正常开第二仓，账本直至进程死亡仍为 `open`。
+  修复：`PositionLifecycle.settle_entry_fills`（盘中只结算不撤单）+
+  `_on_kline` 解耦守卫（见不变量 11 与 `03-coding-design.md` 三.12）。
+  旧盘中路径在限价止盈开启时还会复用 `settle_pending_entries` 把刚挂的入场单
+  一秒内撤掉（推翻追单成果）——撤单语义随本次拆分收敛到出场流程。
+- **固定止损费率开仓后冻结（Step 22 修复，实测事故）**：开仓时把 `stop_loss_rate`
+  一次性烘焙进 `trailing_stop_price`，`StopLossPolicy` 也只读该字段 —— 字段看着是
+  活参数，实际是死快照：修改 config 的 `order_stop_loss_rate` 或库里的
+  `stop_loss_rate` 对存量仓位永远无效。实测：用户把费率 0.05 改成 0.005 并重启，
+  触发价仍停在开仓时的 0.0834（= 开仓价 × 0.95），0.5% 止损始终不触发。
+  修复：固定止损按 `仓位均价 × (1 ∓ stop_loss_rate)` 实时判定（活参数，重启即生效）；
+  跟踪止损独占 `trailing_stop_price` ratchet 字段（播种口径不变）；
+  `_open_position` 不再为纯固定止损写快照（见 `02-domain-model.md` 八.5、
+  `03-coding-design.md` 三.13）。
 - **`Signal` 不是真 ABC**（Step 13 修复）：`@abstractmethod` 修饰 `run()` 但类未继承 `ABC`，
   抽象方法完全失效，任何子类都可实例化并返回 `None`。
 - **`AlphaTrendSignal.first_run` 反推吞掉本次突破**（Step 13 修复）：反推取
@@ -286,6 +307,12 @@ strategy / task / template              (业务编排: 网格、信号、止损)
    `ExitPolicyChain` 的合并规则（`should_exit = any`、`force = any`）**与顺序无关**。
 10. **`PositionLimit` 是仓位数量上限与"达到上限止损"的唯一权威来源**（Step 13）：
     开仓闸门与离场强制判定必须读同一对象，杜绝两处各写一遍导致的漂移。
+11. **入场单成交由盘中路径每 tick 无条件结算**（Step 21）：
+    每根盘中 tick 对 `pending_entry_orders` 逐笔查询交易所并回写事实
+    （`settle_entry_fills`，只 settle 不撤单）；"撤销未成交入场单"
+    （防继续建仓）只属于出场流程（`settle_pending_entries`，由
+    `check_close_position` 触发）。盘中路径不得因 `RestingTakeProfitPolicy`
+    未装配而跳过结算 —— 入场单结算是记账职责，与限价止盈开关无关。
 
 ## 十一、订单最终一致性（预写 + 对账）
 

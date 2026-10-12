@@ -101,9 +101,9 @@ def test_force_exit_policy_evaluates_trigger_on_every_call():
 
 
 def test_stop_loss_policy_triggers_below_stop_price_for_long():
-    """多头: 价格跌破止损价"""
+    """多头: 价格跌破 固定止损价(仓位均价 × (1 − rate))"""
     policy = StopLossPolicy()
-    position = _position(enable_stop_loss=True, trailing_stop_price=0.45)
+    position = _holding(enable_stop_loss=True, stop_loss_rate=0.1)
 
     decision = policy.evaluate(position, ExitContext(close=0.44))
 
@@ -114,7 +114,7 @@ def test_stop_loss_policy_triggers_below_stop_price_for_long():
 def test_stop_loss_policy_does_not_trigger_above_stop_price_for_long():
     """多头: 价格未跌破止损价"""
     policy = StopLossPolicy()
-    position = _position(enable_stop_loss=True, trailing_stop_price=0.45)
+    position = _holding(enable_stop_loss=True, stop_loss_rate=0.1)
 
     assert policy.evaluate(position, ExitContext(close=0.46)).should_exit is False
 
@@ -122,7 +122,7 @@ def test_stop_loss_policy_does_not_trigger_above_stop_price_for_long():
 def test_stop_loss_policy_triggers_at_exactly_stop_price_for_long():
     """多头: 恰好等于止损价即触发（含等号）"""
     policy = StopLossPolicy()
-    position = _position(enable_stop_loss=True, trailing_stop_price=0.45)
+    position = _holding(enable_stop_loss=True, stop_loss_rate=0.1)
 
     assert policy.evaluate(position, ExitContext(close=0.45)).should_exit is True, (
         "止损判定含等号"
@@ -130,12 +130,12 @@ def test_stop_loss_policy_triggers_at_exactly_stop_price_for_long():
 
 
 def test_stop_loss_policy_triggers_above_stop_price_for_short():
-    """空头: 价格涨破止损价"""
+    """空头: 价格涨破止损价（均价 × (1 + rate)）"""
     policy = StopLossPolicy()
-    position = _position(
+    position = _holding(
         position_side=PositionSide.SHORT,
         enable_stop_loss=True,
-        trailing_stop_price=0.55,
+        stop_loss_rate=0.1,
     )
 
     assert policy.evaluate(position, ExitContext(close=0.56)).should_exit is True, (
@@ -146,10 +146,10 @@ def test_stop_loss_policy_triggers_above_stop_price_for_short():
 def test_stop_loss_policy_at_exactly_stop_price_for_short():
     """空头: 恰好等于止损价即触发（含等号）"""
     policy = StopLossPolicy()
-    position = _position(
+    position = _holding(
         position_side=PositionSide.SHORT,
         enable_stop_loss=True,
-        trailing_stop_price=0.55,
+        stop_loss_rate=0.1,
     )
 
     assert policy.evaluate(position, ExitContext(close=0.55)).should_exit is True
@@ -158,20 +158,84 @@ def test_stop_loss_policy_at_exactly_stop_price_for_short():
 def test_stop_loss_policy_ignores_position_without_stop_loss():
     """仓位未启用止损时不触发（隔离）"""
     policy = StopLossPolicy()
-    position = _position(enable_stop_loss=False, trailing_stop_price=0.45)
+    position = _holding(enable_stop_loss=False, stop_loss_rate=0.1)
 
     assert policy.evaluate(position, ExitContext(close=0.1)).should_exit is False, (
         "未启用止损的仓位不应被止损策略平仓"
     )
 
 
-def test_stop_loss_policy_ignores_position_without_stop_price():
-    """trailing_stop_price 为 None 时不触发（空值）"""
+def test_stop_loss_policy_rate_is_live_parameter():
+    """事故回归（Step 22）: stop_loss_rate 是活参数 —— 同一收盘价下,
+    改费率（改库或改配置）后触发判定立即随之变化"""
     policy = StopLossPolicy()
-    position = _position(enable_stop_loss=True, trailing_stop_price=None)
+    loose = _holding(enable_stop_loss=True, stop_loss_rate=0.005)
+    tight = _holding(enable_stop_loss=True, stop_loss_rate=0.05)
+
+    assert policy.evaluate(loose, ExitContext(close=0.48)).should_exit is True, (
+        "0.5% 止损触发价 0.4975, 收盘 0.48 应触发"
+    )
+    assert policy.evaluate(tight, ExitContext(close=0.48)).should_exit is False, (
+        "5% 止损触发价 0.475, 收盘 0.48 不应触发"
+    )
+
+
+def test_stop_loss_policy_fixed_stop_matches_incident_expectation():
+    """事故回归（Step 22）: 均价 0.08783 × (1 − 0.005) = 0.08739 必须触发,
+    而不是被开仓时烘焙的 0.0834 死快照挡住"""
+    policy = StopLossPolicy()
+    position = _holding(
+        entry_price=0.08783, enable_stop_loss=True, stop_loss_rate=0.005
+    )
+
+    assert policy.evaluate(position, ExitContext(close=0.08739)).should_exit is True, (
+        "恰好等于 0.5% 止损价应触发（含等号）"
+    )
+    assert policy.evaluate(position, ExitContext(close=0.0875)).should_exit is False, (
+        "止损价上方不应触发"
+    )
+
+
+def test_stop_loss_policy_without_cost_basis_does_not_trigger():
+    """无成本基准（无成交且无开仓参考价）时无法判定止损（空值）"""
+    policy = StopLossPolicy()
+    position = _position(enable_stop_loss=True, stop_loss_rate=0.1, opening_price=0.0)
+
+    assert policy.evaluate(position, ExitContext(close=0.44)).should_exit is False, (
+        "均价为 0 的仓位没有成本基准, 不应触发止损"
+    )
+
+
+def test_stop_loss_policy_trailing_mode_uses_ratchet_field():
+    """跟踪止损: 读 ratchet 字段而非费率实时计算"""
+    policy = StopLossPolicy()
+    position = _holding(
+        enable_stop_loss=True,
+        enable_trailing_stop=True,
+        stop_loss_rate=0.005,
+        trailing_stop_price=0.45,
+    )
+
+    assert policy.evaluate(position, ExitContext(close=0.48)).should_exit is False, (
+        "费率计算的 0.4975 不参与判定, ratchet 字段 0.45 才是权威"
+    )
+    assert policy.evaluate(position, ExitContext(close=0.44)).should_exit is True, (
+        "跌破 ratchet 字段应触发"
+    )
+
+
+def test_stop_loss_policy_trailing_mode_without_field_does_not_trigger():
+    """跟踪止损模式但 ratchet 字段缺失时不触发（空值, 不回退费率计算）"""
+    policy = StopLossPolicy()
+    position = _holding(
+        enable_stop_loss=True,
+        enable_trailing_stop=True,
+        stop_loss_rate=0.005,
+        trailing_stop_price=None,
+    )
 
     assert policy.evaluate(position, ExitContext(close=0.1)).should_exit is False, (
-        "止损价缺失时无法判定止损"
+        "字段缺失时无法判定跟踪止损"
     )
 
 
@@ -463,7 +527,7 @@ def test_layered_reduce_keeps_selecting_layer_with_pending_exit():
 
 def test_chain_exits_when_any_policy_wants_exit():
     """任一策略要求离场则离场"""
-    position = _position(enable_stop_loss=True, trailing_stop_price=0.45)
+    position = _holding(enable_stop_loss=True, stop_loss_rate=0.1)
     chain = ExitPolicyChain([FixedTakeProfitPolicy(), StopLossPolicy()])
 
     decision = chain.decide(position, ExitContext(close=0.44))
@@ -494,7 +558,7 @@ def test_chain_merges_force_from_any_policy():
 
 def test_chain_merge_is_order_independent():
     """合并顺序无关: 交换策略顺序结果相同（不变量 9 的基础）"""
-    position = _position(enable_stop_loss=True, trailing_stop_price=0.45)
+    position = _holding(enable_stop_loss=True, stop_loss_rate=0.1)
     stop = StopLossPolicy()
     force = ForceExitPolicy(lambda: True)
     ctx = ExitContext(close=0.44)
@@ -518,8 +582,8 @@ def test_chain_does_not_leak_state_between_positions():
     """隔离: 同一策略链对不同仓位的决策互不影响"""
     stop = StopLossPolicy()
     chain = ExitPolicyChain([stop])
-    triggered = _position("TRIGGERED", enable_stop_loss=True, trailing_stop_price=0.45)
-    safe = _position("SAFE", enable_stop_loss=True, trailing_stop_price=0.45)
+    triggered = _holding("TRIGGERED", enable_stop_loss=True, stop_loss_rate=0.1)
+    safe = _holding("SAFE", enable_stop_loss=True, stop_loss_rate=0.1)
 
     assert chain.decide(triggered, ExitContext(close=0.44)).should_exit is True
     assert chain.decide(safe, ExitContext(close=0.46)).should_exit is False, (

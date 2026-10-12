@@ -92,15 +92,25 @@ class ForceExitPolicy(ExitPolicy):
 class StopLossPolicy(ExitPolicy):
     """仓位自身止损
 
-    判定用仓位的 `trailing_stop_price`（固定止损与跟踪止损共用同一字段）,
+    `enable_stop_loss` 是总开关, `enable_trailing_stop` 只选模式:
+    - 固定止损: 触发价 = 仓位均价 × (1 ∓ stop_loss_rate) 实时计算 —— 活参数,
+      修改费率（改库或改配置）后重启即生效;
+    - 跟踪止损: 读 ratchet 字段 `trailing_stop_price`（开仓播种、只向盈利方向
+      抬升; 缺失时无法判定, 不触发, 也不回退费率计算）。
     方向由仓位的 `entry_side` 决定, 含等号。
     """
 
     def evaluate(self, position: GridPosition, ctx: ExitContext) -> ExitDecision:
-        if not position.enable_stop_loss or position.trailing_stop_price is None:
+        if not position.enable_stop_loss:
+            return ExitDecision()
+        stop_price = (
+            position.trailing_stop_price
+            if position.enable_trailing_stop
+            else self._fixed_stop_price(position)
+        )
+        if stop_price is None:
             return ExitDecision()
 
-        stop_price = position.trailing_stop_price
         if position.entry_side == OrderSide.BUY:
             triggered = ctx.close <= stop_price
         else:
@@ -108,6 +118,15 @@ class StopLossPolicy(ExitPolicy):
         if not triggered:
             return ExitDecision()
         return ExitDecision(should_exit=True, force=True)
+
+    @staticmethod
+    def _fixed_stop_price(position: GridPosition) -> float | None:
+        """固定止损触发价: 仓位均价 × (1 ∓ stop_loss_rate); 无成本基准时无法判定"""
+        if position.price <= 0:
+            return None
+        return position.price * (
+            1 - position.stop_loss_rate * position.entry_side.to_int()
+        )
 
 
 class FixedTakeProfitPolicy(ExitPolicy):

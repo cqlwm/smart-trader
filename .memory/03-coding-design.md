@@ -215,6 +215,60 @@ v2 的累积计数不存在此问题，`first_run` 已删除。
 - **不要求盈利**：与 `SignalExitPolicy` 的止盈语义不同，逆势减仓是去风险动作，
   亏损也减；该差异由 `tests/test_exit_policy.py` 的 `test_layered_reduce_*` 锁定。
 
+### 12. `PositionLifecycle` 入场单结算的职责拆分（Step 21）
+
+**背景缺陷**：`_on_kline`（盘中路径）把"入场单结算"与"休息止盈单挂单"用同一守卫
+（`resting_take_profit is None → return`）短路 —— 未开启限价止盈的配置
+（如 `dogeusdt_trend_long`，`take_profit_use_limit_order=False`）下入场单成交**永远
+无人结算**：`position.quantity` 恒为 0、账本行停在 `open`，止盈/止损/间距全部失真。
+实测事故：入场单 14:38 成交，进程存活且正常开第二仓，账本直至进程死亡仍为 `open`。
+
+**拆分结果**（两个职责各自独立，互不依附）：
+
+| 方法 | 职责 | 调用方 | 对未成交入场单 |
+| --- | --- | --- | --- |
+| `settle_entry_fills(position)` | 只查询并回写成交事实 | `_on_kline` 每 tick 无条件 | **不撤单**，留着等成交 |
+| `settle_pending_entries(position)` | 撤剩余入场单 + 结算事实，返回仓位是否归零 | `check_close_position`（出场流程） | 撤单复查后按终态结算 |
+
+**为什么盘中结算"只 settle 不撤单"**：入场单由追单器刻意挂出（GTX 逐档递进），
+盘中撤掉等于推翻追单成果；撤单语义（"防继续建仓"）只在离场决策成立时才合法。
+旧盘中路径复用 `settle_pending_entries`，要么（限价止盈开启）刚挂的入场单
+一秒内被撤、要么（未开启）永不结算 —— 两个方向都是错的，根因是职责耦合。
+
+**查询不到（None）的容错语义**：与出场单跟踪同源 —— 距创建过近（< 5s，
+同 `OrderReconciler.min_age_seconds` 口径，防交易所 settle 延迟）先跳过；
+足够老才按 `EXPIRED` 结算（交易所从未存在该单）。查询异常记日志跳过，
+下一根再试。内存行的 `created_at` 为空（运行中刚下的单）按"过近"保守跳过。
+
+**`_on_kline` 的新结构**：`latest_kline` 缺失仍整体返回；逐仓位先无条件
+`settle_entry_fills`；休息止盈块（出场单触及查询 + 挂休息止盈单）整体
+以 `_resting_take_profit is None → continue` 守卫 —— 该守卫此后只表达
+"限价止盈未启用，无休息单可跟踪"，不再连带吞掉入场单结算。
+
+### 13. `StopLossPolicy` 固定止损与跟踪止损的语义拆分（Step 22）
+
+**背景缺陷**：`_open_position` 开仓时把 `stop_loss_rate` 一次性算成
+`trailing_stop_price` 快照，`StopLossPolicy` 也只读该字段 —— 字段看着是活参数，
+实际是死快照：修改 config 的 `order_stop_loss_rate` 或库里的 `stop_loss_rate`
+对存量仓位永远无效（实测事故：费率 0.05 → 0.005 + 重启，触发价仍停在
+开仓价 × 0.95）。
+
+**拆分后的判定口径**（`enable_stop_loss` 仍是总开关）：
+
+| 模式 | 触发价来源 | 语义 |
+| --- | --- | --- |
+| 固定止损（`enable_trailing_stop=False`） | `仓位均价 × (1 ∓ stop_loss_rate)` 实时计算 | **活参数**：改库或改配置后重启即生效 |
+| 跟踪止损（`enable_trailing_stop=True`） | ratchet 字段 `trailing_stop_price`（缺失不触发） | 播种 = `开仓收盘价 × (1 ∓ stop_loss_rate)`，每根 K 线只向盈利方向抬升 |
+
+**为什么固定止损锚定 `position.price`（仓位均价）而不是开仓收盘价**：均价才是
+"这层仓位真正的成本"，止盈口径（`profit_level` → `price`）已经用它；两口径同源
+（费率语义对称：止损 -rate、止盈 +rate），改费率立即生效的心智模型才成立。
+单层成交时均价 ≈ 开仓收盘价，行为与旧实现几乎重合。
+
+**为什么 `_open_position` 不再为纯固定止损写 `trailing_stop_price`**：该字段从此
+只归属跟踪止损（ratchet 运行时状态，必须落库的原因不变）；为固定止损写快照
+正是本次缺陷的根源 —— 死数据会继续误导下一个改参数的人。
+
 ## 四、数据事件循环设计（data_event_loop / task）
 
 ### 1. 载荷统一为 Kline

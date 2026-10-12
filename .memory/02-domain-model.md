@@ -167,8 +167,8 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 | `main_order_side` | 网格主攻方向；不参与入/出场归类 |
 | `opening_quantity` / `opening_price` | 开仓基准：接管持仓时的数量与均价（普通网格数量为 0）；`opening_price` 同时作为「尚无成交时的参考价」（网格间隔 / 止盈判定基准） |
 | `fixed_take_profit_rate` / `signal_min_take_profit_rate` | 止盈参数 |
-| `enable_stop_loss` / `stop_loss_rate` | 止损参数 |
-| `enable_trailing_stop` / `trailing_stop_rate` / `trailing_stop_activation_rate` / `trailing_stop_price` | 跟踪止损参数与运行时状态（`trailing_stop_price` 每根 K 线更新，不可派生，必须落库） |
+| `enable_stop_loss` / `stop_loss_rate` | 止损参数（**活参数**）：固定止损按 `仓位均价 × (1 ∓ stop_loss_rate)` 实时判定，修改（改库或改配置）后重启即生效，无需改其它字段 |
+| `enable_trailing_stop` / `trailing_stop_rate` / `trailing_stop_activation_rate` / `trailing_stop_price` | 跟踪止损参数与运行时状态（`trailing_stop_price` 只归属跟踪止损：开仓时以 `收盘价 × (1 ∓ stop_loss_rate)` 播种为 ratchet 下限，每根 K 线只向上抬升，不可派生，必须落库；**固定止损不读此字段**） |
 | `active` | 1 = 未到终态；0 = 已归档。**唯一物化的状态标记**，其余相位派生 |
 | `created_at` / `updated_at` | 时间戳 |
 
@@ -297,7 +297,7 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 | 策略 | 规则 | force |
 | --- | --- | --- |
 | `ForceExitPolicy` | `trigger()` 为真（达到上限止损 / 手动 `close_position`） | **True** |
-| `StopLossPolicy` | 读仓位的 `enable_stop_loss` / `trailing_stop_price` / `entry_side` | **True** |
+| `StopLossPolicy` | 读仓位的 `enable_stop_loss` / `enable_trailing_stop` / `stop_loss_rate` / `trailing_stop_price` / `price` / `entry_side` | **True** |
 | `LayeredReducePolicy` | 信号反向命中，且自己是**最外层**（盈利方向极值、`quantity > 0` 的层） | **True** |
 | `FixedTakeProfitPolicy` | `profit_level(close) == 2` | False |
 | `SignalExitPolicy` | `profit_level(close) == 1` 且行情方向命中 | False |
@@ -323,7 +323,10 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 止损与止盈参数**随 `GridPositionRow` 落库**，由策略在建仓时从 config 写入，
 `ExitPolicy` 一律只读 `position.*`：
 
-- `StopLossPolicy` 读 `position.enable_stop_loss` / `stop_loss_rate` / `trailing_stop_price`；
+- `StopLossPolicy` 读 `position.enable_stop_loss`（总开关）与
+  `position.enable_trailing_stop`（模式选择）：**固定止损**（未开跟踪）按
+  `仓位均价 × (1 ∓ stop_loss_rate)` 实时计算触发价（`stop_loss_rate` 是活参数）；
+  **跟踪止损**（开了跟踪）读 ratchet 字段 `trailing_stop_price`（缺失时不触发）；
 - `FixedTakeProfitPolicy` 读 `position.profit_level(close)`（档位 2 用 `fixed_take_profit_rate`）；
 - `SignalExitPolicy` 读 `position.profit_level(close)`（档位 1 用 `signal_min_take_profit_rate`）。
 

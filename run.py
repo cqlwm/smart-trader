@@ -19,10 +19,10 @@ main_exchange: Exchange = create_binance_exchange("main")
 def main():
     from smart_trader.config import DB_PATH
     from smart_trader.storage.order_journal import OrderJournal
-    from template import dogeusdt
+    from template import dogeusdt_trend_long
 
     journal = OrderJournal(DB_PATH)
-    tasks: list[StrategyTask] = [dogeusdt.grid(main_exchange, journal)]
+    tasks: list[StrategyTask] = [dogeusdt_trend_long.trend_long(main_exchange, journal)]
 
     kline_subscribes: list[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
