@@ -197,6 +197,16 @@ strategy / task / template              (业务编排: 网格、信号、止损)
   跟踪止损独占 `trailing_stop_price` ratchet 字段（播种口径不变）；
   `_open_position` 不再为纯固定止损写快照（见 `02-domain-model.md` 八.5、
   `03-coding-design.md` 三.13）。
+- **指标实现污染共享 klines DataFrame（Step 23 修复）**：`alpha_trend_indicator`
+  docstring 声称"返回原 DataFrame 的副本"，实现却把指标列直接写进入参 ——
+  `is_breakout` / `long_entry` / `short_exit` 等是 **bool 列**，策略共享的
+  klines DataFrame 被加列后，`_update_klines` 的整行赋值
+  （`df.loc[idx] = kline_dict`，只含 7 个 K 线字段）对这些列 NaN 补全，
+  向 bool 列写 nan 触发 pandas FutureWarning
+  （"Value 'nan' has dtype incompatible with bool"，pandas 3.0 起将直接报错）。
+  修复：入参 `df.copy()`（与 docstring 对齐），Signal 契约补全
+  "不得替换、清空或增删列"；回归测试
+  `test_indicator_does_not_mutate_input_dataframe` 锁定。
 - **`Signal` 不是真 ABC**（Step 13 修复）：`@abstractmethod` 修饰 `run()` 但类未继承 `ABC`，
   抽象方法完全失效，任何子类都可实例化并返回 `None`。
 - **`AlphaTrendSignal.first_run` 反推吞掉本次突破**（Step 13 修复）：反推取

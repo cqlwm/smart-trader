@@ -20,6 +20,9 @@ import pandas as pd
 import pytest
 
 from smart_trader.model import SignalDirection
+from smart_trader.strategy.alpha_trend_signal.alpha_trend_indicator_v2 import (
+    alpha_trend_indicator,
+)
 from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from tests.fakes import make_klines_df
 
@@ -60,6 +63,26 @@ def test_initialization_accepts_custom_parameters():
 
     assert signal.atr_multiple == 2.0
     assert signal.period == 14
+
+
+def test_indicator_does_not_mutate_input_dataframe():
+    """指标只读入参: 指标列必须加在副本上（回归）
+
+    指标列曾直接写进入参 → 污染策略共享的 klines DataFrame（is_breakout /
+    long_entry 等是 bool 列）→ `_update_klines` 行赋值时这些列被 NaN 补全 →
+    pandas FutureWarning "Value 'nan' has dtype incompatible with bool"。
+    """
+    df = make_klines_df(BREAKOUT_UP)
+    before_columns = list(df.columns)
+
+    result = alpha_trend_indicator(df, period=8)
+
+    assert list(df.columns) == before_columns, (
+        f"入参 df 不得被添加指标列, 实际 {list(df.columns)}"
+    )
+    assert result is not df, "必须返回副本, 而非入参本身"
+    for column in ("alpha_value", "trend", "is_breakout"):
+        assert column in result.columns, f"副本应含指标列 {column}"
 
 
 # ---- 空值与不足数据 ----

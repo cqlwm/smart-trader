@@ -37,7 +37,7 @@ class AlphaTrendSignal(Signal):
     def evaluate(self, klines: DataFrame) -> MarketSignal:
         """求值: 同一根 K 线重复调用返回相同结果（幂等）
 
-        @param klines OHLCV DataFrame, 由策略提供; 实现不得替换或清空
+        @param klines OHLCV DataFrame, 由策略提供; 实现不得替换、清空或增删列
         @return 翻转突破根返回对应方向, 其余为中性
         @note 空数据返回中性, 不抛异常
         """

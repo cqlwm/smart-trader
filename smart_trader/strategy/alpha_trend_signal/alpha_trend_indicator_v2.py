@@ -130,6 +130,7 @@ def alpha_trend_indicator(
         `ema200, long_entry, long_exit, short_entry, short_exit`
         和（传 htf_df 时）`htf_ema200` 列。
     """
+    df = df.copy()  # 只读入参: 指标列加在副本上, 不污染策略共享的 klines DataFrame
     high, low, close, volume = _extract_ohlcv(df)
     atr_base_low, atr_base_high, mfi = _compute_atr_channel(
         high, low, close, volume, period, atr_multiple
