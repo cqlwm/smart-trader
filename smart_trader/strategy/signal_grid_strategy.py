@@ -298,9 +298,8 @@ class SignalGridStrategy(SingleTimeframeStrategy):
             opening_price=close_price,
             created_at=datetime.now(UTC).isoformat(),
             fixed_take_profit_rate=self.config.fixed_take_profit_rate,
-            signal_min_take_profit_rate=(
-                self.config.exit_signal_take_profit_min_rate
-            ),
+            # 信号止盈门槛已随 Step 24 删除（浮盈即止盈）; 行列保留为 schema 兼容
+            signal_min_take_profit_rate=0.0,
             enable_stop_loss=self.config.enable_order_stop_loss,
             stop_loss_rate=stop_loss_rate,
             enable_trailing_stop=self.config.enable_trailing_stop,

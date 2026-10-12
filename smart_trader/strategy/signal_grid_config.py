@@ -37,14 +37,11 @@ class SignalGridStrategyConfig(BaseModel):
     # 信号种类: TRIGGER=无方向倾向(任何非中性信号都触发) / DIRECTIONAL=有方向倾向
     signal_kind: SignalKind = SignalKind.DIRECTIONAL
 
-    # 信号止盈: 反向信号命中且该层盈利达到 exit_signal_take_profit_min_rate 时离场
+    # 信号止盈: 反向信号命中且该层**浮盈**（close 在成本价盈利侧）时离场
     # （非 force —— 已有出场挂单的盈利层保留原挂单不重复挂）
     enable_signal_take_profit: bool = True
-    # 信号止损: 反向信号命中时最外层强制离场（逐层推进, 亏损也减, force 撤单重挂）
-    # 与信号止盈独立, 可同时开启: 最外层由止损剥, 内层盈利层由止盈接手
+    # 信号止损: 反向信号命中且该层**浮亏**时, 最外层强制离场（逐层推进, force 撤单重挂）
     enable_signal_stop_loss: bool = False
-    # 信号止盈的最小盈利率
-    exit_signal_take_profit_min_rate: float = 0.002
 
     # 固定比例止盈
     fixed_rate_take_profit: bool = False

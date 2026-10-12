@@ -143,10 +143,10 @@ class FixedTakeProfitPolicy(ExitPolicy):
 
 
 class SignalExitPolicy(ExitPolicy):
-    """信号离场（`profit_level` 档位 1 且行情方向命中）
+    """信号止盈（反向信号命中且该层**浮盈**）
 
-    止盈阈值直接用 `position.signal_min_take_profit_rate`（`profit_level` 已在用）,
-    不持有第二份参数, 避免参数源分裂。
+    止盈的字面语义: 有浮盈（`profit_and_loss_ratio(close) > 0`，即 close 在
+    成本价盈利侧）才离场，无盈利门槛；浮亏/持平不归本策略管。
     是否启用由"是否放进策略链"表达（`enable_signal_take_profit` 由装配处决定）,
     不设开关字段。
 
@@ -169,22 +169,23 @@ class SignalExitPolicy(ExitPolicy):
         ):
             return ExitDecision()
 
-        if position.profit_level(ctx.close) == 1:
+        if position.profit_and_loss_ratio(ctx.close) > 0:
             return ExitDecision(should_exit=True)
         return ExitDecision()
 
 
 class LayeredReducePolicy(ExitPolicy):
-    """逆势逐层减仓: 信号反向命中时, 每根 K 线只减最外层一层
+    """信号止损（反向信号命中、该层**浮亏**、且是**最外层**）
 
-    - 只对**最外层**（盈利方向极值且 `quantity > 0` 的持仓层）产出离场决策,
+    - 只对最外层（盈利方向极值且 `quantity > 0` 的持仓层）产出离场决策,
       其余层不动 —— 策略逐仓位询问策略链, 只有一个返回 True;
+    - **要求浮亏**（`profit_and_loss_ratio(close) < 0`）: 止损的字面语义 ——
+      浮盈的最外层归止盈分支（`SignalExitPolicy` / 固定止盈）, 不被 force 剥掉;
     - 已有未成交出场单的层仍被选中（`force=True` 撤单重挂, 不越过它去剥下一层）;
-    - **不要求盈利**: 逆势去风险, 亏损也减（与 `SignalExitPolicy` 的止盈语义不同）;
     - `force=True`: 逆势减仓必须实际减仓, 每根完成 K 线撤单重挂到最新收盘价。
 
-    由 `enable_signal_stop_loss` 独立开关装配, 可与 `SignalExitPolicy` 并存:
-    最外层由本策略 force 剥（亏损也减）, 内层盈利层由信号止盈接手（Step 23）。
+    由 `enable_signal_stop_loss` 独立开关装配, 与 `SignalExitPolicy` 按盈亏状态
+    天然互斥: 浮盈走止盈, 浮亏走止损（Step 24）。
 
     @param kind TRIGGER: 任何非中性信号即可; DIRECTIONAL: 仅命中出场方向时
     @param exit_side 策略的实际出场方向（多头仓位的出场方向为 SELL）
@@ -204,6 +205,9 @@ class LayeredReducePolicy(ExitPolicy):
             and signal.direction is not SignalDirection.of_order_side(self._exit_side)
         ):
             return ExitDecision()
+
+        if position.profit_and_loss_ratio(ctx.close) >= 0:
+            return ExitDecision()  # 浮盈/持平: 不归止损分支
 
         outermost = self._outermost(ctx.positions)
         if outermost is None or outermost.id != position.id:

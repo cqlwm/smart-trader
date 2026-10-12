@@ -33,7 +33,6 @@ def long_buy(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         enable_signal_take_profit=True,
         signal=AlphaTrendSignal(),
         signal_kind=SignalKind.TRIGGER,
-        exit_signal_take_profit_min_rate=0.03,
         fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.03,
         strategy_key=f"signal_grid_long_buy_{symbol_.simple()}_{timeframe_}",

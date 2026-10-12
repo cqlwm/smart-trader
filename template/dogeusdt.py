@@ -32,7 +32,6 @@ def grid(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         enable_signal_take_profit=True,
         signal=AlphaTrendSignal(),
         signal_kind=SignalKind.TRIGGER,
-        exit_signal_take_profit_min_rate=0.002,
         fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.005,
         strategy_key=(

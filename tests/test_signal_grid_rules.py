@@ -211,15 +211,16 @@ def test_signal_policies_both_disabled_omits_both():
 
 
 def test_config_rejects_removed_exit_signal_flags():
-    """旧开关（enable_exit_signal / enable_layered_reduce）已删除, extra=forbid 拦截"""
-    with pytest.raises(ValueError):
-        SignalGridStrategyConfig.model_validate(
-            {**_base_config_fields(), "enable_exit_signal": True}
-        )
-    with pytest.raises(ValueError):
-        SignalGridStrategyConfig.model_validate(
-            {**_base_config_fields(), "enable_layered_reduce": True}
-        )
+    """旧开关（enable_exit_signal / enable_layered_reduce / 止盈门槛）已删除,
+    extra=forbid 拦截"""
+    removed = (
+        "enable_exit_signal",
+        "enable_layered_reduce",
+        "exit_signal_take_profit_min_rate",
+    )
+    for field in removed:
+        with pytest.raises(ValueError):
+            SignalGridStrategyConfig.model_validate({**_base_config_fields(), field: 1})
 
 
 def test_resting_take_profit_only_when_limit_order_enabled():

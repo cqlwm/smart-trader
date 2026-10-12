@@ -305,7 +305,7 @@ def test_fixed_take_profit_policy_uses_opposite_direction_for_short():
 def test_signal_exit_policy_triggers_in_trigger_mode():
     """无方向倾向: 任何非中性信号都可离场"""
     policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
-    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
+    position = _position(opening_price=0.5)
 
     for direction in (SignalDirection.LONG, SignalDirection.SHORT):
         ctx = ExitContext(close=0.505, market_signal=_signal(direction))
@@ -317,7 +317,7 @@ def test_signal_exit_policy_triggers_in_trigger_mode():
 def test_signal_exit_policy_blocks_neutral_in_trigger_mode():
     """无方向倾向模式下中性信号不触发"""
     policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
-    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
+    position = _position(opening_price=0.5)
     ctx = ExitContext(close=0.505, market_signal=_signal(SignalDirection.NEUTRAL))
 
     assert policy.evaluate(position, ctx).should_exit is False
@@ -326,7 +326,7 @@ def test_signal_exit_policy_blocks_neutral_in_trigger_mode():
 def test_signal_exit_policy_blocks_when_no_signal_configured():
     """未配置信号时不触发（空值）"""
     policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
-    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
+    position = _position(opening_price=0.5)
 
     assert policy.evaluate(position, ExitContext(close=0.505)).should_exit is False, (
         "空信号应拦截离场（与入场侧放行相反, 见 02-domain-model.md 第九节）"
@@ -339,7 +339,7 @@ def test_signal_exit_policy_in_directional_mode_requires_exit_direction():
     多头仓位的出场方向是 SELL, 因此需要看跌信号。
     """
     policy = SignalExitPolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
-    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
+    position = _position(opening_price=0.5)
 
     matching = ExitContext(close=0.505, market_signal=_signal(SignalDirection.SHORT))
     opposite = ExitContext(close=0.505, market_signal=_signal(SignalDirection.LONG))
@@ -355,11 +355,7 @@ def test_signal_exit_policy_in_directional_mode_requires_exit_direction():
 def test_signal_exit_policy_in_directional_mode_uses_exit_side_for_short():
     """空头仓位的出场方向是 BUY, 因此需要看涨信号"""
     policy = SignalExitPolicy(SignalKind.DIRECTIONAL, OrderSide.BUY)
-    position = _position(
-        position_side=PositionSide.SHORT,
-        signal_min_take_profit_rate=0.002,
-        opening_price=0.5,
-    )
+    position = _position(position_side=PositionSide.SHORT, opening_price=0.5)
 
     matching = ExitContext(close=0.495, market_signal=_signal(SignalDirection.LONG))
     opposite = ExitContext(close=0.495, market_signal=_signal(SignalDirection.SHORT))
@@ -371,7 +367,7 @@ def test_signal_exit_policy_in_directional_mode_uses_exit_side_for_short():
 def test_signal_exit_policy_is_never_force():
     """信号离场恒为非强制（保留休息中的挂单）"""
     policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
-    position = _position(signal_min_take_profit_rate=0.002, opening_price=0.5)
+    position = _position(opening_price=0.5)
     ctx = ExitContext(close=0.505, market_signal=_signal(SignalDirection.LONG))
 
     assert policy.evaluate(position, ctx).force is False, (
@@ -379,24 +375,31 @@ def test_signal_exit_policy_is_never_force():
     )
 
 
-def test_signal_exit_policy_requires_profit_level_one():
-    """必须处于 1 级盈利（未达固定止盈率）才轮到信号离场"""
+def test_signal_exit_policy_triggers_on_any_floating_profit():
+    """止盈 = 有浮盈即走, 无盈利门槛（Step 24）"""
     policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
-    position = _position(
-        signal_min_take_profit_rate=0.002,
-        fixed_take_profit_rate=0.01,
-        opening_price=0.5,
+    position = _position(opening_price=0.5)
+
+    ctx = ExitContext(close=0.5001, market_signal=_signal(SignalDirection.LONG))
+    assert policy.evaluate(position, ctx).should_exit is True, (
+        "0.02% 的浮盈也是浮盈, 应止盈"
     )
 
-    # 止盈阈值 = 0.5 × 1.01 = 0.505; 0.51 已超过它（profit_level=2）
-    ctx = ExitContext(close=0.51, market_signal=_signal(SignalDirection.LONG))
-    assert policy.evaluate(position, ctx).should_exit is False, (
-        "达到 2 级止盈时不归信号策略管"
-    )
 
-    # 0.5025 处于 1 级（超过 0.2% 但未达 1%）
-    ctx = ExitContext(close=0.5025, market_signal=_signal(SignalDirection.LONG))
-    assert policy.evaluate(position, ctx).should_exit is True, "1 级盈利应由信号离场"
+def test_signal_exit_policy_skips_breakeven_and_loss():
+    """持平与浮亏不止盈（止盈的字面语义）"""
+    policy = SignalExitPolicy(SignalKind.TRIGGER, OrderSide.SELL)
+    position = _position(opening_price=0.5)
+
+    breakeven = ExitContext(close=0.5, market_signal=_signal(SignalDirection.LONG))
+    losing = ExitContext(close=0.4999, market_signal=_signal(SignalDirection.LONG))
+
+    assert policy.evaluate(position, breakeven).should_exit is False, (
+        "恰好持平没有浮盈, 不止盈"
+    )
+    assert policy.evaluate(position, losing).should_exit is False, (
+        "浮亏不属于止盈分支"
+    )
 
 
 # ---- LayeredReducePolicy ----
@@ -463,8 +466,19 @@ def test_layered_reduce_does_not_exit_without_signal():
     )
 
 
+def test_layered_reduce_requires_floating_loss():
+    """止损 = 浮亏才走（Step 24）: 浮盈的最外层不归信号止损管"""
+    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
+    profitable = _holding("PROFIT", entry_price=0.5)
+    ctx = _exit_ctx([profitable], close=0.55, direction=SignalDirection.SHORT)
+
+    assert policy.evaluate(profitable, ctx).should_exit is False, (
+        "浮盈的最外层不应被信号止损剥掉（止盈/固定止盈的职责）"
+    )
+
+
 def test_layered_reduce_reduces_at_loss():
-    """逆势减仓不要求盈利（与 SignalExitPolicy 的止盈语义不同）"""
+    """逆势减仓要求浮亏（止损的字面语义, Step 24 收紧）"""
     policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
     lost = _holding("LOST", entry_price=0.5)
     ctx = _exit_ctx([lost], close=0.45, direction=SignalDirection.SHORT)
@@ -490,7 +504,7 @@ def test_layered_reduce_ignores_empty_layers_in_selection():
     policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
     empty = _holding("EMPTY", entry_price=0.7, quantity=0.0)
     real = _holding("REAL", entry_price=0.5)
-    ctx = _exit_ctx([real, empty], close=0.55, direction=SignalDirection.SHORT)
+    ctx = _exit_ctx([real, empty], close=0.45, direction=SignalDirection.SHORT)
 
     assert policy.evaluate(real, ctx).should_exit is True, (
         "价格更高的零数量层应被跳过, 选中真实持仓层"

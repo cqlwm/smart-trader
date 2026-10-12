@@ -49,11 +49,9 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
             f"_{symbol_.simple()}_{timeframe_}"
         ),
 
-        # 信号止盈: 反向翻转且该层盈利达到阈值时离场（当前关闭;
-        # 需要"逆势逐层减仓"时改为 enable_signal_stop_loss=True, 亏损也减）
+        # 信号止盈: 浮盈层遇反向信号即离场（当前关闭;
+        # 信号止损已开启: 浮亏的最外层遇反向信号 force 减仓, 亏损也走）
         enable_signal_take_profit=False,
-        exit_signal_take_profit_min_rate=0.002,
-
         enable_signal_stop_loss=True,
 
         # 固定比例止盈: 单层盈利 10% 落袋

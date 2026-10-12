@@ -131,36 +131,30 @@ def test_directional_kind_uses_entry_side_for_short_position():
 # ---- 离场: 信号策略 ----
 
 
-def test_signal_exit_closes_position_at_signal_min_rate():
-    """信号止盈: 盈利达到 exit_signal_take_profit_min_rate 时平仓"""
-    strategy, trading, _ = _long(exit_signal_take_profit_min_rate=0.002)
+def test_signal_exit_closes_profitable_position_on_reverse_signal():
+    """信号止盈: 浮盈层遇反向信号即平仓（无盈利门槛, Step 24）"""
+    strategy, trading, _ = _long()
     seed_position(strategy, entry_price=0.5, quantity=100.0)
 
     push_kline(strategy, 0.505)
 
     assert [request.side for request in trading.placed] == [OrderSide.SELL], (
-        "达到信号止盈率应挂出出场单"
+        "浮盈层遇反向信号应挂出出场单"
     )
 
 
-def test_no_signal_exit_when_profit_below_signal_min_rate():
-    """盈利未达仓位的信号止盈率时不平仓
+def test_no_signal_exit_when_position_at_loss():
+    """浮亏层不走信号止盈分支（止盈的字面语义, Step 24）
 
-    注意: 离场阈值随仓位落库（`GridPosition.signal_min_take_profit_rate`）,
-    因此这里 seed 仓位时指定阈值, 而不是改 config —— config 只在建仓时写一次。
+    注意: 止损分支由 enable_signal_stop_loss 单独控制, 此处未开启。
+    跌幅收窄在间距(1%)之内, 避免间距闸门放行反向加仓干扰断言。
     """
-    strategy, trading, _ = _long(fixed_rate_take_profit=False)
-    seed_position(
-        strategy,
-        entry_price=0.5,
-        quantity=100.0,
-        fixed_take_profit_rate=0.1,
-        signal_min_take_profit_rate=0.01,
-    )
+    strategy, trading, _ = _long()
+    seed_position(strategy, entry_price=0.5, quantity=100.0)
 
-    push_kline(strategy, 0.505)
+    push_kline(strategy, 0.4999)
 
-    assert trading.placed == [], "未达信号止盈率(1%)不应平仓"
+    assert trading.placed == [], "浮亏层不应触发信号止盈"
 
 
 def test_no_signal_exit_when_signal_is_neutral():
@@ -168,7 +162,6 @@ def test_no_signal_exit_when_signal_is_neutral():
     strategy, trading, _ = _long(
         signal=FakeSignal([SignalDirection.NEUTRAL]),
         fixed_rate_take_profit=False,
-        exit_signal_take_profit_min_rate=0.002,
     )
     seed_position(strategy, entry_price=0.5, quantity=100.0)
 
@@ -204,7 +197,6 @@ def test_directional_signal_exit_requires_opposite_direction():
     strategy, trading, _ = build_strategy(
         signal=FakeSignal([SignalDirection.LONG]),
         signal_kind=SignalKind.DIRECTIONAL,
-        exit_signal_take_profit_min_rate=0.002,
     )
     seed_position(strategy, entry_price=0.5, quantity=100.0)
 
@@ -218,7 +210,7 @@ def test_directional_signal_exit_requires_opposite_direction():
 def test_layered_reduce_peels_only_outermost_layer():
     """逆势减仓: 反向信号命中时只挂最外层一层的出场单, 其余层不动"""
     strategy, trading, _ = _layered_reduce()
-    seed_position(strategy, "INNER", entry_price=0.5, quantity=100.0)
+    seed_position(strategy, "INNER", entry_price=0.58, quantity=100.0)
     outer = seed_position(strategy, "OUTER", entry_price=0.6, quantity=100.0)
 
     push_kline(strategy, 0.55)
@@ -235,7 +227,7 @@ def test_layered_reduce_peels_only_outermost_layer():
 def test_layered_reduce_waits_before_peeling_next_layer():
     """最外层仍在减仓中（出场单未成交）时, 下一层等待, 不齐平"""
     strategy, trading, _ = _layered_reduce()
-    seed_position(strategy, "INNER", entry_price=0.5, quantity=100.0)
+    seed_position(strategy, "INNER", entry_price=0.58, quantity=100.0)
     seed_position(strategy, "OUTER", entry_price=0.6, quantity=100.0)
 
     push_kline(strategy, 0.55, timestamp=TIMESTAMP)
@@ -256,9 +248,9 @@ def test_layered_reduce_waits_before_peeling_next_layer():
 
 
 def test_layered_reduce_peels_next_layer_after_outermost_closed():
-    """最外层出场单成交归档后, 同一根 K 线轮到次外层"""
+    """最外层出场单成交归档后, 同一根 K 线轮到次外层（仍浮亏, 接力减仓）"""
     strategy, trading, _ = _layered_reduce()
-    seed_position(strategy, "INNER", entry_price=0.5, quantity=100.0)
+    seed_position(strategy, "INNER", entry_price=0.58, quantity=100.0)
     outer = seed_position(strategy, "OUTER", entry_price=0.6, quantity=100.0)
 
     push_kline(strategy, 0.55, timestamp=TIMESTAMP)
@@ -296,13 +288,11 @@ def test_layered_reduce_peels_next_layer_after_outermost_closed():
 
 def test_signal_exit_keeps_resting_exit_order_instead_of_replacing():
     """已有休息中的出场单时, 信号离场保留原挂单（force=False）"""
-    strategy, trading, _ = _long(exit_signal_take_profit_min_rate=0.002)
+    strategy, trading, _ = _long()
     seed_position(strategy, entry_price=0.5, quantity=100.0)
 
     # 第一根: 固定止盈先挂出出场单（需开启固定止盈）
-    strategy2, trading2, _ = _long(
-        exit_signal_take_profit_min_rate=0.002, fixed_rate_take_profit=True
-    )
+    strategy2, trading2, _ = _long(fixed_rate_take_profit=True)
     seed_position(strategy2, entry_price=0.5, quantity=100.0)
     push_kline(strategy2, 0.505)
     placed_before = len(trading2.placed)
@@ -371,7 +361,7 @@ def test_signal_is_evaluated_again_on_next_kline():
 
 def test_repeated_klines_do_not_duplicate_exit_orders():
     """连续多根 K 线命中信号时不重复挂出场单"""
-    strategy, trading, _ = _long(exit_signal_take_profit_min_rate=0.002)
+    strategy, trading, _ = _long()
     seed_position(strategy, entry_price=0.5, quantity=100.0)
 
     push_kline(strategy, 0.505)

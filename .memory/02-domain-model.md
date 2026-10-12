@@ -298,9 +298,9 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 | --- | --- | --- |
 | `ForceExitPolicy` | `trigger()` 为真（达到上限止损 / 手动 `close_position`） | **True** |
 | `StopLossPolicy` | 读仓位的 `enable_stop_loss` / `enable_trailing_stop` / `stop_loss_rate` / `trailing_stop_price` / `price` / `entry_side` | **True** |
-| `LayeredReducePolicy` | 信号反向命中，且自己是**最外层**（盈利方向极值、`quantity > 0` 的层） | **True** |
+| `LayeredReducePolicy` | 信号反向命中、自身**浮亏**（`ratio < 0`）且是**最外层**（盈利方向极值、`quantity > 0` 的层） | **True** |
 | `FixedTakeProfitPolicy` | `profit_level(close) == 2` | False |
-| `SignalExitPolicy` | `profit_level(close) == 1` 且行情方向命中 | False |
+| `SignalExitPolicy` | 信号反向命中且自身**浮盈**（`profit_and_loss_ratio(close) > 0`） | False |
 
 `ExitPolicyChain` 合并规则：`should_exit = any`、`force = any`，**合并顺序无关**。
 
@@ -311,18 +311,20 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 必须实际减仓，每根完成 K 线撤单重挂到最新收盘价（否则下跌途中限价单挂着不成交，
 逐层推进停滞）。
 
-**信号离场的两个独立开关**（Step 23，取代原 `enable_exit_signal` 总开关 +
-`enable_layered_reduce` 口味开关）：
+**信号离场按盈亏状态分派**（Step 24，取代"两个独立策略可并存"的中间形态）：
+反向信号命中时，**同一层**按其盈亏状态走且仅走一个分支：
 
-| 开关 | 策略 | 语义 |
-| --- | --- | --- |
-| `enable_signal_take_profit`（默认 True） | `SignalExitPolicy` | 反向信号命中且该层盈利 ≥ `exit_signal_take_profit_min_rate` → 离场（非 force，保留原挂单） |
-| `enable_signal_stop_loss`（默认 False） | `LayeredReducePolicy` | 反向信号命中 → 最外层 force 离场（逐层推进，亏损也减） |
+| 仓位状态 | 开关 | 策略 | 行为 |
+| --- | --- | --- | --- |
+| 浮盈（`close` 在成本价盈利侧，`profit_and_loss_ratio(close) > 0`） | `enable_signal_take_profit`（默认 True） | `SignalExitPolicy` | 止盈离场（非 force，保留原挂单） |
+| 浮亏（`profit_and_loss_ratio(close) < 0`） | `enable_signal_stop_loss`（默认 False） | `LayeredReducePolicy` | 止损离场（force 撤单重挂，**仅最外层**，逐层推进） |
+| 持平（`ratio == 0`，含均价不可用） | —— | 均不触发 | 保持持仓 |
 
-两者独立装配、**可同时开启**：反向信号当根，最外层由信号止损 force 剥
-（逐层节奏不变、撤单重挂到收盘价），内层盈利层由信号止盈离场（保留原挂单
-不重复挂）；同层同时命中时按 force 合并规则走强制路径。全关 = 无信号驱动
-离场（只剩固定止盈 / 价格止损 / 上限止损）。
+- 两分支按盈亏符号**天然互斥**，同层永不冲突，`force` 合并规则退化为兜底；
+- 止盈无盈利门槛（`exit_signal_take_profit_min_rate` 已删除）—— 有浮盈即为止盈；
+- 止损保持"仅最外层 + force"的逐层减仓节奏（不变量见上文）；内层浮亏层
+  等逐层推进到它时再离场；
+- 全关 = 无信号驱动离场（只剩固定止盈 / 价格止损 / 上限止损）。
 
 ### 5. 止损参数与止盈阈值的权威来源
 
