@@ -178,19 +178,19 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         ]
         if self.config.fixed_rate_take_profit:
             policies.append(FixedTakeProfitPolicy())
-        if self.config.enable_exit_signal:
-            policies.append(self._build_signal_exit_policy())
-        return ExitPolicyChain(policies)
-
-    def _build_signal_exit_policy(self) -> ExitPolicy:
-        """信号离场口味二选一: 逐层减仓 / 信号止盈离场（语义重叠, 只装配其一）"""
-        if self.config.enable_layered_reduce:
-            return LayeredReducePolicy(
-                self.config.signal_kind, self.config.master_side.reversal()
+        if self.config.enable_signal_take_profit:
+            policies.append(
+                SignalExitPolicy(
+                    self.config.signal_kind, self.config.master_side.reversal()
+                )
             )
-        return SignalExitPolicy(
-            self.config.signal_kind, self.config.master_side.reversal()
-        )
+        if self.config.enable_signal_stop_loss:
+            policies.append(
+                LayeredReducePolicy(
+                    self.config.signal_kind, self.config.master_side.reversal()
+                )
+            )
+        return ExitPolicyChain(policies)
 
     # ---- 逻辑仓位登记表 ----
 

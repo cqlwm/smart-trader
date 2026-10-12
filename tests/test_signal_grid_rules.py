@@ -24,8 +24,9 @@ from smart_trader.strategy.exit_policy import (
     RestingTakeProfitPolicy,
     SignalExitPolicy,
 )
+from smart_trader.strategy.signal_grid_config import SignalGridStrategyConfig
 from smart_trader.strategy.signal_grid_strategy import SignalGridStrategy
-from tests.fakes import FakeSignal
+from tests.fakes import DEFAULT_SYMBOL, FakeSignal
 from tests.test_signal_grid_strategy import (
     TIMESTAMP,
     build_strategy,
@@ -34,6 +35,15 @@ from tests.test_signal_grid_strategy import (
 )
 
 GateT = TypeVar("GateT", bound=EntryGate)
+
+
+def _base_config_fields() -> dict[str, object]:
+    """最小合法配置字段（不含被测开关, 供 extra=forbid 拒绝测试叠加旧字段）"""
+    return {
+        "symbol": DEFAULT_SYMBOL,
+        "timeframe": "1m",
+        "strategy_key": "rules_config_reject_1m",
+    }
 
 # ---- 装配契约: SignalKind 决定闸门类型 ----
 
@@ -149,7 +159,7 @@ def test_entry_gate_chain_order_with_trend_spacing():
 
 
 def test_default_config_assembles_signal_exit_policy():
-    """默认装配信号止盈离场, 不装配逐层减仓"""
+    """默认装配信号止盈离场（enable_signal_take_profit=True）, 不装配信号止损"""
     strategy, _, _ = build_strategy()
 
     policies = strategy.exit_policies.policies
@@ -159,28 +169,57 @@ def test_default_config_assembles_signal_exit_policy():
     assert not any(isinstance(policy, LayeredReducePolicy) for policy in policies)
 
 
-def test_enable_layered_reduce_replaces_signal_exit_policy():
-    """启用逐层减仓后替代信号止盈离场（语义重叠, 二选一）"""
-    strategy, _, _ = build_strategy(enable_layered_reduce=True)
+def test_signal_stop_loss_assembles_layered_reduce():
+    """enable_signal_stop_loss=True 装配 LayeredReducePolicy"""
+    strategy, _, _ = build_strategy(
+        enable_signal_take_profit=False, enable_signal_stop_loss=True
+    )
 
     policies = strategy.exit_policies.policies
     assert any(isinstance(policy, LayeredReducePolicy) for policy in policies), (
-        "enable_layered_reduce=True 应装配 LayeredReducePolicy"
+        "enable_signal_stop_loss=True 应装配 LayeredReducePolicy"
     )
     assert not any(isinstance(policy, SignalExitPolicy) for policy in policies), (
-        "逐层减仓与信号止盈离场二选一"
+        "enable_signal_take_profit=False 时不装配信号止盈"
     )
 
 
-def test_exit_signal_disabled_omits_both_signal_exit_policies():
-    """enable_exit_signal 是信号离场总开关: 关闭时两种口味都不装配"""
+def test_both_signal_policies_assemble_together():
+    """两个开关可并存: 信号止损剥最外层, 信号止盈接手内层盈利层"""
     strategy, _, _ = build_strategy(
-        enable_layered_reduce=True, enable_exit_signal=False
+        enable_signal_take_profit=True, enable_signal_stop_loss=True
+    )
+
+    policies = strategy.exit_policies.policies
+    assert any(isinstance(policy, LayeredReducePolicy) for policy in policies), (
+        "enable_signal_stop_loss=True 应装配 LayeredReducePolicy"
+    )
+    assert any(isinstance(policy, SignalExitPolicy) for policy in policies), (
+        "enable_signal_take_profit=True 应装配 SignalExitPolicy"
+    )
+
+
+def test_signal_policies_both_disabled_omits_both():
+    """两个开关全关: 无信号驱动离场策略"""
+    strategy, _, _ = build_strategy(
+        enable_signal_take_profit=False, enable_signal_stop_loss=False
     )
 
     policies = strategy.exit_policies.policies
     assert not any(isinstance(policy, LayeredReducePolicy) for policy in policies)
     assert not any(isinstance(policy, SignalExitPolicy) for policy in policies)
+
+
+def test_config_rejects_removed_exit_signal_flags():
+    """旧开关（enable_exit_signal / enable_layered_reduce）已删除, extra=forbid 拦截"""
+    with pytest.raises(ValueError):
+        SignalGridStrategyConfig.model_validate(
+            {**_base_config_fields(), "enable_exit_signal": True}
+        )
+    with pytest.raises(ValueError):
+        SignalGridStrategyConfig.model_validate(
+            {**_base_config_fields(), "enable_layered_reduce": True}
+        )
 
 
 def test_resting_take_profit_only_when_limit_order_enabled():

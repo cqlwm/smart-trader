@@ -147,7 +147,8 @@ class SignalExitPolicy(ExitPolicy):
 
     止盈阈值直接用 `position.signal_min_take_profit_rate`（`profit_level` 已在用）,
     不持有第二份参数, 避免参数源分裂。
-    是否启用由"是否放进策略链"表达（`enable_exit_signal` 由装配处决定）, 不设开关字段。
+    是否启用由"是否放进策略链"表达（`enable_signal_take_profit` 由装配处决定）,
+    不设开关字段。
 
     @param kind TRIGGER: 任何非中性信号即可; DIRECTIONAL: 仅命中出场方向时
     @param exit_side 策略的实际出场方向（多头仓位的出场方向为 SELL）
@@ -182,7 +183,8 @@ class LayeredReducePolicy(ExitPolicy):
     - **不要求盈利**: 逆势去风险, 亏损也减（与 `SignalExitPolicy` 的止盈语义不同）;
     - `force=True`: 逆势减仓必须实际减仓, 每根完成 K 线撤单重挂到最新收盘价。
 
-    与 `SignalExitPolicy` 语义重叠, 装配时二选一（`enable_layered_reduce` 选择口味）。
+    由 `enable_signal_stop_loss` 独立开关装配, 可与 `SignalExitPolicy` 并存:
+    最外层由本策略 force 剥（亏损也减）, 内层盈利层由信号止盈接手（Step 23）。
 
     @param kind TRIGGER: 任何非中性信号即可; DIRECTIONAL: 仅命中出场方向时
     @param exit_side 策略的实际出场方向（多头仓位的出场方向为 SELL）

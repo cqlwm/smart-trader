@@ -30,7 +30,7 @@ def long_buy(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         per_order_qty=1,
         grid_spacing_rate=-0.1,
         max_order=3,
-        enable_exit_signal=True,
+        enable_signal_take_profit=True,
         signal=AlphaTrendSignal(),
         signal_kind=SignalKind.TRIGGER,
         exit_signal_take_profit_min_rate=0.03,

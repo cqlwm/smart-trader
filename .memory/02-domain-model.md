@@ -311,12 +311,18 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 必须实际减仓，每根完成 K 线撤单重挂到最新收盘价（否则下跌途中限价单挂着不成交，
 逐层推进停滞）。
 
-**逆势逐层减仓（`LayeredReducePolicy`）**：信号反向命中时只对**最外层一层**
-（`quantity > 0` 的盈利方向极值层）产出离场决策，每根完成 K 线最多推进一层 ——
-顺序由既有不变量保证：被选中的层存在未成交出场单时，下一层仍不是最外层，
-自然等待重挂/成交，无需额外节流状态。它**不要求盈利**（逆势去风险，亏损也减），
-且与 `SignalExitPolicy` 语义重叠，装配时二选一：`enable_exit_signal` 是信号离场的
-总开关，`enable_layered_reduce` 选择口味（True → 逐层减仓；False → 止盈离场）。
+**信号离场的两个独立开关**（Step 23，取代原 `enable_exit_signal` 总开关 +
+`enable_layered_reduce` 口味开关）：
+
+| 开关 | 策略 | 语义 |
+| --- | --- | --- |
+| `enable_signal_take_profit`（默认 True） | `SignalExitPolicy` | 反向信号命中且该层盈利 ≥ `exit_signal_take_profit_min_rate` → 离场（非 force，保留原挂单） |
+| `enable_signal_stop_loss`（默认 False） | `LayeredReducePolicy` | 反向信号命中 → 最外层 force 离场（逐层推进，亏损也减） |
+
+两者独立装配、**可同时开启**：反向信号当根，最外层由信号止损 force 剥
+（逐层节奏不变、撤单重挂到收盘价），内层盈利层由信号止盈离场（保留原挂单
+不重复挂）；同层同时命中时按 force 合并规则走强制路径。全关 = 无信号驱动
+离场（只剩固定止盈 / 价格止损 / 上限止损）。
 
 ### 5. 止损参数与止盈阈值的权威来源
 

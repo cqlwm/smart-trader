@@ -119,6 +119,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 20 | **顺势逐层加仓 + 逆势逐层减仓**：新增 `TrendSpacingGate`（顺势阶梯闸门：以最外层仓位为基准，盈利方向走出间距才加仓；与 `GridSpacingGate` 互斥装配，由 `trend_spacing_rate` 选择，见 `02-domain-model.md` 八.3.2）与 `LayeredReducePolicy`（信号反向命中时每根完成 K 线只减最外层一层、亏损也减、`force=True` 撤单重挂保证实际减仓；与 `SignalExitPolicy` 二选一，`enable_exit_signal` 仍为总开关）；`ExitContext` 增加 `positions` 字段（与 `EntryContext` 对称，纯数据）；config 新增 `trend_spacing_rate` / `enable_layered_reduce`（设计见 `03-coding-design.md` 三.10/三.11） | 已完成 |
 | Step 21 | **修复入场单成交永不结算的职责耦合缺陷**：`_on_kline` 原以 `resting_take_profit is None → return` 整体短路，未开启限价止盈的配置下入场单成交永远无人结算（`position.quantity` 恒 0、账本停 `open`、止盈/止损/间距全失真；实测事故见 `03-coding-design.md` 三.12）。拆分：`PositionLifecycle.settle_entry_fills`（盘中每 tick 无条件只结算不撤单，None 时按同 `OrderReconciler` 的 5s 最小年龄口径防 settle 延迟）与 `settle_pending_entries`（撤剩余入场单 + 结算，仅出场流程调用）；`_on_kline` 休息止盈块独立守卫 | 已完成 |
 | Step 22 | **修复固定止损费率开仓后冻结的缺陷（实测事故）**：原实现开仓时把 `stop_loss_rate` 一次性烘焙进 `trailing_stop_price`，`StopLossPolicy` 也只读该字段 —— 之后修改 config 的 `order_stop_loss_rate` 或库里的 `stop_loss_rate` 对存量仓位永远无效（字段看着是活参数，实际是死快照）。拆分语义：**固定止损**按 `仓位均价 × (1 ∓ stop_loss_rate)` 实时判定（活参数，`_open_position` 不再为纯固定止损写快照字段）；**跟踪止损**独占 `trailing_stop_price`（ratchet 字段，播种口径不变）；`enable_stop_loss` 仍是总开关，`enable_trailing_stop` 只选模式（设计见 `02-domain-model.md` 八.5、`03-coding-design.md` 三.13） | 已完成 |
+| Step 23 | **信号离场拆分为两个独立开关**：`enable_exit_signal`（总开关）+ `enable_layered_reduce`（口味）删除，改为 `enable_signal_take_profit`（信号止盈, 默认 True → `SignalExitPolicy`）与 `enable_signal_stop_loss`（信号止损, 默认 False → `LayeredReducePolicy`）；二者独立装配可并存 —— 最外层由止损 force 剥（亏损也减），内层盈利层由止盈离场，同层命中走 force 合并；config 加 `extra="forbid"` 拦截拼写漂移（设计见 `03-coding-design.md` 三.11） | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -148,7 +149,9 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 5. **日志与配置模块无测试**（`log.init_logging` 的级别解析、`config` 的必填校验）。
 6. ~~**顺势加仓**~~ —— **已由 Step 20 解决**：需要"价格顺趋势上涨/下跌到一定距离即加仓"时，
    用 `TrendSpacingGate`（`trend_spacing_rate` 装配后替换 `GridSpacingGate`，见
-   `02-domain-model.md` 八.3.2）；"逆势逐层减仓"由 `LayeredReducePolicy` 承担。
+   `02-domain-model.md` 八.3.2）；"逆势逐层减仓"由 `enable_signal_stop_loss=True`
+   装配 `LayeredReducePolicy` 承担（Step 23 拆分后与 `enable_signal_take_profit`
+   独立）。
    `Step 13` 已删除 `position_reverse` 这个反向开关，方向直接由 config 声明。
 
 ### 已修复缺陷（记录）

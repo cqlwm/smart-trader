@@ -14,7 +14,7 @@ from smart_trader.strategy.signal import Signal
 
 
 class SignalGridStrategyConfig(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     symbol: Symbol
     timeframe: str
@@ -37,12 +37,13 @@ class SignalGridStrategyConfig(BaseModel):
     # 信号种类: TRIGGER=无方向倾向(任何非中性信号都触发) / DIRECTIONAL=有方向倾向
     signal_kind: SignalKind = SignalKind.DIRECTIONAL
 
-    # 启用退出信号（信号离场总开关）
-    enable_exit_signal: bool = True
-    # 逆势逐层减仓: 启用后信号离场改为"每根完成K线只减最外层一层"（亏损也减），
-    # 替代信号止盈离场（enable_exit_signal 仍是总开关）
-    enable_layered_reduce: bool = False
-    # 退出信号最小止盈率
+    # 信号止盈: 反向信号命中且该层盈利达到 exit_signal_take_profit_min_rate 时离场
+    # （非 force —— 已有出场挂单的盈利层保留原挂单不重复挂）
+    enable_signal_take_profit: bool = True
+    # 信号止损: 反向信号命中时最外层强制离场（逐层推进, 亏损也减, force 撤单重挂）
+    # 与信号止盈独立, 可同时开启: 最外层由止损剥, 内层盈利层由止盈接手
+    enable_signal_stop_loss: bool = False
+    # 信号止盈的最小盈利率
     exit_signal_take_profit_min_rate: float = 0.002
 
     # 固定比例止盈

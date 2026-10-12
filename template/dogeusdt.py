@@ -29,7 +29,7 @@ def grid(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         per_order_qty=500,
         grid_spacing_rate=0.0001,
         max_order=50,
-        enable_exit_signal=True,
+        enable_signal_take_profit=True,
         signal=AlphaTrendSignal(),
         signal_kind=SignalKind.TRIGGER,
         exit_signal_take_profit_min_rate=0.002,

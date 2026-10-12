@@ -26,7 +26,7 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
     @note 加仓节奏受信号语义约束: `AlphaTrendSignal` 是翻转事件信号,
           每次看涨翻转最多加一层; 若需"趋势延续中每隔 X% 加一层",
           需换成状态型信号（趋势持续期间恒输出方向）。
-    @note 需要"逆势逐层减仓"时, 追加 `enable_layered_reduce=True`
+    @note 需要"逆势逐层减仓"时, 追加 `enable_signal_stop_loss=True`
           （信号反向时每根完成 K 线只减最外层一层, 亏损也减）。
     """
     position_side = PositionSide.LONG
@@ -41,18 +41,25 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         # 顺势加仓间距: 越过最外层 0.01% 才加一层（顺势阶梯, 替代网格间距口径）
         trend_spacing_rate=0.0001,
         max_order=10,
-        # 信号离场: 反向翻转且该层盈利 0.3% 以上时离场
-        enable_exit_signal=False,
-        exit_signal_take_profit_min_rate=0,
-        # 固定比例止盈: 单层盈利 10% 落袋
-        fixed_rate_take_profit=True,
-        fixed_take_profit_rate=0.1,
+
         signal=AlphaTrendSignal(),
         signal_kind=SignalKind.DIRECTIONAL,
         strategy_key=(
             f"signal_trend_{position_side.value}_{master_side.value}"
             f"_{symbol_.simple()}_{timeframe_}"
         ),
+
+        # 信号止盈: 反向翻转且该层盈利达到阈值时离场（当前关闭;
+        # 需要"逆势逐层减仓"时改为 enable_signal_stop_loss=True, 亏损也减）
+        enable_signal_take_profit=False,
+        exit_signal_take_profit_min_rate=0.002,
+
+        enable_signal_stop_loss=True,
+
+        # 固定比例止盈: 单层盈利 10% 落袋
+        fixed_rate_take_profit=True,
+        fixed_take_profit_rate=0.1,
+
         # 单层止损: 价格维度保护
         enable_order_stop_loss=True,
         order_stop_loss_rate=0.005,
