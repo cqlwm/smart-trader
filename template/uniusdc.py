@@ -29,7 +29,7 @@ def grid_reverse(exchange_client: ExSwapClient, pside: PositionSide, oside: Orde
         timeframe=timeframe_,
         position_side=pside,
         master_side=oside,
-        per_order_qty=10,
+        per_order_qty=2,
         grid_spacing_rate=0.0001,
         max_order=50,
         enable_exit_signal=True,
