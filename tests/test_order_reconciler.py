@@ -154,6 +154,15 @@ class TestDiscard:
 
 
 class TestRobustness:
+    def test_too_fresh_treats_unknown_age_as_too_fresh(self, journal: OrderJournal) -> None:
+        """created_at 未知(空串)必须保守跳过, 与 PositionLifecycle 同口径
+
+        对账查不到即删行 —— 若把"年龄未知"当"足够老", 刚预写的订单会被误删。
+        """
+        reconciler = build_reconciler(FakeTradingPort(), journal, min_age_seconds=60.0)
+
+        assert reconciler._too_fresh("") is True, "年龄未知应保守跳过, 不得立即查单删行"
+
     def test_skips_too_fresh_records(self, journal: OrderJournal) -> None:
         """刚预写的订单可能还没在交易所 settle, 先跳过留给下一次"""
         seed_pending(journal)

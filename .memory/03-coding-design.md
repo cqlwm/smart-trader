@@ -299,6 +299,37 @@ SHORT 仓被判定为巨额浮盈（触发止盈），全部按 0.0 定价静默
 只保护绕过守卫的未来调用点。调用图上 `_exit_context` 仅由
 `check_close_position` 调用，守卫先于构造，正常运行永不触发 raise。
 
+### 15. 交易所响应解析的严格契约与"缺失 ≠ 零值"（Step 26）
+
+**背景缺陷**：`_to_float` 把"空值与 0"统一归一化为 None，丢失"缺失 vs 零"的
+区别；调用点再用 `or 0.0` 找回零值，同时把"缺失"也变成 0.0 —— 与同函数内
+`clientOrderId`/`side` 缺失即抛 `ORDER_RESPONSE_INVALID` 的严格口径矛盾。
+下游 `settle_order` 的 `result.quantity > 0 else order.quantity` 兜底恰好被
+这个 0.0 触发，两层静默互相掩护，账面看不出交易所响应异常。
+
+**修复后的契约**：
+
+| 字段 | 缺失处理 | 语义 |
+| --- | --- | --- |
+| `amount`（委托量） | 抛 `ORDER_RESPONSE_INVALID` | 币安 fapi 下单/查单/撤单响应必回传 origQty |
+| `filled`（成交量） | `None → 0.0` | 未回传视为无成交；完全成交另有兜底（filled=quantity） |
+| `price` / `average` | 0 与缺失都归 None | 市价单无委托价 / 未成交无均价，None 表示"未提供" |
+| 持仓 `contracts` / `entryPrice` | 有方向但缺失 → 丢弃整行 + warning | 不得以 0.0 伪装数量/成本价；无方向占位行静默跳过 |
+
+**`Position.entry_price` 随之必填**（删除 `= 0.0` 默认值）：0.0 是
+"看起来合法实则错误"的成本价，模型层直接拒绝无价构造。当前无消费者，
+属预防性收紧 —— 一旦将来有 PnL 逻辑读它，0.0 伪装就是 `ExitContext.close`
+同款事故。
+
+**`OrderReconciler._too_fresh` 与 `PositionLifecycle` 真正同口径**：
+created_at 为空（年龄未知）→ 保守跳过。对账"查不到即删行"，若把"年龄未知"
+当"足够老"，刚预写的订单会被误删。DB 行因 journal 首写兜底总有 created_at，
+此修复防的是未来绕过 `_values` 的写入路径（如对账器扩展到 open 状态）。
+
+**审计修正**：`JournaledTradingPort` 的 `grid_position_id or ""` 无需修复 ——
+`__init__` 已有 XOR 契约校验（position 与 grid_position_id 必须二选一），
+`or ""` 只是模板路径的瞬时占位，`open_position` 同事务覆盖为真实仓位号。
+
 ## 四、数据事件循环设计（data_event_loop / task）
 
 ### 1. 载荷统一为 Kline

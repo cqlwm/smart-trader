@@ -9,7 +9,7 @@
 | `Kline` | `model.py` | K 线，`finished` 表示该根是否已收盘 |
 | `OrderRequest` | `model.py` | 下单请求（领域对象） |
 | `OrderResult` | `model.py` | 订单结果（领域对象），`place`/`query`/`cancel` 的统一返回 |
-| `Position` | `model.py` | 持仓 |
+| `Position` | `model.py` | 持仓（`entry_price` **必填**，无默认值 —— 0.0 是"看起来合法实则错误"的成本价） |
 | `GridPosition` | `strategy/grid_position.py` | **逻辑仓位**：一个格子的完整生命周期；只持策略参数与运行时跟踪状态，价格/数量/相位全部由订单派生 |
 | `GridPositionRow` | `storage/records.py` | `grid_positions` 表的一行：`GridPosition` 的持久化形态，不含策略行为 |
 | `OrderRecord` | `storage/records.py` | `orders` 表的一行：一次委托（`status` 为空表示结果未确认，承担 WAL 标记） |

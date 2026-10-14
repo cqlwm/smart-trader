@@ -270,7 +270,15 @@ def to_order_result(order: CcxtOrder, symbol: Symbol) -> OrderResult:
             f"无法解析订单方向: {raw_side}",
         )
 
-    quantity = _to_float(order.get("amount")) or 0.0
+    quantity = _to_float(order.get("amount"))
+    if quantity is None:
+        # 交易所必回传委托量; 缺失属响应数据不完整, 不得以 0.0 伪装
+        raise SmartTraderError(
+            ErrorCode.ORDER_RESPONSE_INVALID,
+            f"订单响应缺少委托量 amount: {order}",
+        )
+
+    # 未回传成交量视为无成交; 完全成交的兜底见下
     filled_qty = _to_float(order.get("filled")) or 0.0
     if status.is_closed() and not filled_qty:
         # 完全成交的订单成交量必然等于委托量; 交易所未回传时兜底,
@@ -284,20 +292,24 @@ def to_order_result(order: CcxtOrder, symbol: Symbol) -> OrderResult:
         status=status,
         quantity=quantity,
         filled_qty=filled_qty,
-        price=_to_float(order.get("price")),
-        avg_price=_to_float(order.get("average")),
+        # 0 视为未提供(市价单无委托价 / 未成交无均价), 保留 None 语义
+        price=_to_float(order.get("price")) or None,
+        avg_price=_to_float(order.get("average")) or None,
     )
 
 
 def _to_float(value: Any) -> float | None:
-    """把交易所返回的数字/字符串安全转为 float, 空值与 0 归一化为 None"""
+    """把交易所返回的数字/字符串安全转为 float
+
+    空值与非法输入归一化为 None; 0 是合法事实, 原样保留 ——
+    "缺失"如何处理由调用方决定, 禁止用 or 0.0 把缺失伪装成零值。
+    """
     if value is None:
         return None
     try:
-        number = float(value)
+        return float(value)
     except (TypeError, ValueError):
         return None
-    return number or None
 
 
 def _translate_error(error: Exception, action: str) -> SmartTraderError:
@@ -512,16 +524,28 @@ class BinanceExchange(Exchange):
         positions: list[Position] = []
         for raw in raw_positions:
             side = raw.get("side")
-            quantity = _to_float(raw.get("contracts"))
-            if side not in ("long", "short") or quantity is None:
+            if side not in ("long", "short"):
                 # 已平仓或无方向的占位记录
+                continue
+            quantity = _to_float(raw.get("contracts"))
+            entry_price = _to_float(raw.get("entryPrice"))
+            if quantity is None or quantity <= 0 or entry_price is None:
+                # 有方向的持仓缺数量/入场价属响应不完整: 丢弃并告警,
+                # 不得以 0.0 伪装成合法数量/成本价
+                logger.warning(
+                    "持仓响应不完整, 跳过: %s side=%s contracts=%s entryPrice=%s",
+                    raw.get("symbol"),
+                    side,
+                    raw.get("contracts"),
+                    raw.get("entryPrice"),
+                )
                 continue
             positions.append(
                 Position(
                     symbol=Symbol.from_ccxt(raw["symbol"]),
                     side=PositionSide(side),
                     quantity=quantity,
-                    entry_price=_to_float(raw.get("entryPrice")) or 0.0,
+                    entry_price=entry_price,
                 )
             )
         return positions

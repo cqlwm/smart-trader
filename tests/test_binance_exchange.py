@@ -313,6 +313,20 @@ class TestPlace:
 
         assert exc.value.error_code is ErrorCode.ORDER_RESPONSE_INVALID
 
+    def test_raises_order_response_invalid_when_amount_missing(self):
+        """交易所未回传委托量属响应数据不完整, 必须失败而非以 0.0 静默伪装"""
+        exchange, fake = build_exchange()
+        fake.create_order_result = {
+            "clientOrderId": "cid1",
+            "status": "open",
+            "side": "buy",
+        }
+
+        with pytest.raises(SmartTraderError) as exc:
+            exchange.place(build_request())
+
+        assert exc.value.error_code is ErrorCode.ORDER_RESPONSE_INVALID
+
     @pytest.mark.parametrize(
         ("error", "expected_code", "transient"),
         [
@@ -520,6 +534,21 @@ class TestAccount:
         assert positions[0].side is PositionSide.LONG
         assert positions[0].quantity == 10.0
         assert positions[0].entry_price == pytest.approx(0.09085)
+
+    def test_positions_skips_open_position_without_entry_price(self):
+        """开仓记录缺入场价属响应不完整, 必须丢弃而非以 0.0 伪装成本价"""
+        exchange, fake = build_exchange()
+        fake.positions_result = [
+            {
+                "symbol": "DOGE/USDC:USDC",
+                "side": "long",
+                "contracts": 10.0,
+            },
+        ]
+
+        positions = exchange.positions(SYMBOL)
+
+        assert positions == [], "缺入场价的持仓不得伪装成 entry_price=0.0"
 
     def test_balance_returns_free_amount(self):
         exchange, _ = build_exchange()

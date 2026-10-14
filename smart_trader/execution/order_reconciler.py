@@ -96,6 +96,9 @@ class OrderReconciler:
         return summary
 
     def _too_fresh(self, created_at: str) -> bool:
+        if not created_at:
+            # 年龄未知: 保守跳过, 不得立即查单删行(与 PositionLifecycle 同口径)
+            return True
         try:
             created = datetime.fromisoformat(created_at)
         except ValueError:

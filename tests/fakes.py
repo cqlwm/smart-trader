@@ -371,10 +371,14 @@ class FakeCcxtExchange(CcxtExchange):
             "average": None,
         }
         self.fetch_order_result: CcxtOrder | None = None
+        # 与币安 fapi 撤单响应同形: origQty(executedQty)始终回传, 适配器按完整契约解析
         self.cancel_order_result: CcxtOrder = {
             "clientOrderId": "cid1",
             "status": "canceled",
             "side": "buy",
+            "price": "0.5",
+            "amount": "10",
+            "filled": "0",
         }
         self.create_order_error: Exception | None = None
         self.fetch_order_error: Exception | None = None

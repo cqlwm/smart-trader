@@ -196,7 +196,8 @@ class Position(BaseModel):
     symbol: Symbol
     side: PositionSide
     quantity: float
-    entry_price: float = 0.0
+    # 开仓均价必填: 0.0 是"看起来合法实则错误"的成本价, 不设默认值伪装
+    entry_price: float
 
 
 class OrderResult(BaseModel):

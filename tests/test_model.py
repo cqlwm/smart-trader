@@ -1,6 +1,7 @@
 import pytest
+from pydantic import ValidationError
 
-from smart_trader.model import timeframe_seconds
+from smart_trader.model import Position, PositionSide, Symbol, timeframe_seconds
 
 
 class TestTimeframeSeconds:
@@ -29,3 +30,14 @@ class TestTimeframeSeconds:
         """非法周期必须抛 ValueError, 不允许静默返回错误秒数"""
         with pytest.raises(ValueError):
             timeframe_seconds(timeframe)
+
+
+class TestPosition:
+    def test_entry_price_is_required(self):
+        """entry_price 必填: 0.0 是'看起来合法实则错误'的成本价, 不允许默认值伪装"""
+        with pytest.raises(ValidationError, match="entry_price"):
+            Position(
+                symbol=Symbol(base="DOGE", quote="USDT"),
+                side=PositionSide.LONG,
+                quantity=100.0,
+            )  # type: ignore[call-arg]
