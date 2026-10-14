@@ -54,7 +54,7 @@ def main():
         # zecusdt.grid_reverse_long(main_binance_client),
         # zecusdt.grid_reverse_short(main_binance_client),
 
-        wusdt.grid_reverse_long(main_binance_client),
+        # wusdt.grid_reverse_long(main_binance_client),
         gtcusdt.grid_reverse_long(main_binance_client),
     ]
 
