@@ -46,16 +46,16 @@ main_binance_client: BinanceSwapClient = create_binance_client("main")
 
 
 def main():
-    from template import dogeusdt, zecusdt, wusdt, gtcusdt
+    from template import uniusdc, zecusdt, wusdt, gtcusdt
 
     tasks: list[StrategyTask] = [
         # dogeusdt.grid_reverse_long(main_binance_client),
         # dogeusdt.grid_reverse_short(main_binance_client),
         # zecusdt.grid_reverse_long(main_binance_client),
         # zecusdt.grid_reverse_short(main_binance_client),
-
         # wusdt.grid_reverse_long(main_binance_client),
         gtcusdt.grid_reverse_long(main_binance_client),
+        uniusdc.grid_reverse_long(main_binance_client)
     ]
 
     kline_subscribes: list[str] = []
