@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from smart_trader.exceptions import ErrorCode, SmartTraderError
 from smart_trader.model import (
     Kline,
     OrderSide,
@@ -292,6 +293,21 @@ def test_zero_per_order_qty_respects_grid_spacing():
 
     assert len(strategy.positions) == 1, "间距内不得重复登记空仓位"
     assert trading.placed == []
+
+
+# ------------------------------------------------------------- 离场上下文契约
+
+
+def test_exit_context_without_kline_raises():
+    """尚无行情时 _exit_context 抛 MARKET_DATA_UNAVAILABLE, 禁止以 0.0 静默兜底"""
+    strategy, _, _ = build_strategy()
+
+    with pytest.raises(SmartTraderError) as exc_info:
+        strategy._exit_context()
+
+    assert exc_info.value.error_code is ErrorCode.MARKET_DATA_UNAVAILABLE, (
+        "无行情应抛 MARKET_DATA_UNAVAILABLE, 而非以 close=0.0 构造上下文"
+    )
 
 
 # ------------------------------------------------------- 平仓优先于开仓（互斥）

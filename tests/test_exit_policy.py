@@ -9,6 +9,7 @@
 """
 
 import pytest
+from pydantic import ValidationError
 
 from smart_trader.exceptions import SmartTraderError
 from smart_trader.model import (
@@ -37,11 +38,16 @@ from tests.fakes import make_market_signal, make_order_record, make_position_row
 # ---- ExitContext / ExitDecision ----
 
 
-def test_exit_context_defaults_to_zero_close_and_no_signal():
-    """默认值: 收盘价 0, 无信号, 无仓位"""
-    ctx = ExitContext()
+def test_exit_context_requires_close():
+    """close 必填: 无收盘价的上下文是危险数据, 构造时立即报错"""
+    with pytest.raises(ValidationError, match="close"):
+        ExitContext()  # type: ignore[call-arg]
 
-    assert ctx.close == 0.0, "默认收盘价为 0"
+
+def test_exit_context_defaults_to_no_signal_and_no_positions():
+    """默认值: 无信号, 无仓位（close 为必填字段, 不设默认值）"""
+    ctx = ExitContext(close=0.5)
+
     assert ctx.market_signal is None, "默认无信号"
     assert ctx.positions == [], "默认无仓位"
 
@@ -67,7 +73,7 @@ def test_force_exit_policy_triggers_when_trigger_true():
     """外部强制（达到上限止损 / 手动全平）"""
     policy = ForceExitPolicy(lambda: True)
 
-    decision = policy.evaluate(_position(), ExitContext())
+    decision = policy.evaluate(_position(), ExitContext(close=0.0))
 
     assert decision.should_exit is True, "触发时应离场"
     assert decision.force is True, "强制离场必须能覆盖休息中的挂单"
@@ -77,7 +83,7 @@ def test_force_exit_policy_does_not_trigger_when_trigger_false():
     """未触发时不离场"""
     policy = ForceExitPolicy(lambda: False)
 
-    decision = policy.evaluate(_position(), ExitContext())
+    decision = policy.evaluate(_position(), ExitContext(close=0.0))
 
     assert decision.should_exit is False
     assert decision.force is False
@@ -89,10 +95,10 @@ def test_force_exit_policy_evaluates_trigger_on_every_call():
     policy = ForceExitPolicy(lambda: state["active"])
     position = _position()
 
-    assert policy.evaluate(position, ExitContext()).should_exit is False
+    assert policy.evaluate(position, ExitContext(close=0.0)).should_exit is False
 
     state["active"] = True
-    assert policy.evaluate(position, ExitContext()).should_exit is True, (
+    assert policy.evaluate(position, ExitContext(close=0.0)).should_exit is True, (
         "触发状态变化后应立即生效"
     )
 

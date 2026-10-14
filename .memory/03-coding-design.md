@@ -278,6 +278,27 @@ v2 的累积计数不存在此问题，`first_run` 已删除。
 只归属跟踪止损（ratchet 运行时状态，必须落库的原因不变）；为固定止损写快照
 正是本次缺陷的根源 —— 死数据会继续误导下一个改参数的人。
 
+### 14. `ExitContext.close` 必填与 `_exit_context` 的无行情契约（Step 25）
+
+**背景缺陷**：`ExitContext.close` 带 `= 0.0` 默认值，`_exit_context` 在
+`kline is None` 时静默兜底 `close=0.0`。该兜底是危险数据而非中性值：
+离场策略会把 0.0 当真实价格判定 —— LONG 仓被判定为暴跌穿止损（force 离场）、
+SHORT 仓被判定为巨额浮盈（触发止盈），全部按 0.0 定价静默产生垃圾决策。
+且与入场侧不对称：`EntryContext.require_close()` 对 `close=None` 抛
+`SmartTraderError(MARKET_DATA_UNAVAILABLE)`，出场侧却默默兜底。
+
+**修复后的契约**（两层）：
+
+| 层 | 契约 | 语义 |
+| --- | --- | --- |
+| `ExitContext.close` | 必填字段，无默认值 | 模型层直接拒绝无价构造（`ValidationError`） |
+| `_exit_context` | `kline is None` 抛 `SmartTraderError(MARKET_DATA_UNAVAILABLE)` | 与入场侧同一异常码，给未来调用者的显式契约 |
+
+**`check_close_position` 的前置守卫保留**：启动初期无行情时优雅返回空
+`CloseOutcome()` 属正常流程控制（不崩主循环）；`_exit_context` 的 raise
+只保护绕过守卫的未来调用点。调用图上 `_exit_context` 仅由
+`check_close_position` 调用，守卫先于构造，正常运行永不触发 raise。
+
 ## 四、数据事件循环设计（data_event_loop / task）
 
 ### 1. 载荷统一为 Kline

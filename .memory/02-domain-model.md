@@ -18,7 +18,7 @@
 | `Signal` | `strategy/signal.py` | 行情信号分析器（ABC）：无持仓语义、无入场/离场概念 |
 | `EntryContext` | `strategy/entry_gate.py` | 入场闸门上下文（纯数据）：仓位列表 + 最新收盘价 + 行情信号 |
 | `EntryGate` | `strategy/entry_gate.py` | 入场闸门（ABC）+ `EntryGateChain` |
-| `ExitContext` | `strategy/exit_policy.py` | 离场策略上下文（纯数据）：最新收盘价 + 行情信号 + 仓位列表 |
+| `ExitContext` | `strategy/exit_policy.py` | 离场策略上下文（纯数据）：最新收盘价（**必填**，无默认值）+ 行情信号 + 仓位列表 |
 | `ExitDecision` | `strategy/exit_policy.py` | 离场决策：`should_exit` + `force`（force 可覆盖休息中的出场挂单） |
 | `ExitPolicy` | `strategy/exit_policy.py` | 离场策略（ABC）+ `ExitPolicyChain` |
 

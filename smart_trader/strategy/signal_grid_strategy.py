@@ -14,6 +14,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from smart_trader import log
+from smart_trader.exceptions import ErrorCode, SmartTraderError
 from smart_trader.exchange.ports import MarketDataPort, TradingPort
 from smart_trader.execution.order_reconciler import OrderReconciler
 from smart_trader.model import (
@@ -249,9 +250,13 @@ class SignalGridStrategy(SingleTimeframeStrategy):
 
     def _exit_context(self) -> ExitContext:
         kline = self.latest_kline_obj
+        if kline is None:
+            raise SmartTraderError(
+                ErrorCode.MARKET_DATA_UNAVAILABLE, "尚无行情, 无法构造离场上下文"
+            )
         return ExitContext(
             positions=self.positions,
-            close=kline.close if kline is not None else 0.0,
+            close=kline.close,
             market_signal=self._current_market_signal(),
         )
 
@@ -328,14 +333,14 @@ class SignalGridStrategy(SingleTimeframeStrategy):
 
     def check_close_position(self) -> CloseOutcome:
         """
-    触发平仓条件, 为每仓位挂出独立的出场单
+        触发平仓条件, 为每仓位挂出独立的出场单
 
-    - 每仓位一张出场单, 成交可独立归因;
-    - 已有未成交出场单的仓位: 只有 force 决策才撤单结算再重挂;
-    - 只有真正完成的仓位(零成交入场单丢弃 / 出场剩余耗尽)才归档。
+        - 每仓位一张出场单, 成交可独立归因;
+        - 已有未成交出场单的仓位: 只有 force 决策才撤单结算再重挂;
+        - 只有真正完成的仓位(零成交入场单丢弃 / 出场剩余耗尽)才归档。
 
-    @return: 本次平仓检查的结果(归档仓位 + 本根K线是否产生过平仓动作)
-    """
+        @return: 本次平仓检查的结果(归档仓位 + 本根K线是否产生过平仓动作)
+        """
         if self.latest_kline_obj is None:
             return CloseOutcome()
 

@@ -17,14 +17,14 @@ class ExitContext(BaseModel):
     """离场策略上下文: 纯数据, 不含 Kline / DataFrame
 
     @param positions 当前逻辑仓位快照（逐层减仓需要跨仓位选择, 与 EntryContext 对称）
-    @param close 最新收盘价
+    @param close 最新收盘价; 必填 —— 无收盘价的上下文会让策略按错误价格做离场判定
     @param market_signal 本根 K 线的行情信号; None 表示未配置信号
     """
 
     model_config = ConfigDict(extra="forbid")
 
     positions: list[GridPosition] = []
-    close: float = 0.0
+    close: float
     market_signal: MarketSignal | None = None
 
 
