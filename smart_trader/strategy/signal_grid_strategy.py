@@ -133,7 +133,19 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         self._signal_kline: str | None = None
         self._signal_cache: MarketSignal | None = None
 
+        # 上限止损回调: 策略内部确定时机同步调用（见 check_close_position 末尾）,
+        # 故用回调形态; 默认空实现, 未挂回调时不报错
         self.on_stop_loss_order_all: Callable[[], None] = lambda: None
+        # 手动全平标志: **外部命令入口**, 由用户/接口置 True, 策略在下一根完成
+        # K 线的 check_close_position 中消费。
+        #
+        # 为什么是 bool 标志而非回调: 下命令(外部线程, 任意时刻)与执行平仓(K 线
+        # 驱动, 且需 close 等行情)跨层且异步, 用字段暂存意图、等策略回到自己
+        # 的节奏取走。它与 on_stop_loss_order_all 故意不对称 —— 后者由策略自己
+        # 同步调用, 无需跨线程。
+        #
+        # 边沿触发语义（一次性命令）: 消费后必须复位, 否则每根 K 线都会重复全平,
+        # 变成不停挂出场单的死循环。
         self.close_position: bool = False
         self.is_running: bool = True
 
@@ -170,7 +182,10 @@ class SignalGridStrategy(SingleTimeframeStrategy):
     def _build_exit_policies(self) -> ExitPolicyChain:
         """装配离场策略链（顺序不影响合并结果）"""
         policies: list[ExitPolicy] = [
-            # 上限止损与手动全平共用同一个 force 触发源
+            # 上限止损与手动全平共用同一个 force 触发源。
+            # 手动全平必须走 force: 仓位若已有休息止盈挂单, 非 force 决策会保留
+            # 原挂单不重挂（check_close_position 中 continue）, 全平意图落空;
+            # force 才会撤单结算后按最新收盘价重挂
             ForceExitPolicy(
                 lambda: self._limit.stop_loss_triggered(len(self.positions))
                 or self.close_position
@@ -378,9 +393,13 @@ class SignalGridStrategy(SingleTimeframeStrategy):
             outcome.acted = True
 
         if self.close_position:
+            # 一次性命令必须消费即清: 不复位则下一根 K 线再次全平, 无限重复挂出场单
             self.close_position = False
 
-        # 仅"达到上限止损"触发回调与暂停; 手动全平不触发（已修复的缺陷）
+        # 仅"达到上限止损"触发回调与暂停; 手动全平不触发（已修复的缺陷）。
+        # stop_loss_reached 在上面的循环前单独算, 故意不含 close_position ——
+        # 用户点一次全平若顺带触发 on_stop_loss_order_all + is_running=False,
+        # 策略就此死掉, 再也不会开新仓; 用户要的是"清仓后继续盯盘"。
         if stop_loss_reached:
             self.on_stop_loss_order_all()
             if self.config.paused_after_stop_loss:
