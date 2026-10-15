@@ -22,7 +22,7 @@ def main():
     from template import dogeusdt_trend
 
     journal = OrderJournal(DB_PATH)
-    tasks: list[StrategyTask] = [dogeusdt_trend.trend_long(main_exchange, journal)]
+    tasks: list[StrategyTask] = [dogeusdt_trend.trend_short(main_exchange, journal)]
 
     kline_subscribes: list[str] = []
     data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
