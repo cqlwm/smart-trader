@@ -103,11 +103,11 @@ class StopLossPolicy(ExitPolicy):
     def evaluate(self, position: GridPosition, ctx: ExitContext) -> ExitDecision:
         if not position.enable_stop_loss:
             return ExitDecision()
-        stop_price = (
-            position.trailing_stop_price
-            if position.enable_trailing_stop
-            else self._fixed_stop_price(position)
-        )
+
+        if position.enable_trailing_stop:
+            stop_price = position.trailing_stop_price   # ratchet 未播种 → 不判定, 不降级
+        else:
+            stop_price = self._fixed_stop_price(position)
         if stop_price is None:
             return ExitDecision()
 
