@@ -84,6 +84,47 @@ class TestConstruction:
                 trading, journal, position=make_position_row(), grid_position_id="POS1"
             )
 
+    def test_rejects_blank_grid_position_id(self, journal: OrderJournal):
+        """空串冒充仓位号会写出无主订单行: 该行被 in_ 过滤永久查不出, 成交无法归因"""
+        trading = FakeTradingPort()
+        with pytest.raises(ValueError):
+            build_placer(trading, journal, grid_position_id="")
+
+
+class TestOrderRowAlwaysBelongsToPosition:
+    """预写行必须归属真实仓位号: 空串占位会写出永远查不回来的无主行"""
+
+    def test_first_order_row_is_readable_back_by_position_id(
+        self, journal: OrderJournal
+    ):
+        """首单走 open_position: 落库时即为真实仓位号, 能被 load_orders 查回"""
+        trading = FakeTradingPort()
+        trading.queue_place(open_result())
+        placer = build_placer(trading, journal, position=make_position_row("POS1"))
+
+        placer.place(build_request())
+
+        positions = journal.load_active_positions(DEFAULT_STRATEGY_KEY)
+        assert [row.id for row in positions] == ["POS1"]
+        assert len(journal.load_orders_for_positions(["POS1"])) == 1, (
+            "预写行必须挂在 POS1 下, 否则 load_orders 的 in_ 过滤查不到它, 成交无法归因"
+        )
+
+    def test_appended_order_row_is_readable_back_by_position_id(
+        self, journal: OrderJournal
+    ):
+        """追加路径: 订单行同样必须能被 load_orders 查回"""
+        journal.upsert_position(make_position_row("POS1"))
+        trading = FakeTradingPort()
+        trading.queue_place(open_result())
+        placer = build_placer(trading, journal, grid_position_id="POS1")
+
+        placer.place(build_request())
+
+        records = journal.load_orders_for_positions(["POS1"])
+        assert len(records) == 1, "追加的订单行必须挂在 POS1 下"
+        assert records[0].grid_position_id == "POS1"
+
 
 class TestPlaceNewPosition:
     def test_opens_position_and_first_order_together(self, journal: OrderJournal):
@@ -283,3 +324,105 @@ class TestPassThrough:
         placer.query("cid1", DEFAULT_SYMBOL)
 
         assert journal.pending_orders(DEFAULT_STRATEGY_KEY) == []
+
+
+class TestInvariantViolation:
+    """不变量破坏必须抛 SmartTraderError, 不能用 assert
+
+    python -O 会整段剥离 assert, 数据一致性校验一旦依赖它就会静默消失;
+    且 AssertionError 不在统一异常体系内, 策略层的 except SmartTraderError 捕不到。
+    """
+
+    def test_missing_position_id_on_append_raises_business_error(
+        self, journal: OrderJournal
+    ) -> None:
+        """追加路径仓位号缺失: 无法把订单归因到任何仓位, 属业务故障"""
+        journal.upsert_position(make_position_row("POS1"))
+        trading = FakeTradingPort()
+        placer = build_placer(trading, journal, grid_position_id="POS1")
+        placer._grid_position_id = None  # 模拟不变量被破坏
+
+        with pytest.raises(SmartTraderError) as excinfo:
+            placer.place(build_request())
+
+        assert excinfo.value.error_code is ErrorCode.ORDER_NOT_PLACED, (
+            f"应为 ORDER_NOT_PLACED, 实际 {excinfo.value.error_code}"
+        )
+        assert journal.pending_orders(DEFAULT_STRATEGY_KEY) == [], (
+            "校验失败时不得留下预写行"
+        )
+
+    def test_missing_order_id_on_settle_raises_business_error(
+        self, journal: OrderJournal
+    ) -> None:
+        """回写时订单号缺失: settle_order 会静默更新 0 行, 成交事实丢失"""
+        journal.upsert_position(make_position_row("POS1"))
+        trading = FakeTradingPort()
+        trading.queue_place(open_result())
+        placer = build_placer(trading, journal, grid_position_id="POS1")
+
+        # 先让预写行与交易所调用完成, 再抽掉订单号, 使回写阶段的不变量破坏
+        original_place = trading.place
+
+        def place_then_break(request: OrderRequest) -> OrderResult:
+            result = original_place(request)
+            placer._order_id = None
+            return result
+
+        trading.place = place_then_break  # type: ignore[method-assign]
+
+        with pytest.raises(SmartTraderError) as excinfo:
+            placer.place(build_request())
+
+        assert excinfo.value.error_code is ErrorCode.ORDER_NOT_PLACED, (
+            f"应为 ORDER_NOT_PLACED, 实际 {excinfo.value.error_code}"
+        )
+        assert journal.pending_orders(DEFAULT_STRATEGY_KEY) != [], (
+            "回写失败必须保留预写行待对账, 不得丢失成交线索"
+        )
+
+    def test_missing_position_id_on_settle_raises_business_error(
+        self, journal: OrderJournal
+    ) -> None:
+        """回写时仓位号缺失: 预写行归属丢失, 必须响亮失败而非静默归零"""
+        journal.upsert_position(make_position_row("POS1"))
+        trading = FakeTradingPort()
+        trading.queue_place(open_result())
+        placer = build_placer(trading, journal, grid_position_id="POS1")
+
+        original_place = trading.place
+
+        def place_then_break(request: OrderRequest) -> OrderResult:
+            result = original_place(request)
+            placer._grid_position_id = None
+            return result
+
+        trading.place = place_then_break  # type: ignore[method-assign]
+
+        with pytest.raises(SmartTraderError) as excinfo:
+            placer.place(build_request())
+
+        assert excinfo.value.error_code is ErrorCode.ORDER_NOT_PLACED
+
+    def test_missing_order_id_before_send_raises_business_error(
+        self, journal: OrderJournal
+    ) -> None:
+        """发单前订单号缺失: 交易所无从关联账本, 必须拒发"""
+        journal.upsert_position(make_position_row("POS1"))
+        trading = FakeTradingPort()
+        placer = build_placer(trading, journal, grid_position_id="POS1")
+
+        # 让 _ensure_row 写入后订单号被抽掉, place 继续往下走
+        original_ensure_row = placer._ensure_row
+
+        def ensure_row_then_break(request: OrderRequest) -> None:
+            original_ensure_row(request)
+            placer._order_id = None
+
+        placer._ensure_row = ensure_row_then_break  # type: ignore[method-assign]
+
+        with pytest.raises(SmartTraderError) as excinfo:
+            placer.place(build_request())
+
+        assert excinfo.value.error_code is ErrorCode.ORDER_NOT_PLACED
+        assert trading.placed == [], "校验失败时不得向交易所发出请求"

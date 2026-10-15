@@ -25,8 +25,8 @@ logger = log.getLogger(__name__)
 class GridOrderGateway:
     """下单入口与内存订单记录构造
 
-依赖 config 的持仓方向（`position_side`）
-由策略在组装时以回调注入, 保持行为与拆分前一致。
+    依赖 config 的持仓方向（`position_side`）
+    由策略在组装时以回调注入, 保持行为与拆分前一致。
     """
 
     def __init__(

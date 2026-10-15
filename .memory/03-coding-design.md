@@ -326,9 +326,52 @@ created_at 为空（年龄未知）→ 保守跳过。对账"查不到即删行"
 当"足够老"，刚预写的订单会被误删。DB 行因 journal 首写兜底总有 created_at，
 此修复防的是未来绕过 `_values` 的写入路径（如对账器扩展到 open 状态）。
 
-**审计修正**：`JournaledTradingPort` 的 `grid_position_id or ""` 无需修复 ——
-`__init__` 已有 XOR 契约校验（position 与 grid_position_id 必须二选一），
-`or ""` 只是模板路径的瞬时占位，`open_position` 同事务覆盖为真实仓位号。
+**`JournaledTradingPort` 的 `grid_position_id or ""` 已修复（推翻了原审计结论）**：
+原判断"`__init__` 已有 XOR 契约校验，`or ""` 只是模板路径的瞬时占位"**不成立**
+—— XOR 只校验 `is None`，`grid_position_id=""` 能穿过（`(position is None) ==
+(grid_position_id is None)` 求值为 `False`），随后 `or ""` 把空串原样吞掉，
+`append_order` 落库一行 `grid_position_id=""`。该行在
+`OrderJournal.load_orders_for_positions` 的 `in_(position_ids)` 过滤下**永远查不
+回来**：交易所挂着活单，账本无法归因到任何仓位，仓位数量永不反映这笔成交 ——
+静默数据损坏而非响亮失败。`orders.grid_position_id` 是 `nullable=False` 但无外键，
+数据库层不兜底；`GridPositionRow.id` / `GridPosition.id` 默认值均为 `""`，非纯理论风险。
+
+修复三处（同一根因：`or` 把"缺失"与"空"混为一谈）：
+
+| 位置 | 修复 |
+| --- | --- |
+| `__init__` | 空串仓位号 → `ValueError`，与既有 XOR 校验同处，响亮拒绝 |
+| `_ensure_row` | 按 `position` / 追加两分支**显式**取仓位号，删除 `or ""`；提取 `_new_record` 消除两分支 7 字段重复 |
+| `_record_from_result` | 删除 `or result.custom_id` 与 `or ""` 两处**死代码**（`_ensure_row` 先行后两字段必然非 None），改显式校验 |
+
+`_record_from_result` 的 `or result.custom_id` 危害高于空串：真走到该 fallback 会
+用非预写的 `order_id` 调 `settle_order`，SQL `WHERE` 匹配 0 行且**不报错**，成交事实
+静默丢失。这与 `_exit_context` 对 `kline is None` 抛 `MARKET_DATA_UNAVAILABLE`、
+`_to_float` 拒绝"空值伪装 0"（第 284-317 行）同源：`or` 兜底把错误转成静默脏数据。
+
+**数据一致性校验一律不用 `assert`（`python -O` 会剥离它）**：`assert` 是语句而非
+函数调用，解释器在**编译期**于 `-O` / `-OO` / `PYTHONOPTIMIZE=1` 下整段丢弃含 assert
+的代码块，运行时零检查。当前 `Dockerfile:28` 是 `uv run python run.py`（无 `-O`，
+全仓库无 `PYTHONOPTIMIZE`），所以 assert **目前**生效 —— 但这依赖启动命令而非代码，
+任何人加个 `-O` 就静默失效，数据校验凭空消失，退回"静默脏数据"。这与
+`EntryContext.require_close` 的既有裁决同源（`entry_gate.py:35` 明写
+`@note 不用 assert: python -O 下 assert 会被剥离`），本模块一度与之相反，现已统一。
+
+第二层理由：`AssertionError` 不在统一异常体系内，策略层
+`except SmartTraderError` 捕不到，会穿透到主循环；AGENTS.md 第四节要求"执行失败
+不能导致服务崩溃，必须捕获异常并记录日志"，assert 崩的正是没人接的那条路径。
+
+`JournaledTradingPort` 的四处标识校验（`place` 发单前、`_ensure_row` 追加分支、
+`_record_from_result` 的订单号与仓位号）统一抛 `SmartTraderError(ORDER_NOT_PLACED)` ——
+复用既有异常码而非新增枚举：语义即"下单未能完成"，且新增枚举成员会让每个 `ErrorCode`
+消费方的映射表多一处待维护。异常文案区分三种触发点（拒发 / 无法归属 / 无法回写），
+便于日志定位。
+
+**这些校验用 `if ... raise` 而非 assert 后，测试才能真正验证它们**：assert 分支在
+`python -O` 下不可测，而 `pytest.raises(SmartTraderError)` 在任何优化级别下都成立 ——
+这是"校验必须可测"的技术前提。四个测试用受控钩子（替换 `trading.place` /
+`placer._ensure_row`）在精确时机抽掉内部标识，逐一验证：拒发时交易所零请求、
+校验失败不留预写行、回写失败保留行待对账。
 
 ## 四、数据事件循环设计（data_event_loop / task）
 

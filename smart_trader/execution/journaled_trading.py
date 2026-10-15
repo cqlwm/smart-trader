@@ -53,6 +53,11 @@ class JournaledTradingPort(TradingPort):
     ):
         if (position is None) == (grid_position_id is None):
             raise ValueError("必须且只能提供 position 或 grid_position_id 之一")
+        if grid_position_id is not None and not grid_position_id:
+            # 空串会原样落库成无主订单行: load_orders_for_positions 的 in_ 过滤
+            # 永远查不到它, 交易所活单无法归因到仓位。仓位号缺失是调用方的错误,
+            # 响亮拒绝, 不接受静默占位。
+            raise ValueError("grid_position_id 不能为空字符串")
         self.trading = trading
         self.journal = journal
         self.strategy_key = strategy_key
@@ -62,9 +67,17 @@ class JournaledTradingPort(TradingPort):
         self._row_written = False
 
     def place(self, request: OrderRequest) -> OrderResult:
+        """
+        @raise SmartTraderError: 发单前订单号未确定（账本无法关联交易所, 拒发）
+        @note 不用 assert 校验不变量: python -O 会整段剥离, 且 AssertionError
+            不在统一异常体系内, 策略层的 except SmartTraderError 捕不到
+        """
         self._ensure_row(request)
         order_id = self._order_id
-        assert order_id is not None
+        if order_id is None:
+            raise SmartTraderError(
+                ErrorCode.ORDER_NOT_PLACED, "预写行缺少订单号, 无法向交易所发单"
+            )
         journaled_request = request.model_copy(update={"custom_id": order_id})
         logger.info(
             "记账下单: %s, %s, %s, Qty: %s, Price: %s",
@@ -107,11 +120,37 @@ class JournaledTradingPort(TradingPort):
         """下单前确保订单行已写入（首单同事务建仓位）"""
         if self._row_written:
             return
-        if self._order_id is None:
-            self._order_id = self.journal.generate_order_id(request.side)
-        record = OrderRecord(
-            order_id=self._order_id,
-            grid_position_id=self._grid_position_id or "",
+
+        _order_id = self._order_id
+        if _order_id is None:
+            _order_id = self.journal.generate_order_id(request.side)
+            self._order_id = _order_id
+
+        if self._position is not None:
+            # 首单: 仓位号此刻尚未落库, open_position 在同一事务内生成并写入。
+            # 预写行的归属由那次插入决定, 此处的临时值随后即被覆盖。
+            record = self._new_record(request, _order_id, self._position.id)
+            position_id, order_id = self.journal.open_position(self._position, record)
+            self._grid_position_id = position_id
+            self._order_id = order_id
+            self._position = None
+        else:
+            # 追加: 仓位已存在, 仓位号必为真实值（构造期已排除空串与 None）
+            grid_position_id = self._grid_position_id
+            if grid_position_id is None:
+                raise SmartTraderError(
+                    ErrorCode.ORDER_NOT_PLACED, "追加订单缺少仓位号, 无法归属仓位"
+                )
+            record = self._new_record(request, _order_id, grid_position_id)
+            self._order_id = self.journal.append_order(record)
+        self._row_written = True
+
+    def _new_record(
+        self, request: OrderRequest, order_id: str, grid_position_id: str
+    ) -> OrderRecord:
+        return OrderRecord(
+            order_id=order_id,
+            grid_position_id=grid_position_id,
             strategy_key=self.strategy_key,
             symbol=request.symbol.ccxt(),
             side=request.side,
@@ -119,14 +158,6 @@ class JournaledTradingPort(TradingPort):
             price=request.price,
             quantity=request.quantity,
         )
-        if self._position is not None:
-            position_id, order_id = self.journal.open_position(self._position, record)
-            self._grid_position_id = position_id
-            self._order_id = order_id
-            self._position = None
-        else:
-            self._order_id = self.journal.append_order(record)
-        self._row_written = True
 
     def _invalidate_id(self) -> None:
         """订单已确认在交易所存在（或被接受）: 该 id 作废, 后续下单必须换新"""
@@ -136,9 +167,20 @@ class JournaledTradingPort(TradingPort):
     def _record_from_result(
         self, request: OrderRequest, result: OrderResult
     ) -> OrderRecord:
+        """
+        @raise SmartTraderError: 订单号或仓位号未确定（账本无法回写成交事实）
+        @note 不用 assert: python -O 会整段剥离。错误的 order_id 会让
+            settle_order 静默更新 0 行, 丢失成交事实
+        """
+        order_id = self._order_id
+        grid_position_id = self._grid_position_id
+        if order_id is None or grid_position_id is None:
+            raise SmartTraderError(
+                ErrorCode.ORDER_NOT_PLACED, "预写行标识缺失, 无法回写成交结果"
+            )
         return OrderRecord(
-            order_id=self._order_id or result.custom_id,
-            grid_position_id=self._grid_position_id or "",
+            order_id=order_id,
+            grid_position_id=grid_position_id,
             strategy_key=self.strategy_key,
             symbol=request.symbol.ccxt(),
             side=result.side,
