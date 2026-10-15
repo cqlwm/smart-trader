@@ -55,7 +55,7 @@ def main():
         # zecusdt.grid_reverse_short(main_binance_client),
         # wusdt.grid_reverse_long(main_binance_client),
         gtcusdt.grid_reverse_long(main_binance_client),
-        uniusdc.grid_reverse_long(main_binance_client)
+        # uniusdc.grid_reverse_long(main_binance_client)
     ]
 
     kline_subscribes: list[str] = []
