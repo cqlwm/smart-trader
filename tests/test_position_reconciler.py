@@ -1,9 +1,14 @@
 """持仓对账器测试：以交易所实际持仓为准收敛本地缺口
 
 覆盖：数量一致无动作、全量外部平仓内部归档（先撤挂单）、部分缺口 LIFO 分摊、
-反向偏差仅告警、查询/撤单异常容错、多空两方向的"最外层优先"顺序。
+反向偏差仅告警、查询/撤单异常容错、多空两方向的"最外层优先"顺序、
+告警去重（差额变化才再次告警）。
 用 tests.fakes 的内存端口 + :memory: 账本，不触网、不落盘。
 """
+
+import logging
+
+import pytest
 
 from smart_trader.exceptions import ErrorCode, SmartTraderError
 from smart_trader.model import (
@@ -368,7 +373,115 @@ def test_result_is_fresh_object_each_round() -> None:
     assert second.archived == []
 
 
-# ------------------------------------------------------------------ 分摊顺序与 LayeredReducePolicy 同源
+# ------------------------------------------------------------------ 告警去重（差额变化才再次告警）
+
+
+def test_surplus_warning_not_repeated_while_gap_unchanged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """反向偏差告警: 差额不变只告警一次, 不随K线重复刷屏"""
+    position = make_holding_position("POS1", 100.0, 0.5)
+    harness = ReconcileHarness([position])
+    harness.set_exchange_position(150.0)
+    with caplog.at_level(
+        logging.WARNING, logger="smart_trader.strategy.position_reconciler"
+    ):
+        harness.reconciler.reconcile()
+        harness.reconciler.reconcile()
+        harness.reconciler.reconcile()
+
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warns) == 1, f"差额不变只应告警一次, 实际 {len(warns)} 条"
+
+
+def test_surplus_warning_repeats_after_gap_changes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """差额变化(150→160)后应再次告警"""
+    position = make_holding_position("POS1", 100.0, 0.5)
+    harness = ReconcileHarness([position])
+    with caplog.at_level(
+        logging.WARNING, logger="smart_trader.strategy.position_reconciler"
+    ):
+        harness.set_exchange_position(150.0)
+        harness.reconciler.reconcile()
+        harness.reconciler.reconcile()
+        harness.set_exchange_position(160.0)
+        harness.reconciler.reconcile()
+
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warns) == 2, f"差额变化应再次告警, 实际 {len(warns)} 条"
+
+
+def test_recovery_info_logged_when_gap_returns_to_consistent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """差额归零(恢复一致)时给一条收敛提示"""
+    position = make_holding_position("POS1", 100.0, 0.5)
+    harness = ReconcileHarness([position])
+    with caplog.at_level(
+        logging.INFO, logger="smart_trader.strategy.position_reconciler"
+    ):
+        harness.set_exchange_position(150.0)
+        harness.reconciler.reconcile()
+        harness.set_exchange_position(100.0)
+        harness.reconciler.reconcile()
+
+    infos = [
+        r for r in caplog.records if r.levelno == logging.INFO and "已收敛" in r.message
+    ]
+    assert len(infos) == 1, f"差额归零应给一条收敛提示, 实际 {len(infos)} 条"
+
+
+def test_first_consistent_round_is_silent(caplog: pytest.LogCaptureFixture) -> None:
+    """启动即一致(无历史告警)时不打收敛提示"""
+    position = make_holding_position("POS1", 100.0, 0.5)
+    harness = ReconcileHarness([position])
+    harness.set_exchange_position(100.0)
+    with caplog.at_level(
+        logging.INFO, logger="smart_trader.strategy.position_reconciler"
+    ):
+        harness.reconciler.reconcile()
+
+    msgs = [r.message for r in caplog.records if "对账" in r.message]
+    assert msgs == [], f"首轮一致不应有任何对账日志, 实际 {msgs}"
+
+
+def test_deficit_warning_not_repeated_while_gap_unchanged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """正向缺口(本地多于交易所)告警同样按差额变化去重（含分摊明细）"""
+    position = make_holding_position("POS1", 100.0, 0.5)
+    harness = ReconcileHarness([position])
+    harness.set_exchange_position(50.0)
+    with caplog.at_level(
+        logging.WARNING, logger="smart_trader.strategy.position_reconciler"
+    ):
+        harness.reconciler.reconcile()
+        first_round = len([r for r in caplog.records if r.levelno == logging.WARNING])
+        harness.reconciler.reconcile()
+        harness.reconciler.reconcile()
+        total = len([r for r in caplog.records if r.levelno == logging.WARNING])
+
+    assert first_round >= 1, "首轮必须告警"
+    assert total == first_round, (
+        f"差额不变后续轮不得新增告警: 首轮 {first_round} 条, 累计 {total} 条"
+    )
+
+
+def test_adjustments_still_returned_on_silent_rounds() -> None:
+    """静默轮(不重复告警)不影响对账结果: 扣减量照常产出, clamp 不受影响"""
+    position = make_holding_position("POS1", 100.0, 0.5)
+    harness = ReconcileHarness([position])
+    harness.set_exchange_position(50.0)
+
+    first = harness.reconciler.reconcile()
+    second = harness.reconciler.reconcile()
+
+    assert first.adjustments == {"POS1": 50.0}
+    assert second.adjustments == {"POS1": 50.0}, (
+        f"静默轮仍必须产出扣减量, 实际 {second.adjustments}"
+    )
 
 
 def test_ordering_matches_layered_reduce_policy() -> None:

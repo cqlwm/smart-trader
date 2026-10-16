@@ -64,6 +64,8 @@ class PositionReconciler:
         self._account = account
         self._positions = positions
         self._lifecycle = lifecycle
+        # 上一次已告警的差额: 告警只在差额变化时重复（首轮 None = 必告警）
+        self._last_reported_gap: float | None = None
 
     def reconcile(self) -> PositionReconcileResult:
         """执行一轮持仓对账; 查询异常跳过本轮, 绝不中断主循环"""
@@ -81,20 +83,38 @@ class PositionReconciler:
         gap = local_qty - exchange_qty
         if gap <= _QTY_EPS:
             if gap < -_QTY_EPS:
-                logger.warning(
-                    "持仓对账告警: 交易所实际持仓(%s)多于本地(%s), 差额来源不明, 不自动改动",
-                    exchange_qty,
-                    local_qty,
-                )
+                if self._mark_gap_reported(gap):
+                    logger.warning(
+                        "持仓对账告警: 交易所实际持仓(%s)多于本地(%s), 差额来源不明, 不自动改动",
+                        exchange_qty,
+                        local_qty,
+                    )
+            else:
+                self._log_gap_recovered()
             return PositionReconcileResult()
 
-        logger.warning(
-            "持仓对账: 本地(%s)多于交易所(%s), 缺口 %s 按最外层优先分摊",
-            local_qty,
-            exchange_qty,
-            gap,
-        )
-        return self._absorb(held, gap)
+        warn = self._mark_gap_reported(gap)
+        if warn:
+            logger.warning(
+                "持仓对账: 本地(%s)多于交易所(%s), 缺口 %s 按最外层优先分摊",
+                local_qty,
+                exchange_qty,
+                gap,
+            )
+        return self._absorb(held, gap, warn)
+
+    def _mark_gap_reported(self, gap: float) -> bool:
+        """记录本轮差额并返回是否相对上次告警值发生变化（首次告警视为变化）"""
+        last = self._last_reported_gap
+        self._last_reported_gap = gap
+        return last is None or abs(gap - last) > _QTY_EPS
+
+    def _log_gap_recovered(self) -> None:
+        """差额归零时给一条收敛提示; 启动即一致则静默"""
+        last = self._last_reported_gap
+        self._last_reported_gap = 0.0
+        if last is not None and abs(last) > _QTY_EPS:
+            logger.info("持仓对账: 差额已收敛(上轮告警差额 %s)", last)
 
     def _exchange_quantity(self) -> float:
         """交易所该 symbol + position_side 方向的实际持仓量(其余方向不计)"""
@@ -105,9 +125,12 @@ class PositionReconciler:
         return total
 
     def _absorb(
-        self, held: list[GridPosition], gap: float
+        self, held: list[GridPosition], gap: float, warn: bool
     ) -> PositionReconcileResult:
-        """按最外层优先把缺口分摊到仓位: 全吃归档, 部分吃记扣减"""
+        """按最外层优先把缺口分摊到仓位: 全吃归档, 部分吃记扣减
+
+        @param warn 差额相对上轮是否变化; 不变时分摊明细日志静默（结果照常产出）
+        """
         result = PositionReconcileResult()
         remaining = gap
         for position in self._outermost_first(held):
@@ -120,12 +143,13 @@ class PositionReconciler:
                     result.archived.append(position)
             else:
                 result.adjustments[position.id] = cut
-                logger.warning(
-                    "仓位 %s 被外部平掉 %s, 剩余可平量 %s",
-                    position.id,
-                    cut,
-                    position.quantity - cut,
-                )
+                if warn:
+                    logger.warning(
+                        "仓位 %s 被外部平掉 %s, 剩余可平量 %s",
+                        position.id,
+                        cut,
+                        position.quantity - cut,
+                    )
         return result
 
     @staticmethod
