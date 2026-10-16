@@ -6,7 +6,7 @@ from logging.handlers import RotatingFileHandler
 _LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 _LOG_LEVEL_ENV = "LOG_LEVEL"
 _LOG_DIR_ENV = "LOG_DIR"
-_DEFAULT_LOG_DIR = "logs"
+_DEFAULT_LOG_DIR = ".data/logs"
 _LOG_FILE_NAME = "smart_trader.log"
 _MAX_BYTES = 10 * 1024 * 1024
 _BACKUP_COUNT = 5
