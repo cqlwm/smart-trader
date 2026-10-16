@@ -11,7 +11,13 @@
 
 from pydantic import BaseModel, ConfigDict
 
-from smart_trader.model import OrderSide, OrderStatus, OrderType, PositionSide
+from smart_trader.model import (
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionCloseReason,
+    PositionSide,
+)
 
 
 class GridPositionRow(BaseModel):
@@ -35,6 +41,7 @@ class GridPositionRow(BaseModel):
     trailing_stop_activation_rate: float = 0.0
     trailing_stop_price: float | None = None
     active: bool = True
+    closed_reason: PositionCloseReason | None = None
     created_at: str = ""
     updated_at: str = ""
 

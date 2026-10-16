@@ -50,7 +50,7 @@ def _base_config_fields() -> dict[str, object]:
 
 def test_trigger_kind_assembles_signal_trigger_gate():
     """TRIGGER 装配无方向倾向闸门"""
-    strategy, _, _ = build_strategy(signal_kind=SignalKind.TRIGGER)
+    strategy, _, _, _ = build_strategy(signal_kind=SignalKind.TRIGGER)
 
     gate = _entry_gate_of(strategy, SignalTriggerGate)
 
@@ -62,7 +62,7 @@ def test_trigger_kind_assembles_signal_trigger_gate():
 
 def test_directional_kind_assembles_directional_signal_gate():
     """DIRECTIONAL 装配方向性闸门"""
-    strategy, _, _ = build_strategy(
+    strategy, _, _, _ = build_strategy(
         signal=FakeSignal(), signal_kind=SignalKind.DIRECTIONAL
     )
 
@@ -76,7 +76,7 @@ def test_directional_kind_assembles_directional_signal_gate():
 
 def test_directional_gate_uses_configured_master_side():
     """方向性闸门使用 config.master_side 作为入场方向"""
-    strategy, _, _ = build_strategy(
+    strategy, _, _, _ = build_strategy(
         master_side=OrderSide.SELL,
         signal=FakeSignal(),
         signal_kind=SignalKind.DIRECTIONAL,
@@ -92,7 +92,7 @@ def test_directional_gate_uses_configured_master_side():
 
 def test_default_signal_kind_is_directional():
     """默认信号种类为 DIRECTIONAL（与旧 Signal(side=...) 的方向语义一致）"""
-    strategy, _, _ = build_strategy()
+    strategy, _, _, _ = build_strategy()
 
     assert strategy.config.signal_kind is SignalKind.DIRECTIONAL, (
         "默认值应保持既有方向语义"
@@ -101,7 +101,7 @@ def test_default_signal_kind_is_directional():
 
 def test_fixed_take_profit_disabled_omits_policy():
     """未启用固定止盈时不装配 FixedTakeProfitPolicy"""
-    strategy, _, _ = build_strategy(fixed_rate_take_profit=False)
+    strategy, _, _, _ = build_strategy(fixed_rate_take_profit=False)
 
     assert not _has_fixed_take_profit_policy(strategy), (
         "关闭固定止盈时不应把该策略放进链里"
@@ -110,7 +110,7 @@ def test_fixed_take_profit_disabled_omits_policy():
 
 def test_fixed_take_profit_enabled_adds_policy():
     """启用固定止盈时装配 FixedTakeProfitPolicy"""
-    strategy, _, _ = build_strategy(fixed_rate_take_profit=True)
+    strategy, _, _, _ = build_strategy(fixed_rate_take_profit=True)
 
     assert _has_fixed_take_profit_policy(strategy), (
         "启用固定止盈时必须装配该策略"
@@ -122,7 +122,7 @@ def test_fixed_take_profit_enabled_adds_policy():
 
 def test_trend_spacing_rate_assembles_trend_spacing_gate():
     """trend_spacing_rate 非空时装配顺势闸门并替换网格闸门"""
-    strategy, _, _ = build_strategy(trend_spacing_rate=0.01)
+    strategy, _, _, _ = build_strategy(trend_spacing_rate=0.01)
 
     assert _entry_gate_of(strategy, TrendSpacingGate) is not None, (
         "trend_spacing_rate 非空应装配 TrendSpacingGate"
@@ -134,7 +134,7 @@ def test_trend_spacing_rate_assembles_trend_spacing_gate():
 
 def test_default_config_keeps_grid_spacing_gate():
     """默认（trend_spacing_rate 为空）保持网格间距口径"""
-    strategy, _, _ = build_strategy()
+    strategy, _, _, _ = build_strategy()
 
     assert _entry_gate_of(strategy, GridSpacingGate) is not None
     assert _entry_gate_of(strategy, TrendSpacingGate) is None
@@ -142,7 +142,7 @@ def test_default_config_keeps_grid_spacing_gate():
 
 def test_entry_gate_chain_order_with_trend_spacing():
     """闸门链顺序: 上限 → 信号 → 价格区间 → 顺势间距 → 上限止损"""
-    strategy, _, _ = build_strategy(trend_spacing_rate=0.01, lowest_price=0.4)
+    strategy, _, _, _ = build_strategy(trend_spacing_rate=0.01, lowest_price=0.4)
 
     names = [type(gate).__name__ for gate in strategy.entry_gates.gates]
 
@@ -160,7 +160,7 @@ def test_entry_gate_chain_order_with_trend_spacing():
 
 def test_default_config_assembles_signal_exit_policy():
     """默认装配信号止盈离场（enable_signal_take_profit=True）, 不装配信号止损"""
-    strategy, _, _ = build_strategy()
+    strategy, _, _, _ = build_strategy()
 
     policies = strategy.exit_policies.policies
     assert any(isinstance(policy, SignalExitPolicy) for policy in policies), (
@@ -171,7 +171,7 @@ def test_default_config_assembles_signal_exit_policy():
 
 def test_signal_stop_loss_assembles_layered_reduce():
     """enable_signal_stop_loss=True 装配 LayeredReducePolicy"""
-    strategy, _, _ = build_strategy(
+    strategy, _, _, _ = build_strategy(
         enable_signal_take_profit=False, enable_signal_stop_loss=True
     )
 
@@ -186,7 +186,7 @@ def test_signal_stop_loss_assembles_layered_reduce():
 
 def test_both_signal_policies_assemble_together():
     """两个开关可并存: 信号止损剥最外层, 信号止盈接手内层盈利层"""
-    strategy, _, _ = build_strategy(
+    strategy, _, _, _ = build_strategy(
         enable_signal_take_profit=True, enable_signal_stop_loss=True
     )
 
@@ -201,7 +201,7 @@ def test_both_signal_policies_assemble_together():
 
 def test_signal_policies_both_disabled_omits_both():
     """两个开关全关: 无信号驱动离场策略"""
-    strategy, _, _ = build_strategy(
+    strategy, _, _, _ = build_strategy(
         enable_signal_take_profit=False, enable_signal_stop_loss=False
     )
 
@@ -225,7 +225,7 @@ def test_config_rejects_removed_exit_signal_flags():
 
 def test_resting_take_profit_only_when_limit_order_enabled():
     """仅在同时开启固定止盈与限价止盈时装配休息限价止盈"""
-    strategy, _, _ = build_strategy(
+    strategy, _, _, _ = build_strategy(
         fixed_rate_take_profit=True, take_profit_use_limit_order=True
     )
 
@@ -236,7 +236,7 @@ def test_resting_take_profit_only_when_limit_order_enabled():
 
 def test_resting_take_profit_absent_when_limit_order_disabled():
     """未开启限价止盈时不装配（盘中止盈路径整体跳过）"""
-    strategy, _, _ = build_strategy(
+    strategy, _, _, _ = build_strategy(
         fixed_rate_take_profit=True, take_profit_use_limit_order=False
     )
 
@@ -247,7 +247,7 @@ def test_resting_take_profit_absent_when_limit_order_disabled():
 
 def test_entry_gate_chain_preserves_declared_order():
     """闸门链顺序: 上限 → 信号 → 价格区间 → 间距 → 上限止损"""
-    strategy, _, _ = build_strategy(
+    strategy, _, _, _ = build_strategy(
         signal=FakeSignal(), signal_kind=SignalKind.TRIGGER, lowest_price=0.4
     )
 
@@ -272,7 +272,7 @@ def test_max_order_one_opens_and_holds_single_position():
     持有仓位时 1-1<=1 仍触发强平，变成"开了就平"的抖动。
     修复后上限止损在 max_order<=1 时整体不适用（单仓位保护交给单笔止损）。
     """
-    strategy, trading, _ = build_strategy(
+    strategy, trading, _, _ = build_strategy(
         max_order=1, enable_max_order_stop_loss=True
     )
     calls: list[str] = []
@@ -325,7 +325,7 @@ def test_no_stop_loss_warning_for_normal_config(
 
 def test_opens_first_position_when_max_order_is_two():
     """max_order=2 空仓时还有 2 个空位, 应正常开仓"""
-    strategy, _, _ = build_strategy(max_order=2, enable_max_order_stop_loss=True)
+    strategy, _, _, _ = build_strategy(max_order=2, enable_max_order_stop_loss=True)
 
     push_kline(strategy, 0.5)
 
@@ -334,7 +334,7 @@ def test_opens_first_position_when_max_order_is_two():
 
 def test_manual_close_position_does_not_trigger_stop_loss_callback():
     """手动全平不触发止损回调（本次修复的缺陷）"""
-    strategy, _, _ = build_strategy()
+    strategy, _, _, _ = build_strategy()
     seed_position(strategy, "POS1", entry_price=0.5, quantity=100.0)
     calls: list[str] = []
     strategy.on_stop_loss_order_all = lambda: calls.append("called")
@@ -348,7 +348,7 @@ def test_manual_close_position_does_not_trigger_stop_loss_callback():
 
 def test_manual_close_position_still_exits_all_positions():
     """手动全平仍然离场（修复未改变离场行为）"""
-    strategy, trading, _ = build_strategy()
+    strategy, trading, _, _ = build_strategy()
     seed_position(strategy, "POS1", entry_price=0.5, quantity=100.0)
     strategy.close_position = True
 
@@ -361,7 +361,7 @@ def test_manual_close_position_still_exits_all_positions():
 
 def test_manual_close_position_resets_flag():
     """手动全平标志消费后复位（幂等）"""
-    strategy, _, _ = build_strategy()
+    strategy, _, _, _ = build_strategy()
     seed_position(strategy, "POS1", entry_price=0.5, quantity=100.0)
     strategy.close_position = True
 
@@ -372,7 +372,7 @@ def test_manual_close_position_resets_flag():
 
 def test_stop_all_at_max_order_still_triggers_callback_and_pause():
     """达到上限止损仍触发回调并暂停（修复未改变止损行为）"""
-    strategy, _, _ = build_strategy(
+    strategy, _, _, _ = build_strategy(
         max_order=2, enable_max_order_stop_loss=True, paused_after_stop_loss=True
     )
     seed_position(strategy, "POS1", entry_price=0.5, quantity=100.0)
@@ -387,7 +387,7 @@ def test_stop_all_at_max_order_still_triggers_callback_and_pause():
 
 def test_stop_all_without_pause_still_exits_but_keeps_running():
     """不暂停时: 仍全部离场, 但策略保持运行"""
-    strategy, trading, _ = build_strategy(
+    strategy, trading, _, _ = build_strategy(
         max_order=2,
         enable_max_order_stop_loss=True,
         paused_after_stop_loss=False,
@@ -402,7 +402,7 @@ def test_stop_all_without_pause_still_exits_but_keeps_running():
 
 def test_no_exit_order_when_no_position_qualifies():
     """无仓位满足离场条件时不挂单"""
-    strategy, trading, _ = build_strategy(signal=FakeSignal([SignalDirection.LONG]))
+    strategy, trading, _, _ = build_strategy(signal=FakeSignal([SignalDirection.LONG]))
     seed_position(
         strategy,
         "POS1",
@@ -423,7 +423,7 @@ def test_short_position_exit_side_is_buy():
     注意: 空头盈利方向与多头相反 —— `profit_level` 对 SHORT 用 `<` 比较
     `price × (1 - rate)`, 因此 close < 入场价才是盈利。
     """
-    strategy, trading, _ = build_strategy(
+    strategy, trading, _, _ = build_strategy(
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
         fixed_rate_take_profit=True,

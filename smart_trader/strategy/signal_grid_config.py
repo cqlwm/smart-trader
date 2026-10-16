@@ -72,10 +72,12 @@ class SignalGridStrategyConfig(BaseModel):
 class CloseOutcome(BaseModel):
     """一次平仓检查的结果
 
-    @param archived 本根K线已到终态、需要归档的仓位
     @param acted 本根K线是否产生过平仓动作(挂出场单 / 撤单 / 归档);
         平仓优先于开仓 —— acted 为真时本根K线不再开仓
+    @param exit_settled 强制结算后可平量耗尽的仓位（出场结算语义归档）
+    @param entry_discarded 未成交入场单被撤后归零的仓位（入场丢弃语义归档）
     """
 
-    archived: list[GridPosition] = []
     acted: bool = False
+    exit_settled: list[GridPosition] = []
+    entry_discarded: list[GridPosition] = []

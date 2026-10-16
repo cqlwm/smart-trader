@@ -42,7 +42,7 @@ def grid(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         order_stop_loss_rate=0.05,
     )
     strategy = SignalGridStrategy(
-        config, trading=exchange, market=exchange, journal=journal
+        config, trading=exchange, market=exchange, journal=journal, account=exchange
     )
 
     return StrategyTask(symbol=symbol_, strategy=strategy)

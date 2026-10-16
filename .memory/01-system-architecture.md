@@ -85,11 +85,12 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | `smart_trader/exchange/binance/binance_exchange.py` | Binance 适配器，两层职责：`CcxtExchange` Protocol（ccxt 最小类型化接口，`@runtime_checkable`，入站载荷/出站参数用 TypedDict 词汇表声明消费面）+ builder 函数（`build_public_ccxt` / `build_private_ccxt`：构造选项/demo 开关/构造即 `load_markets`，`raw_factory` 注入缝供测试打桩）→ `BinanceExchange(Exchange)`（领域对象 ⇄ ccxt 翻译，只依赖注入的 `CcxtExchange`，双实例按能力分流）。组装入口 `create_binance_exchange`：公共实例（无密钥）承载行情，私有实例（`is_test=True` 时 demo）承载交易/账户。附带非端口能力 `cancel_open_orders`（demo 专用） |
 | `smart_trader/storage/records.py` | 存储记录模型（Pydantic）：`GridPositionRow` / `OrderRecord`，存储层对外的数据契约 |
 | `smart_trader/storage/schema.py` | 表结构元数据（SQLAlchemy Core）：schema 唯一来源（列/约束/索引），建库走 `metadata.create_all` |
-| `smart_trader/storage/order_journal.py` | 订单日志仓储（SQLAlchemy Core 语句 + 事务）：`grid_positions`（逻辑仓位）+ `orders`（订单，`status` 为空承担 WAL） |
+| `smart_trader/storage/order_journal.py` | 订单日志仓储（SQLAlchemy Core 语句 + 事务）：`grid_positions`（逻辑仓位，含 `closed_reason` 归档原因；打开即校验结构，缺列时报错内联等价 ALTER 语句）+ `orders`（订单，`status` 为空承担 WAL） |
+| `scripts/migrations/` | 库结构演化编号脚本（纯运维，与业务包解耦）：每次演化新增一个编号文件，手动对存量库执行一次；幂等，重复执行无害 |
 | `smart_trader/execution/limit_order_chaser.py` | 追单执行策略 |
 | `smart_trader/execution/journaled_trading.py` | 记账下单包装（TradingPort 装饰器）：预写仓位/订单 → 下单 → 回写结果 |
 | `smart_trader/execution/order_reconciler.py` | 启动对账：扫 `status IS NULL` 的订单 → 查交易所 → 回写 |
-| `smart_trader/strategy/` | 策略基类与网格策略。**四层职责边界**：`signal`（`Signal` ABC，只回答"行情现在是什么状态"）/ `entry_gate`（`EntryGate` 可组合入场闸门链）/ `exit_policy`（`ExitPolicy` 可组合离场策略链）/ `signal_grid_strategy`（**只做装配 + 仓位与订单管理**，不做任何入场/离场判定）。网格策略其余模块：`grid_position`（仓位对象 + `load_positions` 批量还原）/ `signal_grid_config`（配置 + `CloseOutcome`）/ `grid_order_gateway`（记账下单入口）/ `position_lifecycle`（订单结算：入场单成交结算[盘中] / 撤剩余入场单[出场流程] / 出场单跟踪[每根完成K线]）/ `alpha_trend_signal`（`AlphaTrendSignal` 实现，`alpha_trend_grids_signal.py` 已删除，语义由 `SignalKind.TRIGGER` 承载） |
+| `smart_trader/strategy/` | 策略基类与网格策略。**四层职责边界**：`signal`（`Signal` ABC，只回答"行情现在是什么状态"）/ `entry_gate`（`EntryGate` 可组合入场闸门链）/ `exit_policy`（`ExitPolicy` 可组合离场策略链）/ `signal_grid_strategy`（**只做装配 + 仓位与订单管理**，不做任何入场/离场判定）。网格策略其余模块：`grid_position`（仓位对象 + `load_positions` 批量还原）/ `signal_grid_config`（配置 + `CloseOutcome`）/ `grid_order_gateway`（记账下单入口）/ `position_lifecycle`（订单结算：入场单成交结算[盘中] / 撤剩余入场单[出场流程] / 出场单跟踪[每根完成K线]）/ `position_reconciler`（持仓对账：每根完成K线以交易所实际持仓为准收敛本地缺口，外部平仓场景的归档与可平量修正）/ `alpha_trend_signal`（`AlphaTrendSignal` 实现，`alpha_trend_grids_signal.py` 已删除，语义由 `SignalKind.TRIGGER` 承载） |
 | `smart_trader/data_event_loop.py` / `task/` | 数据事件循环与任务分发。两种数据源模式：`BinanceDataEventLoop`（WebSocket 推送，解析一次为 Kline 后分发）与 `TimerDataEventLoop`（按 timeframe 定时经 REST 拉取，见第九节）；事件载荷统一为 `Kline` 领域对象 |
 
 ## 七、演进状态
@@ -121,6 +122,10 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 22 | **修复固定止损费率开仓后冻结的缺陷（实测事故）**：原实现开仓时把 `stop_loss_rate` 一次性烘焙进 `trailing_stop_price`，`StopLossPolicy` 也只读该字段 —— 之后修改 config 的 `order_stop_loss_rate` 或库里的 `stop_loss_rate` 对存量仓位永远无效（字段看着是活参数，实际是死快照）。拆分语义：**固定止损**按 `仓位均价 × (1 ∓ stop_loss_rate)` 实时判定（活参数，`_open_position` 不再为纯固定止损写快照字段）；**跟踪止损**独占 `trailing_stop_price`（ratchet 字段，播种口径不变）；`enable_stop_loss` 仍是总开关，`enable_trailing_stop` 只选模式（设计见 `02-domain-model.md` 八.5、`03-coding-design.md` 三.13） | 已完成 |
 | Step 23 | **信号离场拆分为两个独立开关**：`enable_exit_signal`（总开关）+ `enable_layered_reduce`（口味）删除，改为 `enable_signal_take_profit`（信号止盈, 默认 True → `SignalExitPolicy`）与 `enable_signal_stop_loss`（信号止损, 默认 False → `LayeredReducePolicy`）；二者独立装配可并存 —— 最外层由止损 force 剥（亏损也减），内层盈利层由止盈离场，同层命中走 force 合并；config 加 `extra="forbid"` 拦截拼写漂移（设计见 `03-coding-design.md` 三.11） | 已完成 |
 | Step 24 | **信号离场按盈亏状态分派**：反向信号命中时同一层按盈亏走且仅走一个分支 —— 浮盈（`ratio > 0`）+ `enable_signal_take_profit` → 止盈（非 force）；浮亏（`ratio < 0`）+ `enable_signal_stop_loss` → 止损（force，仅最外层逐层）；持平不触发。`LayeredReducePolicy` 从"不要求盈利"收紧为"必须浮亏"，`SignalExitPolicy` 从"盈利 ≥ min_rate"改为"浮盈即止盈"，`exit_signal_take_profit_min_rate` 删除（防 死参数 教训重演）（设计见 `03-coding-design.md` 三.11） | 已完成 |
+| Step 25 | **`ExitContext.close` 必填 + `_exit_context` 无行情契约**：删除 `close=0.0` 静默兜底（0.0 会变成止损/止盈判定的"真实价格"），`kline is None` 抛 `MARKET_DATA_UNAVAILABLE`，与入场侧 `EntryContext.require_close` 对称（设计见 `03-coding-design.md` 三.14） | 已完成 |
+| Step 26 | **交易所响应解析"缺失 ≠ 零值"**：`_to_float` 拆分"缺失(None)"与"0"；`amount` 缺失抛 `ORDER_RESPONSE_INVALID`、`filled` 缺失归 0、`price/average` 的 0 与缺失都归 None；`Position.entry_price` 必填；`JournaledTradingPort` 的 `or ""` 空串仓位号缺陷修复（穿透 `in_` 过滤导致成交事实静默丢失）+ 数据校验弃用 `assert`（`python -O` 剥离）统一改 `if...raise SmartTraderError`（设计见 `03-coding-design.md` 三.15） | 已完成 |
+| Step 27 | **持仓对账（外部平仓同步）**：新增 `PositionReconciler`（`strategy/position_reconciler.py`），每根完成 K 线经 `AccountPort.positions` 查询交易所实际持仓并与本地派生量比对：本地多出（外部手动平仓）按 LIFO（最外层优先，与 `LayeredReducePolicy` 同序）分摊缺口 —— 被全吃的仓位先撤挂单结算再内部归档（不下对冲单），部分被吃的仓位记录外部扣减量供平仓下单 clamp；交易所多于本地（来源不明仓位）仅告警不自动改动；查询/撤单异常单仓容忍，下一根重试。策略构造新增必需依赖 `account: AccountPort`；启动时在 `load_positions` 之后立即对账一次（设计见 `03-coding-design.md` 三.16，不变量见第十节 12） | 已完成 |
+| Step 28 | **归档原因落库（审计可查）**：`grid_positions` 新增 `closed_reason` 列（`PositionCloseReason` 枚举：`EXIT_SETTLED` / `EXTERNAL_RECONCILED` / `ORPHAN_REAPED` / `ENTRY_DISCARDED`），与 `active=0` 同语句写入。**结构演化与业务包完全解耦**：schema.py 是"当前结构"的唯一声明，代码不维护迁移历史；演化以编号脚本归档于 `scripts/migrations/`（`001_add_grid_positions_closed_reason.py`，幂等，手动对每个存量库执行一次），`OrderJournal` 打开缺列旧库时从 schema 元数据动态生成等价 ALTER 语句并响亮报错（有专门测试锁定不自动改表）。`_archive` 按归档来源分组传 reason，`CloseOutcome.archived` 拆为 `exit_settled` / `entry_discarded` 两个具名列表 —— 顺带修复"出场结算耗尽的仓位在 `check_close_position` 被误判为 `entry_discarded` 覆盖 `EXIT_SETTLED`"的重复归档缺陷（归档判定收进"确有入场单被撤"分支）。**审计列必须排在表尾**：`ALTER ADD COLUMN` 只能追加，schema/冻结契约中 `closed_reason` 置于 `updated_at` 之后才能保证手动演化后结构与契约一致（设计见 `02-domain-model.md` 七、`03-coding-design.md` 三.16） | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -208,6 +213,12 @@ strategy / task / template              (业务编排: 网格、信号、止损)
   修复：入参 `df.copy()`（与 docstring 对齐），Signal 契约补全
   "不得替换、清空或增删列"；回归测试
   `test_indicator_does_not_mutate_input_dataframe` 锁定。
+- **外部平仓后策略按本地虚高数量平仓，陷入拒单死循环（Step 27 修复）**：
+  本地派生量只认订单流水，用户在交易所手动平仓后本地不知道 —— 平仓单被
+  交易所整单拒绝（对冲模式 -2022），`Task.safe_run` 吞异常、下一根 K 线原样
+  重试，仓位永远平不掉、偏差永不收敛。修复：新增 `PositionReconciler`
+  持仓对账（每根完成 K 线 + 启动时，交易所实际持仓为唯一收敛权威，
+  设计见 `03-coding-design.md` 三.16、不变量见第十节 12）。
 - **`Signal` 不是真 ABC**（Step 13 修复）：`@abstractmethod` 修饰 `run()` 但类未继承 `ABC`，
   抽象方法完全失效，任何子类都可实例化并返回 `None`。
 - **`AlphaTrendSignal.first_run` 反推吞掉本次突破**（Step 13 修复）：反推取
@@ -327,6 +338,18 @@ strategy / task / template              (业务编排: 网格、信号、止损)
     （防继续建仓）只属于出场流程（`settle_pending_entries`，由
     `check_close_position` 触发）。盘中路径不得因 `RestingTakeProfitPolicy`
     未装配而跳过结算 —— 入场单结算是记账职责，与限价止盈开关无关。
+12. **持仓对账以交易所实际持仓为唯一收敛权威**（Step 27）：
+    每根完成 K 线（含启动后首根前）经 `AccountPort.positions` 查询该 symbol
+    `position_side` 方向的实际持仓量，与本地派生总量比对：
+    - **本地多出（外部手动平仓）**：缺口按 LIFO（最外层优先，与
+      `LayeredReducePolicy` 同序）分摊 —— 被全吃的仓位**先撤挂单结算事实
+      再内部归档**（绝不下对冲单）；部分被吃的仓位记录外部扣减量，
+      平仓/休息止盈下单量一律 clamp 为 `quantity - 扣减量`；
+    - **交易所多于本地**（手动加仓 / 来源不明仓位）：仅告警，**不自动收编**；
+    - **数量一致**：无动作；
+    - 对账结果**不回写账本数字**：`orders` 行只保存订单事实，外部平仓的
+      成交价本地拿不到，不伪装记账；归档仓位在账本中保留原始订单行 + 日志留痕；
+    - 查询异常跳过本轮、撤单异常单仓容忍，均下一根重试，绝不中断主循环。
 
 ## 十一、订单最终一致性（预写 + 对账）
 

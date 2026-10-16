@@ -38,7 +38,7 @@ def long_buy(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         strategy_key=f"signal_grid_long_buy_{symbol_.simple()}_{timeframe_}",
     )
     strategy = SignalGridStrategy(
-        config, trading=exchange, market=exchange, journal=journal
+        config, trading=exchange, market=exchange, journal=journal, account=exchange
     )
 
     return StrategyTask(symbol=symbol_, strategy=strategy)

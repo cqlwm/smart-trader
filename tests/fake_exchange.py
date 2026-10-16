@@ -17,14 +17,17 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from smart_trader.exceptions import ErrorCode, SmartTraderError
-from smart_trader.exchange.ports import TradingPort
+from smart_trader.exchange.ports import AccountPort, TradingPort
 from smart_trader.model import (
     OrderRequest,
     OrderResult,
     OrderSide,
     OrderStatus,
+    Position,
+    PositionSide,
     Symbol,
 )
+from tests.fakes import DEFAULT_SYMBOL
 
 
 @dataclass
@@ -67,13 +70,19 @@ def _load_entry(data: dict[str, object]) -> BookEntry:
     )
 
 
-class StatefulFakeExchange(TradingPort):
-    """内存订单簿交易所, 支持 one-shot 故障注入与 JSON 持久化"""
+class StatefulFakeExchange(TradingPort, AccountPort):
+    """内存订单簿交易所, 支持 one-shot 故障注入与 JSON 持久化
+
+    AccountPort 语义: 净持仓 = 簿内 BUY 成交 - SELL 成交 - 外部平仓脚本扣减,
+    与真实交易所"订单成交产生持仓"的因果关系一致。
+    """
 
     def __init__(self, persist_path: str | Path | None = None) -> None:
         self.book: dict[str, BookEntry] = {}
         self.lose_response_next = False
         self.drop_request_next = False
+        # 外部手动平仓累计扣减(不经订单簿, 模拟用户直接在交易所操作)
+        self.external_reduction = 0.0
         self._persist_path = Path(persist_path) if persist_path is not None else None
         if self._persist_path is not None and self._persist_path.exists():
             self._load()
@@ -127,6 +136,45 @@ class StatefulFakeExchange(TradingPort):
         entry.avg_price = avg_price if avg_price is not None else entry.price
         entry.status = status
         entry.observed = False  # 新事实尚未被策略查询
+        self._persist()
+
+    # ---- AccountPort ----
+
+    def balance(self, coin: str) -> float:
+        return 100.0
+
+    def positions(self, symbol: Symbol | None = None) -> list[Position]:
+        """净持仓 = BUY 成交 - SELL 成交 - 外部平仓扣减(多头为正, 空头为负)"""
+        net = self.net_position()
+        if net == 0:
+            return []
+        target = symbol if symbol is not None else DEFAULT_SYMBOL
+        return [
+            Position(
+                symbol=target,
+                side=PositionSide.LONG if net > 0 else PositionSide.SHORT,
+                quantity=abs(net),
+                entry_price=0.5,
+            )
+        ]
+
+    def net_position(self) -> float:
+        """当前净持仓量(多头为正; 含外部平仓扣减)"""
+        bought = sum(
+            entry.filled_qty
+            for entry in self.book.values()
+            if entry.side is OrderSide.BUY
+        )
+        sold = sum(
+            entry.filled_qty
+            for entry in self.book.values()
+            if entry.side is OrderSide.SELL
+        )
+        return bought - sold - self.external_reduction
+
+    def external_close(self, qty: float) -> None:
+        """模拟外部手动平仓: 直接扣减净持仓, 不经订单簿"""
+        self.external_reduction += qty
         self._persist()
 
     # ---- 内部 ----

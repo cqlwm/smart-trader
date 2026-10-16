@@ -15,11 +15,12 @@ from datetime import UTC, datetime
 
 from smart_trader import log
 from smart_trader.exceptions import ErrorCode, SmartTraderError
-from smart_trader.exchange.ports import MarketDataPort, TradingPort
+from smart_trader.exchange.ports import AccountPort, MarketDataPort, TradingPort
 from smart_trader.execution.order_reconciler import OrderReconciler
 from smart_trader.model import (
     MarketSignal,
     OrderSide,
+    PositionCloseReason,
     PositionLimit,
     SignalKind,
     timeframe_seconds,
@@ -53,6 +54,7 @@ from smart_trader.strategy.exit_policy import (
 from smart_trader.strategy.grid_order_gateway import GridOrderGateway
 from smart_trader.strategy.grid_position import GridPosition, load_positions
 from smart_trader.strategy.position_lifecycle import PositionLifecycle
+from smart_trader.strategy.position_reconciler import PositionReconciler
 from smart_trader.strategy.signal_grid_config import (
     CloseOutcome,
     SignalGridStrategyConfig,
@@ -78,6 +80,7 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         trading: TradingPort,
         market: MarketDataPort,
         journal: OrderJournal,
+        account: AccountPort,
         reconcile_min_age_seconds: float = 5.0,
     ):
         super().__init__(config.timeframe, market)
@@ -111,6 +114,15 @@ class SignalGridStrategy(SingleTimeframeStrategy):
             journal=journal,
             positions=lambda: self.positions,
         )
+        # 持仓对账: 以交易所实际持仓为准收敛本地缺口(外部平仓同步)
+        self._external_reductions: dict[str, float] = {}
+        self._position_reconciler = PositionReconciler(
+            config=config,
+            account=account,
+            positions=lambda: self.positions,
+            lifecycle=self._lifecycle,
+        )
+        self._apply_position_reconcile()
 
         # 规则装配: 策略只做接线, 判定全在闸门/策略链内
         self._limit = PositionLimit(
@@ -354,7 +366,7 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         - 已有未成交出场单的仓位: 只有 force 决策才撤单结算再重挂;
         - 只有真正完成的仓位(零成交入场单丢弃 / 出场剩余耗尽)才归档。
 
-        @return: 本次平仓检查的结果(归档仓位 + 本根K线是否产生过平仓动作)
+        @return: 本次平仓检查的结果(按归档语义分组的仓位 + 本根K线是否产生过平仓动作)
         """
         if self.latest_kline_obj is None:
             return CloseOutcome()
@@ -373,22 +385,28 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                     continue
                 outcome.acted = True
                 if not self._lifecycle.force_settle_exit(position):
-                    outcome.archived.append(position)
+                    outcome.exit_settled.append(position)
                     continue
 
             if not decision.should_exit:
                 continue
 
-            # 未成交入场单: 先撤剩余挂单防止继续建仓, 零成交则无可平仓位
+            # 未成交入场单: 先撤剩余挂单防止继续建仓; 撤后仓位归零即入场丢弃归档
+            # (无入场单时不得判 entry_discarded —— 出场结算耗尽的仓位已由
+            #  track_pending_exits 以 EXIT_SETTLED 归档, 这里重复判定会覆盖原因)
             if position.pending_entry_orders:
                 outcome.acted = True
-            if self._lifecycle.settle_pending_entries(position):
-                outcome.archived.append(position)
-                outcome.acted = True
-                continue
+                if self._lifecycle.settle_pending_entries(position):
+                    outcome.entry_discarded.append(position)
+                    outcome.acted = True
+                    continue
 
+            exit_qty = self._exit_quantity(position)
+            if exit_qty <= 0:
+                # 可平量被外部平仓耗尽却未被本轮对账归档(浮点边界): 不下单
+                continue
             self._gateway.place_and_append(
-                position, position.exit_side, position.quantity, ctx.close
+                position, position.exit_side, exit_qty, ctx.close
             )
             outcome.acted = True
 
@@ -460,10 +478,25 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         age = (datetime.now(UTC) - created).total_seconds()
         return age > threshold_seconds
 
-    def _archive(self, positions: list[GridPosition]) -> None:
+    def _archive(
+        self, positions: list[GridPosition], reason: PositionCloseReason
+    ) -> None:
+        """归档仓位: `active=0` 与归档原因同语句落库（审计可查）"""
         for position in positions:
-            self.journal.close_position(position.id)
+            self.journal.close_position(position.id, reason)
         self.remove_positions(positions)
+
+    def _apply_position_reconcile(self) -> list[GridPosition]:
+        """执行持仓对账并消费结果: 归档外部全平仓位, 记录部分平仓扣减量"""
+        result = self._position_reconciler.reconcile()
+        for position in result.archived:
+            self._archive([position], PositionCloseReason.EXTERNAL_RECONCILED)
+        self._external_reductions = result.adjustments
+        return result.archived
+
+    def _exit_quantity(self, position: GridPosition) -> float:
+        """实际可平量 = 账本派生量 - 被外部平掉的量(未对账到时为 0)"""
+        return position.quantity - self._external_reductions.get(position.id, 0.0)
 
     def _on_kline_finished(self):
         latest_kline = self.latest_kline_obj
@@ -473,21 +506,43 @@ class SignalGridStrategy(SingleTimeframeStrategy):
         if self.is_running:
             self._update_trailing_stop()
 
+        # 归档按来源分组收集, 落库时各自携带 closed_reason（审计可查）
+        archives: list[tuple[GridPosition, PositionCloseReason]] = []
+
         # 无条件跟踪已挂出的出场单(暂停后仍必须跟踪)
-        archived, _ = self._lifecycle.track_pending_exits()
+        settled, _ = self._lifecycle.track_pending_exits()
+        archives.extend((position, PositionCloseReason.EXIT_SETTLED) for position in settled)
+
+        # 持仓对账(暂停后仍必须执行): 以交易所实际持仓为准收敛本地缺口
+        archives.extend(
+            (position, PositionCloseReason.EXTERNAL_RECONCILED)
+            for position in self._apply_position_reconcile()
+        )
 
         # 平仓优先于开仓: 本根K线一旦产生平仓动作, 就不再开仓
         # (check_close_position 可能因止损暂停把 is_running 置为 False, 需重新判断)
         if self.is_running:
             outcome = self.check_close_position()
-            archived.extend(outcome.archived)
-            if self.is_running and not outcome.acted:
+            archives.extend(
+                (position, PositionCloseReason.EXIT_SETTLED)
+                for position in outcome.exit_settled
+            )
+            archives.extend(
+                (position, PositionCloseReason.ENTRY_DISCARDED)
+                for position in outcome.entry_discarded
+            )
+            # 对账归档同样是敞口减少动作: 收敛当根不开新仓
+            if self.is_running and not outcome.acted and not archives:
                 self.check_open_position()
 
         # 孤儿回收（每根完成K线）
-        archived.extend(self._reap_orphans())
+        archives.extend(
+            (position, PositionCloseReason.ORPHAN_REAPED)
+            for position in self._reap_orphans()
+        )
 
-        self._archive(archived)
+        for position, reason in archives:
+            self._archive([position], reason)
 
     def _on_kline(self):
         """盘中路径: 结算入场单成交, 跟踪休息中的出场单, 必要时挂出休息限价止盈单
@@ -514,16 +569,23 @@ class SignalGridStrategy(SingleTimeframeStrategy):
                 if exit_price is not None and latest_kline.low <= exit_price <= latest_kline.high:
                     result = self.trading.query(pending_exit.order_id, self.config.symbol)
                     if result and result.status.is_closed() and self._lifecycle.settle_exit(position, pending_exit, result):
-                        self._archive([position])
+                        self._archive([position], PositionCloseReason.EXIT_SETTLED)
                 continue
 
             if position.quantity <= 0 or position.pending_entry_orders:
                 continue  # 无可平量或入场单未了结: 不挂休息止盈单
+            # 挂单前实时对账: 上次对账后外部可能又平了仓(挂单每仓位仅一次, 低频)
+            self._apply_position_reconcile()
+            if position.id not in self._positions:
+                continue  # 对账已把本仓位内部归档
+            exit_qty = self._exit_quantity(position)
+            if exit_qty <= 0:
+                continue  # 可平量被外部平仓耗尽: 不挂休息止盈单
             exit_price = resting_take_profit.limit_price(position)
             self._gateway.place_and_append(
                 position,
                 position.exit_side,
-                position.quantity,
+                exit_qty,
                 exit_price,
                 first_price=exit_price,
             )

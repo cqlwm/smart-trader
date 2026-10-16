@@ -40,6 +40,9 @@ grid_positions = Table(
     Column("active", Integer, nullable=False, server_default=text("1")),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+    # 审计列必须排在表尾: 存量库迁移用 ALTER TABLE ADD COLUMN(只能追加),
+    # 建列位置与冻结契约一致才能通过结构等价测试
+    Column("closed_reason", Text),
 )
 Index(
     "idx_grid_positions_strategy",

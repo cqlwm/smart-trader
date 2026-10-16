@@ -5,7 +5,11 @@
 
 import pytest
 
-from smart_trader.model import OrderSide, OrderStatus
+from smart_trader.model import (
+    OrderSide,
+    OrderStatus,
+    PositionCloseReason,
+)
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.strategy.grid_position import load_positions
 from tests.fakes import DEFAULT_STRATEGY_KEY, make_order_record, make_position_row
@@ -60,7 +64,7 @@ def test_loads_only_active_positions():
     """已归档仓位不还原"""
     journal = OrderJournal(":memory:")
     seed_journal(journal, "POS1")
-    journal.close_position("POS1")
+    journal.close_position("POS1", PositionCloseReason.EXIT_SETTLED)
 
     positions = load_positions(journal, STRATEGY_KEY)
 

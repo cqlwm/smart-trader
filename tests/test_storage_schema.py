@@ -47,8 +47,8 @@ def _snapshot(
     return snapshot
 
 
-def _legacy_snapshot() -> dict[str, dict[str, Any]]:
-    """契约基准: 旧版硬编码 DDL 建出的结构"""
+def _frozen_snapshot() -> dict[str, dict[str, Any]]:
+    """契约基准: 冻结 DDL 建出的结构"""
     conn = sqlite3.connect(":memory:")
     try:
         conn.executescript(_FROZEN_DDL)
@@ -88,12 +88,12 @@ def _journal_file_snapshot(tmp_path: Path) -> dict[str, dict[str, Any]]:
 
 class TestSchemaEquivalence:
     def test_metadata_matches_frozen_contract(self):
-        assert _metadata_snapshot() == _legacy_snapshot(), (
+        assert _metadata_snapshot() == _frozen_snapshot(), (
             "schema.metadata 建出的库结构必须与冻结契约完全一致"
         )
 
     def test_journal_created_database_matches_frozen_contract(self, tmp_path: Path):
-        assert _journal_file_snapshot(tmp_path) == _legacy_snapshot(), (
+        assert _journal_file_snapshot(tmp_path) == _frozen_snapshot(), (
             "OrderJournal 实际建出的库结构必须与冻结契约完全一致"
         )
 
@@ -101,6 +101,81 @@ class TestSchemaEquivalence:
         assert set(schema.metadata.tables) == set(_TABLES), (
             "metadata 只应包含两张订单日志表, 不得多也不得少"
         )
+
+
+# ---- 旧版 DDL（closed_reason 引入前的存量库结构, 供迁移测试建档） ----
+
+_PRE_REASON_DDL = """
+CREATE TABLE grid_positions (
+    id TEXT PRIMARY KEY,
+    strategy_key TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    position_side TEXT NOT NULL,
+    main_order_side TEXT NOT NULL,
+    opening_quantity REAL NOT NULL DEFAULT 0,
+    opening_price REAL NOT NULL DEFAULT 0,
+    fixed_take_profit_rate REAL NOT NULL,
+    signal_min_take_profit_rate REAL NOT NULL,
+    enable_stop_loss INTEGER NOT NULL DEFAULT 0,
+    stop_loss_rate REAL NOT NULL DEFAULT 0,
+    enable_trailing_stop INTEGER NOT NULL DEFAULT 0,
+    trailing_stop_rate REAL NOT NULL DEFAULT 0,
+    trailing_stop_activation_rate REAL NOT NULL DEFAULT 0,
+    trailing_stop_price REAL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_grid_positions_strategy ON grid_positions(strategy_key, active);
+
+CREATE TABLE orders (
+    order_id TEXT PRIMARY KEY,
+    grid_position_id TEXT NOT NULL,
+    strategy_key TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    type TEXT NOT NULL,
+    price REAL,
+    quantity REAL NOT NULL DEFAULT 0,
+    filled_qty REAL NOT NULL DEFAULT 0,
+    avg_price REAL,
+    status TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_orders_position ON orders(grid_position_id);
+CREATE INDEX idx_orders_pending ON orders(strategy_key, status);
+"""
+
+
+def create_pre_reason_database(
+    db_path: str, with_position: bool = False, strategy_key: str = "dogeusdt_long_buy_1m"
+) -> None:
+    """用旧版 DDL(无 closed_reason 列)建一个存量库, 可选预置一条活跃仓位"""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(_PRE_REASON_DDL)
+        if with_position:
+            conn.execute(
+                "INSERT INTO grid_positions (id, strategy_key, symbol, position_side,"
+                " main_order_side, fixed_take_profit_rate,"
+                " signal_min_take_profit_rate, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "POS-LEGACY",
+                    strategy_key,
+                    "DOGE/USDT:USDT",
+                    "long",
+                    "buy",
+                    0.01,
+                    0.002,
+                    "2026-01-01T00:00:00+00:00",
+                    "2026-01-01T00:00:00+00:00",
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ---- 冻结契约（硬编码 DDL 快照, 勿随手修改, 见文件头说明） ----
@@ -124,7 +199,8 @@ CREATE TABLE IF NOT EXISTS grid_positions (
     trailing_stop_price REAL,
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    closed_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_grid_positions_strategy ON grid_positions(strategy_key, active);
 

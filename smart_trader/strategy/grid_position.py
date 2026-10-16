@@ -3,7 +3,7 @@
 from pydantic import BaseModel, ConfigDict
 
 from smart_trader import log
-from smart_trader.model import OrderSide, PositionSide
+from smart_trader.model import OrderSide, PositionCloseReason, PositionSide
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import GridPositionRow, OrderRecord
 
@@ -31,6 +31,7 @@ class GridPosition(BaseModel):
     trailing_stop_activation_rate: float = 0.0
     trailing_stop_price: float | None = None
     active: bool = True
+    closed_reason: PositionCloseReason | None = None
     created_at: str = ""
     updated_at: str = ""
     orders: list[OrderRecord] = []
@@ -195,6 +196,7 @@ class GridPosition(BaseModel):
             trailing_stop_activation_rate=self.trailing_stop_activation_rate,
             trailing_stop_price=self.trailing_stop_price,
             active=self.active,
+            closed_reason=self.closed_reason,
             created_at=self.created_at,
             updated_at=self.updated_at,
         )
@@ -219,6 +221,7 @@ class GridPosition(BaseModel):
             trailing_stop_activation_rate=row.trailing_stop_activation_rate,
             trailing_stop_price=row.trailing_stop_price,
             active=row.active,
+            closed_reason=row.closed_reason,
             created_at=row.created_at,
             updated_at=row.updated_at,
             orders=list(orders),

@@ -60,6 +60,7 @@ def make_strategy(
         trading=exchange,
         market=FakeMarketDataPort(),
         journal=journal,
+        account=exchange,
         reconcile_min_age_seconds=0.0,
     )
     return strategy
@@ -76,6 +77,7 @@ def restart(strategy: SignalGridStrategy) -> SignalGridStrategy:
         strategy.trading,
         strategy.market,
         strategy.journal,
+        account=cast(StatefulFakeExchange, strategy.trading),
         reconcile_min_age_seconds=0.0,
     )
 

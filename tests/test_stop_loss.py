@@ -17,7 +17,7 @@ from tests.test_signal_grid_strategy import (
 
 def test_stop_loss_triggers_exit_order():
     """跌破止损价 -> 挂出反向平仓单"""
-    strategy, trading, _ = build_strategy(
+    strategy, trading, _, _ = build_strategy(
         enable_order_stop_loss=True, order_stop_loss_rate=0.05
     )
     seed_position(
@@ -35,7 +35,7 @@ def test_stop_loss_triggers_exit_order():
 
 def test_stop_loss_not_triggered_keeps_position():
     """未跌破止损价 -> 不挂平仓单"""
-    strategy, trading, _ = build_strategy(
+    strategy, trading, _, _ = build_strategy(
         enable_order_stop_loss=True,
         order_stop_loss_rate=0.05,
         grid_spacing_rate=0.05,
@@ -55,7 +55,7 @@ def test_stop_loss_not_triggered_keeps_position():
 
 def test_stop_loss_triggers_for_short_position():
     """空头: 价格涨破止损价 -> 买入平仓"""
-    strategy, trading, _ = build_strategy(
+    strategy, trading, _, _ = build_strategy(
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
         enable_order_stop_loss=True,
@@ -80,7 +80,7 @@ def test_stop_loss_triggers_for_short_position():
 
 def test_trailing_stop_moves_up_on_new_high():
     """跟踪止损: 创新高（达到激活盈利）后止损价上移"""
-    strategy, trading, _ = build_strategy(
+    strategy, trading, _, _ = build_strategy(
         enable_trailing_stop=True,
         trailing_stop_rate=0.02,
         trailing_stop_activation_profit_rate=0.01,
@@ -104,7 +104,7 @@ def test_trailing_stop_moves_up_on_new_high():
 
 def test_trailing_stop_not_activated_keeps_price():
     """未达到激活盈利 -> 止损价保持不动"""
-    strategy, trading, _ = build_strategy(
+    strategy, trading, _, _ = build_strategy(
         enable_trailing_stop=True,
         trailing_stop_rate=0.02,
         trailing_stop_activation_profit_rate=0.01,
@@ -126,7 +126,7 @@ def test_trailing_stop_not_activated_keeps_price():
 
 def test_normal_take_profit_keeps_resting_exit_order():
     """已有未成交出场单时, 普通止盈保留原挂单, 不重复下单"""
-    strategy, trading, _ = build_strategy(
+    strategy, trading, _, _ = build_strategy(
         fixed_rate_take_profit=True, fixed_take_profit_rate=0.01
     )
     position = seed_position(strategy)
@@ -150,7 +150,7 @@ def test_normal_take_profit_keeps_resting_exit_order():
 
 def test_pending_exit_is_tracked_even_when_paused():
     """暂停（is_running=False）后仍必须跟踪已挂出的出场单"""
-    strategy, trading, _ = build_strategy()
+    strategy, trading, _, _ = build_strategy()
     position = seed_position(strategy)
     position.orders.append(
         make_order_record(

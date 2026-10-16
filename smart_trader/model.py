@@ -372,6 +372,22 @@ class SignalKind(Enum):
     DIRECTIONAL = "directional"
 
 
+class PositionCloseReason(Enum):
+    """仓位归档原因（审计字段，落库于 `grid_positions.closed_reason`）
+
+    - `EXIT_SETTLED`：出场单成交、可平量耗尽的正常归档；
+    - `EXTERNAL_RECONCILED`：持仓对账发现交易所已无对应持仓（外部手动平仓），
+      策略内部关闭 —— 绝未向交易所下达出场单；
+    - `ORPHAN_REAPED`：零数量空仓位超时回收；
+    - `ENTRY_DISCARDED`：出场流程撤掉未成交入场单后仓位归零归档。
+    """
+
+    EXIT_SETTLED = "exit_settled"
+    EXTERNAL_RECONCILED = "external_reconciled"
+    ORPHAN_REAPED = "orphan_reaped"
+    ENTRY_DISCARDED = "entry_discarded"
+
+
 class MarketSignal(BaseModel):
     """行情信号快照：只描述"现在是什么状态"，不含任何持仓语义
 

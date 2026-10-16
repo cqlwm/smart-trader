@@ -467,6 +467,63 @@ class TestLedgerInvariants:
         assert_ledger_matches_exchange(ledger, exchange, [long_key, short_key])
 
 
+class TestExternalPositionReconcile:
+    """外部平仓对账（Step 27）: 用户直接在交易所手动平仓后的本地收敛"""
+
+    def test_external_full_close_archives_on_next_kline(self, ledger: str) -> None:
+        """外部全平: 下一根完成K线对账内部归档, 绝不向交易所下对冲单"""
+        exchange = StatefulFakeExchange()
+        strategy = make_strategy(
+            exchange,
+            OrderJournal(ledger),
+            grid_spacing_rate=0.5,
+            fixed_rate_take_profit=False,
+        )
+        driver = KlineDriver(strategy)
+
+        driver.push(0.5)
+        exchange.fill(book_ids_by_side(exchange, LONG_ENTRY)[0], 100.0, avg_price=0.5)
+        exchange.external_close(100.0)  # 用户手动清仓
+
+        driver.push(0.5)
+
+        positions = read_positions(ledger, DEFAULT_STRATEGY_KEY)
+        assert [row["active"] for row in positions] == [0], (
+            "外部全平的仓位应被对账内部归档(active=0)"
+        )
+        assert book_ids_by_side(exchange, LONG_EXIT) == [], "不得向交易所下对冲出场单"
+        assert strategy.positions == [], "归档仓位应从策略内存移除"
+        assert_ledger_matches_exchange(ledger, exchange, DEFAULT_STRATEGY_KEY)
+
+    def test_external_partial_close_clamps_exit_order(self, ledger: str) -> None:
+        """外部部分平: 止盈触发的出场单按交易所剩余量挂出"""
+        exchange = StatefulFakeExchange()
+        strategy = make_strategy(
+            exchange,
+            OrderJournal(ledger),
+            grid_spacing_rate=0.5,
+            fixed_take_profit_rate=0.01,
+        )
+        driver = KlineDriver(strategy)
+
+        driver.push(0.5)
+        exchange.fill(book_ids_by_side(exchange, LONG_ENTRY)[0], 100.0, avg_price=0.5)
+        exchange.external_close(40.0)  # 外部平掉 40, 交易所剩 60
+
+        driver.push(0.52)  # 收盘价触及止盈档
+
+        exit_ids = book_ids_by_side(exchange, LONG_EXIT)
+        assert len(exit_ids) == 1, "止盈应挂一笔出场单"
+        assert exchange.book[exit_ids[0]].quantity == 60.0, (
+            f"出场量应为交易所剩余量 60, got {exchange.book[exit_ids[0]].quantity}"
+        )
+        rows = ledger_side_rows(ledger, LONG_EXIT, "open")
+        assert len(rows) == 1 and rows[0]["quantity"] == 60.0, (
+            "账本出场行与簿内委托量一致"
+        )
+        assert_ledger_matches_exchange(ledger, exchange, DEFAULT_STRATEGY_KEY)
+
+
 class TestIntraBarEntrySettlement:
     """盘中入场单成交结算（Step 21 回归锁, 事故见 03-coding-design 三.12）
 

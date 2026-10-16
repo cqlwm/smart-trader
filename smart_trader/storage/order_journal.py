@@ -31,13 +31,14 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.dialects.sqlite import dialect as sqlite_dialect
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
 from smart_trader import log
-from smart_trader.model import OrderSide
+from smart_trader.model import OrderSide, PositionCloseReason
 from smart_trader.storage import schema
 from smart_trader.storage.records import GridPositionRow, OrderRecord
 
@@ -76,12 +77,42 @@ def _create_engine(db_path: str) -> Engine:
 
 
 class OrderJournal:
-    """订单日志: 逻辑仓位表 + 订单流水表 + 事务, 线程安全"""
+    """订单日志: 逻辑仓位表 + 订单流水表 + 事务, 线程安全
+
+    schema.py 是"当前结构"的唯一声明, 代码不维护迁移历史: 打开缺列旧库时
+    响亮报错并内联生成可执行的 ALTER 语句, 手动执行一次即完成结构演化。
+    """
 
     def __init__(self, db_path: str = ":memory:"):
         self._engine = _create_engine(db_path)
         with self._engine.begin() as conn:
             schema.metadata.create_all(conn)
+            self._require_current_schema(conn)
+
+    @staticmethod
+    def _require_current_schema(conn: Connection) -> None:
+        """打开即校验库结构与 schema 一致; 缺列时报错内联可执行的 ALTER 语句"""
+        existing = {
+            str(row[1])
+            for row in conn.execute(text("PRAGMA table_info(grid_positions)"))
+        }
+        missing = [
+            column
+            for column in schema.grid_positions.columns
+            if column.name not in existing
+        ]
+        if missing:
+            statements = "; ".join(
+                f"ALTER TABLE grid_positions ADD COLUMN {column.name} "
+                f"{column.type.compile(sqlite_dialect())}"
+                for column in missing
+            )
+            raise ValueError(
+                f"账本库结构过时, grid_positions 缺少列 "
+                f"{[column.name for column in missing]}; "
+                f"请在 sqlite3 中执行: {statements}"
+                f"（或执行 scripts/migrations/ 下对应编号脚本）"
+            )
 
     def close(self) -> None:
         self._engine.dispose()
@@ -171,13 +202,13 @@ class OrderJournal:
         with self._engine.begin() as conn:
             self._upsert(conn, schema.grid_positions, "id", position)
 
-    def close_position(self, position_id: str) -> None:
-        """归档仓位（已平仓或孤儿回收）: 保留行, 置 active=0"""
+    def close_position(self, position_id: str, reason: PositionCloseReason) -> None:
+        """归档仓位: 保留行, `active=0` 与归档原因同语句写入（审计可查）"""
         with self._engine.begin() as conn:
             conn.execute(
                 update(schema.grid_positions)
                 .where(schema.grid_positions.c.id == position_id)
-                .values(active=0, updated_at=_now())
+                .values(active=0, closed_reason=reason.value, updated_at=_now())
             )
 
     # ---- 读 ----

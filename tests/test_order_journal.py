@@ -5,15 +5,24 @@
 加载（活跃仓位、关联订单、待对账）/ 事务原子性 / 多策略隔离 / 持久化。
 """
 
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
+from sqlalchemy import text
 
-from smart_trader.model import OrderSide, OrderStatus, PositionSide
+from smart_trader.model import (
+    OrderSide,
+    OrderStatus,
+    PositionCloseReason,
+    PositionSide,
+)
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import GridPositionRow, OrderRecord
 from tests.fakes import make_order_record, make_position_row
+from tests.test_storage_schema import create_pre_reason_database
 
 STRATEGY_KEY = "dogeusdt_long_buy_1m"
 OTHER_KEY = "qqqusdt_long_buy_1m"
@@ -24,6 +33,15 @@ def journal() -> Iterator[OrderJournal]:
     instance = OrderJournal(":memory:")
     yield instance
     instance.close()
+
+
+def _fetch_position_row(journal: OrderJournal, position_id: str) -> dict[str, Any]:
+    """裸读一条仓位行（含归档行）, 断言落库事实"""
+    with journal._engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT * FROM grid_positions WHERE id = :id"), {"id": position_id}
+        ).mappings().one()
+        return dict(row)
 
 
 def seed_open(
@@ -212,10 +230,138 @@ class TestClosePosition:
     def test_marks_position_archived(self, journal: OrderJournal):
         seed_open(journal, "POS1")
 
-        journal.close_position("POS1")
+        journal.close_position("POS1", PositionCloseReason.EXIT_SETTLED)
 
         assert journal.load_active_positions(STRATEGY_KEY) == []
         assert journal.load_orders_for_positions(["POS1"]) != [], "归档不删订单行"
+
+    def test_archived_row_carries_close_reason(self, journal: OrderJournal):
+        seed_open(journal, "POS1")
+
+        journal.close_position("POS1", PositionCloseReason.EXTERNAL_RECONCILED)
+
+        row = _fetch_position_row(journal, "POS1")
+        assert row["active"] == 0, "归档即 active=0"
+        assert row["closed_reason"] == "external_reconciled", (
+            f"归档原因应落库为 external_reconciled, got {row['closed_reason']}"
+        )
+
+    def test_active_position_has_null_close_reason(self, journal: OrderJournal):
+        seed_open(journal, "POS1")
+
+        row = _fetch_position_row(journal, "POS1")
+        assert row["active"] == 1
+        assert row["closed_reason"] is None, "活跃仓位的归档原因必须为 NULL"
+
+    def test_each_reason_persists_verbatim(self, journal: OrderJournal):
+        for index, reason in enumerate(PositionCloseReason):
+            position_id = f"POS{index}"
+            seed_open(journal, position_id, order_id=f"BUYo{index}")
+            journal.close_position(position_id, reason)
+
+        for index, reason in enumerate(PositionCloseReason):
+            row = _fetch_position_row(journal, f"POS{index}")
+            assert row["closed_reason"] == reason.value, (
+                f"{reason.value} 应原样落库, got {row['closed_reason']}"
+            )
+
+
+class TestSchemaGuard:
+    """打开即校验库结构: 缺列时报错信息内联可执行的 ALTER 语句
+
+    schema.py 是"当前结构"的唯一声明, 不在代码里维护迁移历史 ——
+    库与 schema 不一致时, 按报错信息手动执行一次 ALTER 即完成演化。
+    """
+
+    def test_open_raises_with_executable_alter_statement(self, tmp_path: Path):
+        """未迁移的旧库: 报错信息直接给出可复制执行的 ALTER 语句"""
+        db_path = str(tmp_path / "legacy.db")
+        create_pre_reason_database(db_path)
+
+        with pytest.raises(ValueError, match=r"ALTER TABLE grid_positions ADD COLUMN closed_reason TEXT"):
+            OrderJournal(db_path)
+
+    def test_manual_alter_completes_migration(self, tmp_path: Path):
+        """按报错信息手动执行 ALTER 后: 打开成功, 归档原因可用"""
+        db_path = str(tmp_path / "legacy.db")
+        create_pre_reason_database(db_path, with_position=True)
+
+        with pytest.raises(ValueError):
+            OrderJournal(db_path)
+
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("ALTER TABLE grid_positions ADD COLUMN closed_reason TEXT")
+            conn.commit()
+        finally:
+            conn.close()
+
+        journal = OrderJournal(db_path)
+        try:
+            assert [row.id for row in journal.load_active_positions(STRATEGY_KEY)] == [
+                "POS-LEGACY"
+            ], "旧数据必须完好"
+            journal.close_position("POS-LEGACY", PositionCloseReason.ORPHAN_REAPED)
+        finally:
+            journal.close()
+
+    def test_order_journal_open_does_not_migrate(self, tmp_path: Path):
+        """解耦锁定: OrderJournal 构造不得隐式改表（结构演化是手动运维动作）"""
+        db_path = str(tmp_path / "legacy.db")
+        create_pre_reason_database(db_path)
+
+        with pytest.raises(ValueError):
+            OrderJournal(db_path)
+
+        conn = sqlite3.connect(db_path)
+        try:
+            columns = [
+                str(row[1]) for row in conn.execute("PRAGMA table_info(grid_positions)")
+            ]
+        finally:
+            conn.close()
+        assert "closed_reason" not in columns, (
+            "打开报错后旧库不得被自动补列（演化只能由人执行）"
+        )
+
+    def test_numbered_migration_script_fixes_legacy_database(self, tmp_path: Path):
+        """scripts/migrations 编号脚本执行后, 旧库可被 OrderJournal 打开且数据完好"""
+        import subprocess
+        import sys
+
+        db_path = str(tmp_path / "legacy.db")
+        create_pre_reason_database(db_path, with_position=True)
+
+        script = (
+            Path(__file__).parent.parent
+            / "scripts"
+            / "migrations"
+            / "001_add_grid_positions_closed_reason.py"
+        )
+        result = subprocess.run(
+            [sys.executable, str(script), db_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            f"编号迁移脚本执行失败: stdout={result.stdout} stderr={result.stderr}"
+        )
+
+        journal = OrderJournal(db_path)
+        try:
+            assert [row.id for row in journal.load_active_positions(STRATEGY_KEY)] == [
+                "POS-LEGACY"
+            ], "脚本迁移后旧数据必须完好"
+            journal.close_position("POS-LEGACY", PositionCloseReason.ORPHAN_REAPED)
+        finally:
+            journal.close()
+
+    def test_fresh_database_opens_without_migration(self, journal: OrderJournal):
+        """新建库天然含全部列, 无需任何演化操作"""
+        seed_open(journal, "POS1")
+        assert [row.id for row in journal.load_active_positions(STRATEGY_KEY)] == ["POS1"]
 
 
 class TestLoadActivePositions:
@@ -223,7 +369,7 @@ class TestLoadActivePositions:
         seed_open(journal, "POS1")
         seed_open(journal, "POS2", order_id="BUYo2")
 
-        journal.close_position("POS2")
+        journal.close_position("POS2", PositionCloseReason.EXIT_SETTLED)
 
         assert [row.id for row in journal.load_active_positions(STRATEGY_KEY)] == ["POS1"]
 

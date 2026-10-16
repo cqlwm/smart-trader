@@ -18,7 +18,7 @@ from smart_trader.exchange.binance.binance_exchange import (
     CcxtPosition,
     CcxtTicker,
 )
-from smart_trader.exchange.ports import MarketDataPort, TradingPort
+from smart_trader.exchange.ports import AccountPort, MarketDataPort, TradingPort
 from smart_trader.model import (
     Kline,
     MarketSignal,
@@ -27,14 +27,16 @@ from smart_trader.model import (
     OrderSide,
     OrderStatus,
     OrderType,
+    Position,
     PositionSide,
     SignalDirection,
     Symbol,
     SymbolInfo,
 )
+from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import GridPositionRow, OrderRecord
 from smart_trader.strategy.entry_gate import EntryContext, EntryGate
-from smart_trader.strategy.grid_position import GridPosition
+from smart_trader.strategy.grid_position import GridPosition, load_positions
 from smart_trader.strategy.signal import Signal
 
 DEFAULT_SYMBOL = Symbol(base="DOGE", quote="USDT")
@@ -232,6 +234,80 @@ def make_klines_df(
             "finished": pd.Series([True] * len(closes), dtype="boolean"),
         }
     )
+
+
+def make_exchange_position(
+    quantity: float,
+    *,
+    side: PositionSide = PositionSide.LONG,
+    symbol: Symbol | None = None,
+) -> Position:
+    """构造交易所侧持仓领域对象（AccountPort.positions 的返回元素）"""
+    return Position(
+        symbol=symbol if symbol is not None else DEFAULT_SYMBOL,
+        side=side,
+        quantity=quantity,
+        entry_price=0.5,
+    )
+
+
+class FakeAccountPort(AccountPort):
+    """内存版 AccountPort: 可编程持仓快照, 记录查询调用"""
+
+    def __init__(self) -> None:
+        self.positions_calls = 0
+        self.balance_calls = 0
+        self._positions: list[Position] = []
+        self._positions_error: Exception | None = None
+
+    def set_positions(self, *positions: Position) -> None:
+        self._positions = list(positions)
+
+    def fail_positions(self, error: Exception) -> None:
+        """让后续 positions 查询持续抛出该异常（模拟账户端口故障）"""
+        self._positions_error = error
+
+    def balance(self, coin: str) -> float:
+        self.balance_calls += 1
+        return 100.0
+
+    def positions(self, symbol: Symbol | None = None) -> list[Position]:
+        self.positions_calls += 1
+        if self._positions_error is not None:
+            raise self._positions_error
+        return list(self._positions)
+
+
+class LedgerMirroringAccountPort(AccountPort):
+    """镜像账本活跃仓位的账户端口: 表达"本地 = 交易所, 无外部偏差"测试前提
+
+    从账本(而非策略内存)派生持仓 —— 策略构造期的启动对账发生在本地仓位
+    加载之后, 账本是彼时唯一可用的仓位来源; 运行期账本与内存同步落库,
+    两者一致。需要模拟"外部手动平仓/加仓"偏差的测试应显式传入
+    `FakeAccountPort`。
+    """
+
+    def __init__(self, journal: OrderJournal, strategy_key: str, symbol: Symbol) -> None:
+        self.positions_calls = 0
+        self._journal = journal
+        self._strategy_key = strategy_key
+        self._symbol = symbol
+
+    def balance(self, coin: str) -> float:
+        return 100.0
+
+    def positions(self, symbol: Symbol | None = None) -> list[Position]:
+        self.positions_calls += 1
+        return [
+            Position(
+                symbol=self._symbol,
+                side=item.position_side,
+                quantity=item.quantity,
+                entry_price=item.price,
+            )
+            for item in load_positions(self._journal, self._strategy_key)
+            if item.quantity > 0
+        ]
 
 
 class FakeTradingPort(TradingPort):
