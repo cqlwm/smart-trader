@@ -19,7 +19,7 @@ main_exchange: Exchange = create_binance_exchange("main")
 def main():
     from smart_trader.config import DB_PATH
     from smart_trader.storage.order_journal import OrderJournal
-    from template import dogeusdt_trend, gtcusdt_trend, uniusdt_trend, agtusdt_trend
+    from template import agtusdt_trend, dogeusdt_trend, gtcusdt_trend, uniusdt_trend
 
     journal = OrderJournal(DB_PATH)
     tasks: list[StrategyTask] = [
