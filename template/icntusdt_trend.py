@@ -41,7 +41,7 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
 
         # 固定比例止盈: 单层盈利 10% 落袋
         fixed_rate_take_profit=True,
-        fixed_take_profit_rate=0.10,
+        fixed_take_profit_rate=0.50,
 
         # 单层止损: 价格维度保护
         enable_order_stop_loss=True,
@@ -76,7 +76,7 @@ def trend_short(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
 
         # 固定比例止盈: 单层盈利 10% 落袋
         fixed_rate_take_profit=True,
-        fixed_take_profit_rate=0.10,
+        fixed_take_profit_rate=0.50,
 
         # 单层止损: 价格维度保护
         enable_order_stop_loss=True,
