@@ -19,7 +19,7 @@ main_exchange: Exchange = create_binance_exchange("main")
 def main():
     from smart_trader.config import DB_PATH
     from smart_trader.storage.order_journal import OrderJournal
-    from template import agtusdt_trend, dogeusdt_trend, gtcusdt_trend, uniusdt_trend, icntusdt_trend
+    from template import agtusdt_trend, dogeusdt_trend, gtcusdt_trend, uniusdt_trend, icntusdt_trend, qusdt_trend
 
     journal = OrderJournal(DB_PATH)
     tasks: list[StrategyTask] = [
@@ -28,6 +28,7 @@ def main():
         gtcusdt_trend.trend_short(main_exchange, journal),
         agtusdt_trend.trend_short(main_exchange, journal),
         icntusdt_trend.trend_short(main_exchange, journal),
+        qusdt_trend.trend_short(main_exchange, journal),
     ]
 
     kline_subscribes: list[str] = []
