@@ -13,7 +13,7 @@ logger = log.getLogger(__name__)
 
 symbol_ = Symbol(base="q", quote="usdt")
 timeframe_ = "1m"
-qty_=45,
+qty_=100
 
 def trend_short(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
     position_side = PositionSide.SHORT
