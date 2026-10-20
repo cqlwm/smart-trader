@@ -105,7 +105,7 @@ def trend_short(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
 
         signal=AlphaTrendSignal(),
         signal_kind=SignalKind.TRIGGER,
-        strategy_key=f"signal_trend_{symbol_.simple()}_{timeframe_}{position_side.value}_{master_side.value}",
+        strategy_key=f"signal_trend_{symbol_.simple()}_{timeframe_}_{position_side.value}_{master_side.value}",
 
         # 信号止盈: 浮盈层遇反向信号即离场（当前关闭;
         # 信号止损已开启: 浮亏的最外层遇反向信号 force 减仓, 亏损也走）
