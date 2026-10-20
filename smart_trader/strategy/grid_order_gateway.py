@@ -90,7 +90,7 @@ class GridOrderGateway:
             position_side=self._position_side(),
             behavior=self._config.place_order_behavior,
         )
-        result = chaser.run(price, first_price=first_price)
+        result = chaser.start(first_price)
         if result is not None:
             return result
 
