@@ -200,7 +200,12 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 - `exit_filled = Σ exit.filled_qty`；`has_pending_exit = 存在 status ∈ {OPEN, 空} 的 exit 行`
 - `quantity = opening_quantity + entry_filled − exit_filled`
 - `price = 加权均价(opening_price × opening_quantity, entry 行 avg_price × filled_qty)`
+- `realized_pnl = (出场均价 − 入场均价) × 出场成交量 × 方向符号`（多头 +1 / 空头 −1）：
+  平均成本法，入场成本含 `opening_quantity × opening_price`（接管持仓）；成交单价优先
+  `avg_price`、缺失退回 `price`；未出场部分不计入（浮动盈亏需外部最新价）
 - 相位：`active=0 → closed`；`quantity<=0 → opening`；`quantity>0 且 has_pending_exit → closing`；否则 `holding`
+
+还原入口：`load_positions` 只取 `active=1`；`load_all_positions` 含已归档（历史盈亏统计用）。
 
 ### 一致性语义
 

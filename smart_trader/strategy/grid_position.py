@@ -10,6 +10,13 @@ from smart_trader.storage.records import GridPositionRow, OrderRecord
 logger = log.getLogger(__name__)
 
 
+def _filled_unit_price(order: OrderRecord) -> float | None:
+    """成交单价: 优先成交均价, 缺失时退回委托价; 无成交返回 None"""
+    if order.filled_qty <= 0:
+        return None
+    return order.avg_price if order.avg_price is not None else order.price
+
+
 class GridPosition(BaseModel):
     """逻辑仓位: 只持策略参数与运行时状态, 价格 / 数量 / 相位由 orders 派生"""
 
@@ -87,9 +94,7 @@ class GridPosition(BaseModel):
         basis_qty = self.opening_quantity
         notional = self.opening_price * self.opening_quantity
         for order in self.entry_orders:
-            if order.filled_qty <= 0:
-                continue
-            unit = order.avg_price if order.avg_price is not None else order.price
+            unit = _filled_unit_price(order)
             if unit is None:
                 continue
             notional += unit * order.filled_qty
@@ -100,6 +105,40 @@ class GridPosition(BaseModel):
                     return order.price
             return self.opening_price
         return notional / basis_qty
+
+    @property
+    def realized_pnl(self) -> float:
+        """
+        已实现盈亏（报价币计价, 不含手续费）
+
+        平均成本法: (出场均价 - 入场均价) × 出场成交量, 空头方向取反;
+        入场成本含 opening_quantity × opening_price（接管持仓）。
+        未出场部分不计入 —— 浮动盈亏需要外部最新价, 不由仓位自身派生。
+        """
+        entry_qty = self.opening_quantity
+        entry_notional = self.opening_price * self.opening_quantity
+        for order in self.entry_orders:
+            unit = _filled_unit_price(order)
+            if unit is None:
+                continue
+            entry_notional += unit * order.filled_qty
+            entry_qty += order.filled_qty
+        if entry_qty <= 0:
+            return 0.0
+
+        exit_qty = 0.0
+        exit_notional = 0.0
+        for order in self.exit_orders:
+            unit = _filled_unit_price(order)
+            if unit is None:
+                continue
+            exit_notional += unit * order.filled_qty
+            exit_qty += order.filled_qty
+        if exit_qty <= 0:
+            return 0.0
+
+        sign = 1.0 if self.position_side == PositionSide.LONG else -1.0
+        return (exit_notional / exit_qty - entry_notional / entry_qty) * exit_qty * sign
 
     @property
     def pending_entry_orders(self) -> list[OrderRecord]:
@@ -228,12 +267,23 @@ class GridPosition(BaseModel):
         )
 
 
-def load_positions(journal: OrderJournal, strategy_key: str) -> list[GridPosition]:
-    """从账本还原某策略的全部活跃逻辑仓位（含关联订单）"""
-    rows = journal.load_active_positions(strategy_key)
+def _restore(journal: OrderJournal, rows: list[GridPositionRow]) -> list[GridPosition]:
+    """仓位行 + 关联订单 → 逻辑仓位"""
     orders = journal.load_orders_for_positions([row.id for row in rows])
     by_position: dict[str, list[OrderRecord]] = {}
     for order in orders:
         by_position.setdefault(order.grid_position_id, []).append(order)
     logger.info("从账本加载逻辑仓位: %s 笔", len(rows))
     return [GridPosition.from_row(row, by_position.get(row.id, [])) for row in rows]
+
+
+def load_positions(journal: OrderJournal, strategy_key: str) -> list[GridPosition]:
+    """从账本还原某策略的全部活跃逻辑仓位（含关联订单）"""
+    return _restore(journal, journal.load_active_positions(strategy_key))
+
+
+def load_all_positions(
+    journal: OrderJournal, strategy_key: str
+) -> list[GridPosition]:
+    """从账本还原某策略的全部逻辑仓位（含已归档, 含关联订单）"""
+    return _restore(journal, journal.load_all_positions(strategy_key))

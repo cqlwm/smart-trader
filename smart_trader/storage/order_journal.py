@@ -230,6 +230,20 @@ class OrderJournal:
             )
         return [GridPositionRow.model_validate(dict(row)) for row in rows]
 
+    def load_all_positions(self, strategy_key: str) -> list[GridPositionRow]:
+        """加载策略的全部仓位（含已归档, 按写入序）"""
+        with self._engine.connect() as conn:
+            rows = (
+                conn.execute(
+                    select(schema.grid_positions)
+                    .where(schema.grid_positions.c.strategy_key == strategy_key)
+                    .order_by(text("rowid"))
+                )
+                .mappings()
+                .all()
+            )
+        return [GridPositionRow.model_validate(dict(row)) for row in rows]
+
     def load_orders_for_positions(self, position_ids: list[str]) -> list[OrderRecord]:
         """加载若干逻辑仓位的全部订单行（按 created_at, rowid 排序; 空列表返回 []）"""
         if not position_ids:

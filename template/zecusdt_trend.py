@@ -44,7 +44,7 @@ def grid_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
 
         # 单层止损: 价格维度保护
         enable_order_stop_loss=True,
-        order_stop_loss_rate=0.005,
+        order_stop_loss_rate=0.1,
 
         enable_max_order_stop_loss=True,
     )
