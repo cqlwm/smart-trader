@@ -23,15 +23,6 @@ def main():
     journal = OrderJournal(DB_PATH)
     tasks: list[StrategyTask] = [
         zecusdt_trend.trend_short(main_exchange, journal),
-        # zecusdt_trend.grid_long(main_exchange, journal),
-
-        # dogeusdt_trend.trend_short(main_exchange, journal),
-        # uniusdt_trend.trend_short(main_exchange, journal),
-        # gtcusdt_trend.trend_short(main_exchange, journal),
-        # agtusdt_trend.trend_short(main_exchange, journal),
-        # icntusdt_trend.trend_short(main_exchange, journal),
-        # qusdt_trend.trend_short(main_exchange, journal),
-        # wusdt_trend.trend_short(main_exchange, journal),
     ]
 
     kline_subscribes: list[str] = []
