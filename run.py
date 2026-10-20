@@ -22,8 +22,8 @@ def main():
     from template import zecusdt_trend
     journal = OrderJournal(DB_PATH)
     tasks: list[StrategyTask] = [
-        zecusdt_trend.trend_long(main_exchange, journal),
-        zecusdt_trend.grid_long(main_exchange, journal),
+        zecusdt_trend.trend_short(main_exchange, journal),
+        # zecusdt_trend.grid_long(main_exchange, journal),
 
         # dogeusdt_trend.trend_short(main_exchange, journal),
         # uniusdt_trend.trend_short(main_exchange, journal),
