@@ -25,7 +25,7 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         position_side=position_side,
         master_side=master_side,
         per_order_qty=45,
-        # 顺势加仓间距: 越过最外层 0.01% 才加一层（顺势阶梯, 替代网格间距口径）
+        # 顺势加仓间距: 越过最外层 0.01% 或回踩不破最外层两层开仓价时加一层（顺势阶梯, 替代网格间距口径）
         trend_spacing_rate=0.0001,
         max_order=50,
 
@@ -34,7 +34,7 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         strategy_key=f"signal_trend_{symbol_.simple()}_{timeframe_}{position_side.value}_{master_side.value}",
 
         # 信号止盈: 浮盈层遇反向信号即离场（当前关闭;
-        # 信号止损已开启: 浮亏的最外层遇反向信号 force 减仓, 亏损也走）
+        # 信号止损已开启: 浮亏层 >= 2 时全部 force 离场, 亏损也走）
         enable_signal_take_profit=False,
         enable_signal_stop_loss=True,
 
@@ -60,7 +60,7 @@ def trend_short(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         position_side=position_side,
         master_side=master_side,
         per_order_qty=230,
-        # 顺势加仓间距: 越过最外层 0.01% 才加一层（顺势阶梯, 替代网格间距口径）
+        # 顺势加仓间距: 越过最外层 0.01% 或回踩不破最外层两层开仓价时加一层（顺势阶梯, 替代网格间距口径）
         trend_spacing_rate=0.0001,
         max_order=50,
 
@@ -69,7 +69,7 @@ def trend_short(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         strategy_key=f"signal_trend_{symbol_.simple()}_{timeframe_}{position_side.value}_{master_side.value}",
 
         # 信号止盈: 浮盈层遇反向信号即离场（当前关闭;
-        # 信号止损已开启: 浮亏的最外层遇反向信号 force 减仓, 亏损也走）
+        # 信号止损已开启: 浮亏层 >= 2 时全部 force 离场, 亏损也走）
         enable_signal_take_profit=False,
         enable_signal_stop_loss=True,
 

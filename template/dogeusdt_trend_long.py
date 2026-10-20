@@ -19,15 +19,16 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
     """AlphaTrend 顺势加仓做多
 
     - 入场: `signal_kind=DIRECTIONAL` 只许可看涨信号; 叠加 `trend_spacing_rate`
-      顺势阶梯 —— 价格相对**最外层**仓位再顺向走出 0.5% 才加一层, 亏损方向不加仓;
-    - 出场: 固定比例止盈（单层 1%）+ 信号反向止盈（单层 0.3%）+ 单层止损（5%）;
+      顺势阶梯 —— 价格相对**最外层**仓位再顺向走出 `trend_spacing_rate`, 或
+      回踩不破最外层两层开仓价时加一层;
+    - 出场: 固定比例止盈（单层 10%）+ 单层止损（0.5%）;
     - 规模: 金字塔最多 `max_order` 层, 每层 `per_order_qty`。
 
     @note 加仓节奏受信号语义约束: `AlphaTrendSignal` 是翻转事件信号,
           每次看涨翻转最多加一层; 若需"趋势延续中每隔 X% 加一层",
           需换成状态型信号（趋势持续期间恒输出方向）。
-    @note 需要"逆势逐层减仓"时, 追加 `enable_signal_stop_loss=True`
-          （信号反向时每根完成 K 线只减最外层一层, 亏损也减）。
+    @note 需要"逆势批量减仓"时, 追加 `enable_signal_stop_loss=True`
+          （信号反向且浮亏层 >= 2 时, 全部浮亏层一次性 force 离场）。
     """
     position_side = PositionSide.LONG
     master_side = OrderSide.BUY
@@ -38,7 +39,7 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         position_side=position_side,
         master_side=master_side,
         per_order_qty=500,
-        # 顺势加仓间距: 越过最外层 0.01% 才加一层（顺势阶梯, 替代网格间距口径）
+        # 顺势加仓间距: 越过最外层 0.01% 或回踩不破最外层两层开仓价时加一层（顺势阶梯, 替代网格间距口径）
         trend_spacing_rate=0.0001,
         max_order=10,
 
@@ -50,7 +51,7 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         ),
 
         # 信号止盈: 浮盈层遇反向信号即离场（当前关闭;
-        # 信号止损已开启: 浮亏的最外层遇反向信号 force 减仓, 亏损也走）
+        # 信号止损已开启: 浮亏层 >= 2 时全部 force 离场, 亏损也走）
         enable_signal_take_profit=False,
         enable_signal_stop_loss=True,
 
