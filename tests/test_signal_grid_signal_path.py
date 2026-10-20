@@ -37,7 +37,7 @@ def _long(**overrides: object):
 
 
 def _layered_reduce(**overrides: object):
-    """多头 + 信号止损（逐层减仓）; 默认反向信号（看跌）
+    """多头 + 信号止损（批量减仓）; 默认反向信号（看跌）
 
     @note 信号止盈显式关闭, 保持"只测信号止损"的语义
     """
@@ -205,27 +205,107 @@ def test_directional_signal_exit_requires_opposite_direction():
     assert trading.placed == [], "看涨信号与出场方向(卖出)相反, 不应平仓"
 
 
-# ---- 离场: 逆势逐层减仓 ----
+# ---- 入场: 最外层两层回踩带 ----
 
-def test_layered_reduce_peels_only_outermost_layer():
-    """逆势减仓: 反向信号命中时只挂最外层一层的出场单, 其余层不动"""
+
+def test_adds_inside_outermost_two_entry_prices_instead_of_stopping():
+    """103..106 + 105: 只有一层浮亏 → 不止损, 回踩带放行加仓 105"""
+    strategy, trading, _, _ = _long(
+        trend_spacing_rate=0.0001,
+        enable_signal_take_profit=False,
+        enable_signal_stop_loss=True,
+        signal=FakeSignal([SignalDirection.SHORT]),
+    )
+    for position_id, price in (
+        ("P100", 100.0),
+        ("P101", 101.0),
+        ("P103", 103.0),
+        ("P106", 106.0),
+    ):
+        seed_position(strategy, position_id, entry_price=price, quantity=1.0)
+    top = _position_by_id(strategy, "P106")
+
+    push_kline(strategy, 105.0)
+
+    assert sorted(position.price for position in strategy.positions) == [
+        100.0,
+        101.0,
+        103.0,
+        105.0,
+        106.0,
+    ], "105 应作为新层插入最外层两层之间"
+    assert top.has_pending_exit is False, "106 单层浮亏不应被信号止损"
+    assert [request.side for request in trading.placed] == [OrderSide.BUY], (
+        "应加仓而不是止损"
+    )
+
+
+def test_stops_all_losing_layers_when_two_layers_lose():
+    """102: 103/106 两层浮亏 → 全部止损, 本根不再加仓"""
+    strategy, trading, _, _ = _long(
+        trend_spacing_rate=0.0001,
+        enable_signal_take_profit=False,
+        enable_signal_stop_loss=True,
+        signal=FakeSignal([SignalDirection.SHORT]),
+    )
+    for position_id, price in (
+        ("P100", 100.0),
+        ("P101", 101.0),
+        ("P103", 103.0),
+        ("P106", 106.0),
+    ):
+        seed_position(strategy, position_id, entry_price=price, quantity=1.0)
+
+    push_kline(strategy, 102.0)
+
+    assert [request.side for request in trading.placed] == [
+        OrderSide.SELL,
+        OrderSide.SELL,
+    ], "两层浮亏应各挂一张出场单"
+    for position_id in ("P103", "P106"):
+        assert _position_by_id(strategy, position_id).has_pending_exit is True, (
+            f"{position_id} 浮亏, 应被止损"
+        )
+    for position_id in ("P100", "P101"):
+        assert _position_by_id(strategy, position_id).has_pending_exit is False, (
+            f"{position_id} 浮盈, 不应被止损"
+        )
+    assert len(strategy.positions) == 4, "平仓动作发生后本根不得再加仓"
+
+
+# ---- 离场: 逆势批量减仓 ----
+
+
+def test_layered_reduce_stops_all_losing_layers():
+    """反向信号命中: 全部浮亏层一次性挂出场单"""
     strategy, trading, _, _ = _layered_reduce()
-    seed_position(strategy, "INNER", entry_price=0.58, quantity=100.0)
+    inner = seed_position(strategy, "INNER", entry_price=0.58, quantity=100.0)
     outer = seed_position(strategy, "OUTER", entry_price=0.6, quantity=100.0)
 
     push_kline(strategy, 0.55)
 
-    assert [request.side for request in trading.placed] == [OrderSide.SELL], (
-        "只应挂出一张出场单"
-    )
-    assert outer.has_pending_exit is True, "最外层应被减仓"
-    assert _position_by_id(strategy, "INNER").has_pending_exit is False, (
-        "内层不得被同时平仓"
-    )
+    assert [request.side for request in trading.placed] == [
+        OrderSide.SELL,
+        OrderSide.SELL,
+    ], "两层浮亏应各挂一张出场单"
+    assert inner.has_pending_exit is True, "INNER 浮亏, 应被止损"
+    assert outer.has_pending_exit is True, "OUTER 浮亏, 应被止损"
 
 
-def test_layered_reduce_waits_before_peeling_next_layer():
-    """最外层仍在减仓中（出场单未成交）时, 下一层等待, 不齐平"""
+def test_layered_reduce_leaves_single_losing_layer_alone():
+    """只有一层浮亏: 信号止损不触发（避免震荡磨损）"""
+    strategy, trading, _, _ = _layered_reduce()
+    seed_position(strategy, "PROFIT", entry_price=0.5, quantity=100.0)
+    lost = seed_position(strategy, "LOST", entry_price=0.6, quantity=100.0)
+
+    push_kline(strategy, 0.55)
+
+    assert trading.placed == [], "单层浮亏不应触发信号止损"
+    assert lost.has_pending_exit is False
+
+
+def test_layered_reduce_force_replaces_all_losing_exits():
+    """全部浮亏层的出场单未成交时, 下一根 force 撤单重挂"""
     strategy, trading, _, _ = _layered_reduce()
     seed_position(strategy, "INNER", entry_price=0.58, quantity=100.0)
     seed_position(strategy, "OUTER", entry_price=0.6, quantity=100.0)
@@ -236,51 +316,46 @@ def test_layered_reduce_waits_before_peeling_next_layer():
     push_kline(strategy, 0.54, timestamp=TIMESTAMP + 60_000)
 
     assert len(trading.placed) > placed_before, (
-        "最外层出场单未成交时 force 应撤单重挂（继续尝试减仓）"
+        "两层出场单未成交时 force 应各自撤单重挂"
     )
     assert all(request.side is OrderSide.SELL for request in trading.placed), (
         "减仓路径不得产生入场单"
     )
-    assert _position_by_id(strategy, "INNER").has_pending_exit is False, (
-        "最外层未走完之前不得剥下一层"
-    )
+    assert _position_by_id(strategy, "INNER").has_pending_exit is True
     assert _position_by_id(strategy, "OUTER").has_pending_exit is True
 
 
-def test_layered_reduce_peels_next_layer_after_outermost_closed():
-    """最外层出场单成交归档后, 同一根 K 线轮到次外层（仍浮亏, 接力减仓）"""
+def test_layered_reduce_archives_all_filled_losing_exits():
+    """两层浮亏出场单都成交后一起归档, 浮盈层保留"""
     strategy, trading, _, _ = _layered_reduce()
-    seed_position(strategy, "INNER", entry_price=0.58, quantity=100.0)
+    profitable = seed_position(strategy, "PROFIT", entry_price=0.5, quantity=100.0)
+    inner = seed_position(strategy, "INNER", entry_price=0.58, quantity=100.0)
     outer = seed_position(strategy, "OUTER", entry_price=0.6, quantity=100.0)
 
     push_kline(strategy, 0.55, timestamp=TIMESTAMP)
-    exit_order = outer.pending_exit_order
-    assert exit_order is not None, "前置条件: 最外层应已挂出出场单"
-
-    # 让最外层的出场单在下一根 K 线被观察为完全成交 -> 结算归档
-    trading.queue_query(
-        OrderResult(
-            custom_id=exit_order.order_id,
-            symbol=DEFAULT_SYMBOL,
-            side=OrderSide.SELL,
-            status=OrderStatus.CLOSED,
-            quantity=exit_order.quantity,
-            filled_qty=exit_order.quantity,
-            price=exit_order.price,
-        )
+    exit_orders = [inner.pending_exit_order, outer.pending_exit_order]
+    assert all(order is not None for order in exit_orders), (
+        "前置条件: 两层浮亏都应已挂出出场单"
     )
+    for order in exit_orders:
+        assert order is not None
+        trading.queue_query(
+            OrderResult(
+                custom_id=order.order_id,
+                symbol=DEFAULT_SYMBOL,
+                side=OrderSide.SELL,
+                status=OrderStatus.CLOSED,
+                quantity=order.quantity,
+                filled_qty=order.quantity,
+                price=order.price,
+            )
+        )
     push_kline(strategy, 0.54, timestamp=TIMESTAMP + 60_000)
 
-    assert [position.id for position in strategy.positions] == ["INNER"], (
-        "最外层成交后应归档, 只剩内层"
+    assert [position.id for position in strategy.positions] == ["PROFIT"], (
+        "两层浮亏成交后应归档, 浮盈层保留"
     )
-    assert _position_by_id(strategy, "INNER").has_pending_exit is True, (
-        "归档后次外层应接力减仓"
-    )
-    assert [request.side for request in trading.placed] == [
-        OrderSide.SELL,
-        OrderSide.SELL,
-    ], "两根 K 线各挂出一张出场单, 均为减仓方向"
+    assert profitable.has_pending_exit is False
 
 
 # ---- 优先级: 信号离场 vs 休息挂单 ----

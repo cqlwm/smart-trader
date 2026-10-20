@@ -124,8 +124,9 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 24 | **信号离场按盈亏状态分派**：反向信号命中时同一层按盈亏走且仅走一个分支 —— 浮盈（`ratio > 0`）+ `enable_signal_take_profit` → 止盈（非 force）；浮亏（`ratio < 0`）+ `enable_signal_stop_loss` → 止损（force，仅最外层逐层）；持平不触发。`LayeredReducePolicy` 从"不要求盈利"收紧为"必须浮亏"，`SignalExitPolicy` 从"盈利 ≥ min_rate"改为"浮盈即止盈"，`exit_signal_take_profit_min_rate` 删除（防 死参数 教训重演）（设计见 `03-coding-design.md` 三.11） | 已完成 |
 | Step 25 | **`ExitContext.close` 必填 + `_exit_context` 无行情契约**：删除 `close=0.0` 静默兜底（0.0 会变成止损/止盈判定的"真实价格"），`kline is None` 抛 `MARKET_DATA_UNAVAILABLE`，与入场侧 `EntryContext.require_close` 对称（设计见 `03-coding-design.md` 三.14） | 已完成 |
 | Step 26 | **交易所响应解析"缺失 ≠ 零值"**：`_to_float` 拆分"缺失(None)"与"0"；`amount` 缺失抛 `ORDER_RESPONSE_INVALID`、`filled` 缺失归 0、`price/average` 的 0 与缺失都归 None；`Position.entry_price` 必填；`JournaledTradingPort` 的 `or ""` 空串仓位号缺陷修复（穿透 `in_` 过滤导致成交事实静默丢失）+ 数据校验弃用 `assert`（`python -O` 剥离）统一改 `if...raise SmartTraderError`（设计见 `03-coding-design.md` 三.15） | 已完成 |
-| Step 27 | **持仓对账（外部平仓同步）**：新增 `PositionReconciler`（`strategy/position_reconciler.py`），每根完成 K 线经 `AccountPort.positions` 查询交易所实际持仓并与本地派生量比对：本地多出（外部手动平仓）按 LIFO（最外层优先，与 `LayeredReducePolicy` 同序）分摊缺口 —— 被全吃的仓位先撤挂单结算再内部归档（不下对冲单），部分被吃的仓位记录外部扣减量供平仓下单 clamp；交易所多于本地（来源不明仓位）仅告警不自动改动；查询/撤单异常单仓容忍，下一根重试。策略构造新增必需依赖 `account: AccountPort`；启动时在 `load_positions` 之后立即对账一次（设计见 `03-coding-design.md` 三.16，不变量见第十节 12） | 已完成 |
+| Step 27 | **持仓对账（外部平仓同步）**：新增 `PositionReconciler`（`strategy/position_reconciler.py`），每根完成 K 线经 `AccountPort.positions` 查询交易所实际持仓并与本地派生量比对：本地多出（外部手动平仓）按 LIFO（最外层优先，盈利方向极值层先分摊）分摊缺口 —— 被全吃的仓位先撤挂单结算再内部归档（不下对冲单），部分被吃的仓位记录外部扣减量供平仓下单 clamp；交易所多于本地（来源不明仓位）仅告警不自动改动；查询/撤单异常单仓容忍，下一根重试。策略构造新增必需依赖 `account: AccountPort`；启动时在 `load_positions` 之后立即对账一次（设计见 `03-coding-design.md` 三.16，不变量见第十节 12） | 已完成 |
 | Step 28 | **归档原因落库（审计可查）**：`grid_positions` 新增 `closed_reason` 列（`PositionCloseReason` 枚举：`EXIT_SETTLED` / `EXTERNAL_RECONCILED` / `ORPHAN_REAPED` / `ENTRY_DISCARDED`），与 `active=0` 同语句写入。**结构演化与业务包完全解耦**：schema.py 是"当前结构"的唯一声明，代码不维护迁移历史；演化以编号脚本归档于 `scripts/migrations/`（`001_add_grid_positions_closed_reason.py`，幂等，手动对每个存量库执行一次），`OrderJournal` 打开缺列旧库时从 schema 元数据动态生成等价 ALTER 语句并响亮报错（有专门测试锁定不自动改表）。`_archive` 按归档来源分组传 reason，`CloseOutcome.archived` 拆为 `exit_settled` / `entry_discarded` 两个具名列表 —— 顺带修复"出场结算耗尽的仓位在 `check_close_position` 被误判为 `entry_discarded` 覆盖 `EXIT_SETTLED`"的重复归档缺陷（归档判定收进"确有入场单被撤"分支）。**审计列必须排在表尾**：`ALTER ADD COLUMN` 只能追加，schema/冻结契约中 `closed_reason` 置于 `updated_at` 之后才能保证手动演化后结构与契约一致（设计见 `02-domain-model.md` 七、`03-coding-design.md` 三.16） | 已完成 |
+| Step 29 | **顺势回踩带加仓 + 第二层特例 + 信号止损双层门槛**：`TrendSpacingGate` 增加两条放行分支 —— 只有一层已成交仓位时第二层无条件加仓（逆势/顺势都加）；两层及以上按价格高低取最外层两层 `quantity > 0` 的仓位均价，收盘价落在两者闭区间内即加仓（小回踩不破最外层两层开仓价，仍视为顶部加仓成功；示例 `100,101,103,106` + `105` → `100,101,103,105,106`）；`LayeredReducePolicy` 从"每根只剥最外层一层"改为"全仓浮亏层 ≥ 2 才触发，触发后全部浮亏层一次性 force 离场"（单层浮亏的震荡不触发，减少磨损）；对账 LIFO 的最外层定义不再与减仓策略的"单层选择"耦合（设计见 `02-domain-model.md` 八.3.2/八.4、`03-coding-design.md` 三.10/三.11） | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -341,8 +342,8 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 12. **持仓对账以交易所实际持仓为唯一收敛权威**（Step 27）：
     每根完成 K 线（含启动后首根前）经 `AccountPort.positions` 查询该 symbol
     `position_side` 方向的实际持仓量，与本地派生总量比对：
-    - **本地多出（外部手动平仓）**：缺口按 LIFO（最外层优先，与
-      `LayeredReducePolicy` 同序）分摊 —— 被全吃的仓位**先撤挂单结算事实
+    - **本地多出（外部手动平仓）**：缺口按 LIFO（最外层优先，盈利方向极值
+      层先分摊）分摊 —— 被全吃的仓位**先撤挂单结算事实
       再内部归档**（绝不下对冲单）；部分被吃的仓位记录外部扣减量，
       平仓/休息止盈下单量一律 clamp 为 `quantity - 扣减量`；
     - **交易所多于本地**（手动加仓 / 来源不明仓位）：仅告警，**不自动收编**；

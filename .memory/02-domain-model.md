@@ -283,9 +283,30 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 
 ### 3.2 `TrendSpacingGate`（顺势阶梯加仓）
 
-判定式 `profit_and_loss_ratio(close) >= trend_spacing_rate`（含等号），基准取
-**最外层仓位**（盈利方向极值：多头取最高价层、空头取最低价层，即
-`master_side.reversal().extremum_fun()`）。无仓位直接放行（第一层不受间距约束）。
+放行规则：
+
+1. **只有一层已成交仓位**：无条件放行第二层 —— 不论新价格在成本价上方
+   （顺势）还是下方（逆势）。
+2. **两层及以上**，满足任一即可：
+   - **顺势间距**：`profit_and_loss_ratio(close) >= trend_spacing_rate`（含等号），
+     基准取**最外层仓位**（盈利方向极值：多头取最高价层、空头取最低价层）；
+   - **最外层回踩带**：按价格高低取**最外层两层** `quantity > 0` 的仓位均价
+     `p1, p2`，收盘价落在 `[min(p1, p2), max(p1, p2)]`（闭区间）内即放行。
+     含义是"小回踩不破最外层两层开仓价"仍属于顶部加仓区，按加仓成功处理，
+     而不是失败层。
+
+无仓位直接放行（第一层不受间距约束）。
+
+示例（多头）：已有 `100, 101, 103, 106`，信号价 `105` 落在最外层两层
+`103..106` 之间 → 放行，新增 `105`，持仓变为 `100, 101, 103, 105, 106`。
+只有一层时：已有 `100`，新价格 `99` → `99, 100`；新价格 `101` → `100, 101`。
+
+"最外层两层"按**价格高低**取（多头最高两层、空头最低两层），不按创建顺序；
+零数量层（未成交 / 已耗尽）不参与。
+
+**优先级**：策略仍是"先平后开"——同一根完成 K 线若反向信号触发信号止损
+（浮亏层 ≥ 2），本根先批量止损，回踩带不再加仓；回踩带只过滤"只有一层浮亏"
+的噪声场景。
 
 - 与 `GridSpacingGate` 的**方向相反**：后者基准是亏损方向极值层（多头取最低价层），
   只放行"走出亏损间距"的加仓（逆势补仓）；前者只放行"顺盈利方向再加一层"的加仓。
@@ -305,7 +326,7 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 | --- | --- | --- |
 | `ForceExitPolicy` | `trigger()` 为真（达到上限止损 / 手动 `close_position`） | **True** |
 | `StopLossPolicy` | 读仓位的 `enable_stop_loss` / `enable_trailing_stop` / `stop_loss_rate` / `trailing_stop_price` / `price` / `entry_side` | **True** |
-| `LayeredReducePolicy` | 信号反向命中、自身**浮亏**（`ratio < 0`）且是**最外层**（盈利方向极值、`quantity > 0` 的层） | **True** |
+| `LayeredReducePolicy` | 反向信号命中，且 `quantity > 0` 的浮亏层（`ratio < 0`）**至少两层**；对**全部浮亏层**产出离场决策 | **True** |
 | `FixedTakeProfitPolicy` | `profit_level(close) == 2` | False |
 | `SignalExitPolicy` | 信号反向命中且自身**浮盈**（`profit_and_loss_ratio(close) > 0`） | False |
 
@@ -324,13 +345,13 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 | 仓位状态 | 开关 | 策略 | 行为 |
 | --- | --- | --- | --- |
 | 浮盈（`close` 在成本价盈利侧，`profit_and_loss_ratio(close) > 0`） | `enable_signal_take_profit`（默认 True） | `SignalExitPolicy` | 止盈离场（非 force，保留原挂单） |
-| 浮亏（`profit_and_loss_ratio(close) < 0`） | `enable_signal_stop_loss`（默认 False） | `LayeredReducePolicy` | 止损离场（force 撤单重挂，**仅最外层**，逐层推进） |
+| 浮亏（`profit_and_loss_ratio(close) < 0`） | `enable_signal_stop_loss`（默认 False） | `LayeredReducePolicy` | 止损离场（**全部浮亏层一次性** force 撤单重挂；浮亏层 **< 2 层不触发**） |
 | 持平（`ratio == 0`，含均价不可用） | —— | 均不触发 | 保持持仓 |
 
 - 两分支按盈亏符号**天然互斥**，同层永不冲突，`force` 合并规则退化为兜底；
 - 止盈无盈利门槛（`exit_signal_take_profit_min_rate` 已删除）—— 有浮盈即为止盈；
-- 止损保持"仅最外层 + force"的逐层减仓节奏（不变量见上文）；内层浮亏层
-  等逐层推进到它时再离场；
+- 止损要求**至少两层浮亏**才触发（单层小浮亏在震荡中是噪声，触发会制造磨损）；
+  触发后**所有浮亏层一次性离场**，浮盈/持平层不动（不变量见上文）；
 - 全关 = 无信号驱动离场（只剩固定止盈 / 价格止损 / 上限止损）。
 
 ### 5. 止损参数与止盈阈值的权威来源

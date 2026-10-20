@@ -212,31 +212,44 @@ def test_negative_spacing_blocks_beyond_distance():
 
 
 def test_trend_spacing_adds_layer_after_profit_spacing():
-    """顺势间距: 盈利方向恰好走出间距时加仓"""
+    """顺势间距: 已有多层时, 盈利方向恰好走出间距才加仓"""
     strategy, trading, _, _ = build_strategy(trend_spacing_rate=0.01)
-    seed_position(strategy)
+    seed_position(strategy, "INNER", entry_price=0.5, quantity=100.0)
+    seed_position(strategy, "OUTER", entry_price=0.52, quantity=100.0)
 
-    push_kline(strategy, 0.5005, timestamp=TIMESTAMP)  # +0.1% < 1%
-    assert len(strategy.positions) == 1, "未走出间距不应加仓"
+    push_kline(strategy, 0.525, timestamp=TIMESTAMP)  # +0.96% < 1%
+    assert len(strategy.positions) == 2, "未走出间距不应加仓"
 
-    push_kline(strategy, 0.505, timestamp=TIMESTAMP + 60_000)  # +1% 恰好
-    assert len(strategy.positions) == 2, "恰好走出间距应顺势加仓"
+    push_kline(strategy, 0.5252, timestamp=TIMESTAMP + 60_000)  # +1% 恰好
+    assert len(strategy.positions) == 3, "恰好走出间距应顺势加仓"
     assert [request.side for request in trading.placed] == [OrderSide.BUY]
 
 
 def test_trend_spacing_blocks_loss_direction():
-    """顺势间距: 亏损方向不得加仓（与网格间距的关键差异）
+    """顺势间距: 已有多层时亏损方向不得加仓（与网格间距的关键差异）
 
     同样的 -10% 行情在 `grid_spacing_rate=0.01`（网格口径）下会加仓,
     顺势口径必须拦截 —— 只顺盈利方向加层。
     """
     strategy, trading, _, _ = build_strategy(trend_spacing_rate=0.01)
-    seed_position(strategy)
+    seed_position(strategy, "LOW", entry_price=0.5, quantity=100.0)
+    seed_position(strategy, "HIGH", entry_price=0.6, quantity=100.0)
 
     push_kline(strategy, 0.45)
 
-    assert len(strategy.positions) == 1, "顺势闸门不得在亏损方向加仓"
+    assert len(strategy.positions) == 2, "顺势闸门不得在亏损方向加仓"
     assert trading.placed == []
+
+
+def test_trend_spacing_allows_second_layer_in_loss_direction():
+    """只有一层已成交仓位时, 第二层逆势也应加仓"""
+    strategy, trading, _, _ = build_strategy(trend_spacing_rate=0.01)
+    seed_position(strategy)
+
+    push_kline(strategy, 0.495)
+
+    assert len(strategy.positions) == 2, "只有一层时第二层逆势也应加仓"
+    assert [request.side for request in trading.placed] == [OrderSide.BUY]
 
 
 def test_skips_open_when_price_outside_allowed_range():

@@ -7,8 +7,8 @@
 对账器每根完成K线经 `AccountPort.positions` 查询交易所实际持仓, 与本地
 派生总量比对:
 
-- **本地多出(外部被平)**: 缺口按 LIFO(最外层优先, 与 `LayeredReducePolicy`
-  同一极值语义)分摊 —— 被全吃的仓位先撤挂单结算事实再内部归档(绝不下
+- **本地多出(外部被平)**: 缺口按 LIFO(最外层优先, 盈利方向极值层先分摊)
+  分摊 —— 被全吃的仓位先撤挂单结算事实再内部归档(绝不下
   对冲单); 部分被吃的仓位记录外部扣减量, 平仓下单量按 `quantity - 扣减量`
   clamp;
 - **交易所多于本地**(手动加仓 / 来源不明仓位): 仅告警, 不自动收编;
@@ -154,7 +154,7 @@ class PositionReconciler:
 
     @staticmethod
     def _outermost_first(held: list[GridPosition]) -> list[GridPosition]:
-        """最外层优先排序: 与 `LayeredReducePolicy._outermost` 同一极值语义
+        """最外层优先排序: 盈利方向极值层（多头最高价、空头最低价）优先
 
         最外层 = 盈利方向极值层（`exit_side.extremum_fun()`）: 多头(exit=SELL,
         max)为最高价层, 空头(exit=BUY, min)为最低价层。

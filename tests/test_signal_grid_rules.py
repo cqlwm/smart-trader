@@ -155,7 +155,7 @@ def test_entry_gate_chain_order_with_trend_spacing():
     ], "顺势间距闸门必须占据网格间距闸门的位置"
 
 
-# ---- 装配契约: 信号离场口味（止盈 vs 逐层减仓） ----
+# ---- 装配契约: 信号离场口味（止盈 vs 批量减仓） ----
 
 
 def test_default_config_assembles_signal_exit_policy():
@@ -185,7 +185,7 @@ def test_signal_stop_loss_assembles_layered_reduce():
 
 
 def test_both_signal_policies_assemble_together():
-    """两个开关可并存: 信号止损剥最外层, 信号止盈接手内层盈利层"""
+    """两个开关可并存: 信号止损处理浮亏层, 信号止盈接手浮盈层"""
     strategy, _, _, _ = build_strategy(
         enable_signal_take_profit=True, enable_signal_stop_loss=True
     )

@@ -17,11 +17,9 @@ from smart_trader.model import (
     OrderStatus,
     PlaceOrderBehavior,
     PositionSide,
-    SignalDirection,
 )
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import OrderRecord
-from smart_trader.strategy.exit_policy import ExitContext, LayeredReducePolicy
 from smart_trader.strategy.grid_position import GridPosition
 from smart_trader.strategy.position_lifecycle import PositionLifecycle
 from smart_trader.strategy.position_reconciler import (
@@ -35,7 +33,6 @@ from tests.fakes import (
     FakeAccountPort,
     FakeTradingPort,
     make_exchange_position,
-    make_market_signal,
     make_order_record,
     make_position,
 )
@@ -484,29 +481,19 @@ def test_adjustments_still_returned_on_silent_rounds() -> None:
     )
 
 
-def test_ordering_matches_layered_reduce_policy() -> None:
-    """多头对账分摊顺序与 LayeredReducePolicy._outermost 同源: 最高价(盈利方向极值)优先"""
+def test_lifo_gap_allocation_prefers_outermost_layer() -> None:
+    """多头对账分摊顺序: 最外层（最高价, 盈利方向极值）优先"""
     cheapest = make_holding_position("POS-CHEAP", 10.0, 0.30)
     middle = make_holding_position("POS-MID", 10.0, 0.50)
     dearest = make_holding_position("POS-DEAR", 10.0, 0.70)
     positions = [cheapest, middle, dearest]
-    config = SignalGridStrategyConfig.model_validate(
-        {**LONG_FIELDS, "enable_signal_stop_loss": True}
-    )
-    policy = LayeredReducePolicy(kind=config.signal_kind, exit_side=OrderSide.SELL)
-    ctx = ExitContext(
-        positions=positions,
-        close=0.1,
-        market_signal=make_market_signal(direction=SignalDirection.SHORT),
-    )
-    picked = [item.id for item in positions if policy.evaluate(item, ctx).should_exit]
-    assert picked == ["POS-DEAR"], "LayeredReducePolicy 应选中最高价层(盈利方向极值)"
 
     harness = ReconcileHarness(positions)
     # 缺口 25: 最高价层 10 全吃归档 → 次层 10 全吃归档 → 剩 5 记到最低价层
     harness.set_exchange_position(5.0)
     result = harness.reconciler.reconcile()
+
     assert [item.id for item in result.archived] == ["POS-DEAR", "POS-MID"]
     assert result.adjustments == {"POS-CHEAP": 5.0}, (
-        f"对账分摊顺序应与减仓策略一致(最高价优先), 实际 {result.adjustments}"
+        f"对账分摊顺序应为最高价优先, 实际 {result.adjustments}"
     )

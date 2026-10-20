@@ -26,7 +26,9 @@ class SignalGridStrategyConfig(BaseModel):
     #   负数: 双向距离限制 —— 距基准仓位不超过 |值| 即加仓(盈利方向也放行)
     grid_spacing_rate: float = 0.01
     # 顺势加仓间距: 非空时装配 TrendSpacingGate（以最外层仓位为基准, 盈利方向
-    # 走出间距才加仓）, 并替换 grid_spacing_rate 的间距口径（二者语义互斥）
+    # 走出间距才加仓; 只有一层时第二层无条件加仓, 两层以上另允许收盘价落在
+    # 最外层两层开仓价之间的小回踩加仓）,
+    # 并替换 grid_spacing_rate 的间距口径（二者语义互斥）
     trend_spacing_rate: float | None = None
     max_order: int = 10000
     highest_price: float = 1000000
@@ -40,7 +42,8 @@ class SignalGridStrategyConfig(BaseModel):
     # 信号止盈: 反向信号命中且该层**浮盈**（close 在成本价盈利侧）时离场
     # （非 force —— 已有出场挂单的盈利层保留原挂单不重复挂）
     enable_signal_take_profit: bool = True
-    # 信号止损: 反向信号命中且该层**浮亏**时, 最外层强制离场（逐层推进, force 撤单重挂）
+    # 信号止损: 反向信号命中且全仓浮亏层 >= 2 时, 全部浮亏层强制离场
+    # （force 撤单重挂; 少于两层浮亏不触发, 避免震荡磨损）
     enable_signal_stop_loss: bool = False
 
     # 固定比例止盈

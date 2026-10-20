@@ -4,8 +4,8 @@
 判定口径（与既有实现逐字一致）：
 - `StopLossPolicy` 用 `>=` / `<=`（含等号）
 - `FixedTakeProfitPolicy` / `SignalExitPolicy` 依赖 `profit_level` 的严格 `>`（不含等号）
-- `LayeredReducePolicy` 只对最外层（`quantity > 0` 的盈利方向极值层）产出决策，
-  恒为 force；不要求盈利
+- `LayeredReducePolicy` 至少两层浮亏才触发，触发后对全部 `quantity > 0` 且
+  `ratio < 0` 的层产出决策，恒为 force
 """
 
 import pytest
@@ -411,134 +411,181 @@ def test_signal_exit_policy_skips_breakeven_and_loss():
 # ---- LayeredReducePolicy ----
 
 
-def test_layered_reduce_only_selects_outermost_layer():
-    """只对最外层（最高价层）产出离场决策, 其余层不动"""
+def test_layered_reduce_requires_at_least_two_losing_layers():
+    """少于两层浮亏不触发: 单层小亏在震荡中是噪声"""
     policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
-    inner = _holding("INNER", entry_price=0.5)
-    outer = _holding("OUTER", entry_price=0.6)
-    ctx = _exit_ctx([inner, outer], close=0.58, direction=SignalDirection.SHORT)
+    lost = _holding("LOST", entry_price=0.6)
+    profitable = _holding("PROFIT", entry_price=0.5)
+    ctx = _exit_ctx([profitable, lost], close=0.58, direction=SignalDirection.SHORT)
 
-    assert policy.evaluate(outer, ctx).should_exit is True, "最外层应被选中"
-    assert policy.evaluate(inner, ctx).should_exit is False, (
-        "非最外层不得离场（一次只剥一层）"
+    assert policy.evaluate(lost, ctx).should_exit is False, (
+        "只有一层浮亏时不应触发信号止损"
+    )
+    assert policy.evaluate(profitable, ctx).should_exit is False
+
+
+def test_layered_reduce_stops_all_losing_layers():
+    """两层及以上浮亏: 全部浮亏层一次性离场, 浮盈层不动"""
+    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
+    deep = _holding("DEEP", entry_price=0.6)
+    shallow = _holding("SHALLOW", entry_price=0.58)
+    profitable = _holding("PROFIT", entry_price=0.5)
+    ctx = _exit_ctx(
+        [profitable, shallow, deep], close=0.55, direction=SignalDirection.SHORT
+    )
+
+    for position in (deep, shallow):
+        decision = policy.evaluate(position, ctx)
+        assert decision.should_exit is True, f"{position.id} 浮亏, 应一次性止损"
+        assert decision.force is True, "逆势减仓必须能覆盖休息中的挂单"
+    assert policy.evaluate(profitable, ctx).should_exit is False, (
+        "浮盈层不归止损分支"
     )
 
 
-def test_layered_reduce_is_force():
-    """逐层减仓恒为强制离场（撤单重挂到最新价, 保证实际减仓）"""
+def test_layered_reduce_ignores_breakeven_layers():
+    """持平层不计入浮亏层数, 也不被止损"""
     policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
-    outer = _holding("OUTER", entry_price=0.6)
-    ctx = _exit_ctx([outer], close=0.58, direction=SignalDirection.SHORT)
+    deep = _holding("DEEP", entry_price=0.6)
+    shallow = _holding("SHALLOW", entry_price=0.57)
+    flat = _holding("FLAT", entry_price=0.55)
+    ctx = _exit_ctx(
+        [deep, shallow, flat], close=0.55, direction=SignalDirection.SHORT
+    )
 
-    decision = policy.evaluate(outer, ctx)
+    assert policy.evaluate(deep, ctx).should_exit is True
+    assert policy.evaluate(shallow, ctx).should_exit is True
+    assert policy.evaluate(flat, ctx).should_exit is False, "持平不属于浮亏"
 
-    assert decision.should_exit is True
-    assert decision.force is True, "逆势减仓必须能覆盖休息中的挂单"
+
+def test_layered_reduce_is_force():
+    """批量止损恒为强制离场（撤单重挂到最新价, 保证实际减仓）"""
+    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
+    deep = _holding("DEEP", entry_price=0.6)
+    shallow = _holding("SHALLOW", entry_price=0.58)
+    ctx = _exit_ctx([shallow, deep], close=0.55, direction=SignalDirection.SHORT)
+
+    for position in (deep, shallow):
+        decision = policy.evaluate(position, ctx)
+        assert decision.should_exit is True
+        assert decision.force is True, "逆势减仓必须能覆盖休息中的挂单"
 
 
 def test_layered_reduce_requires_opposite_direction():
     """DIRECTIONAL: 未命中出场方向（同向/中性）不减仓"""
     policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
-    outer = _holding("OUTER", entry_price=0.6)
+    deep = _holding("DEEP", entry_price=0.6)
+    shallow = _holding("SHALLOW", entry_price=0.58)
 
-    same_direction = _exit_ctx([outer], close=0.58, direction=SignalDirection.LONG)
-    neutral = _exit_ctx([outer], close=0.58, direction=SignalDirection.NEUTRAL)
-
-    assert policy.evaluate(outer, same_direction).should_exit is False, (
-        "看涨信号与出场方向相反, 不减仓"
+    same_direction = _exit_ctx(
+        [shallow, deep], close=0.55, direction=SignalDirection.LONG
     )
-    assert policy.evaluate(outer, neutral).should_exit is False, "中性信号不减仓"
+    neutral = _exit_ctx(
+        [shallow, deep], close=0.55, direction=SignalDirection.NEUTRAL
+    )
+
+    for ctx in (same_direction, neutral):
+        for position in (deep, shallow):
+            assert policy.evaluate(position, ctx).should_exit is False, (
+                "看涨/中性信号与出场方向不符, 不减仓"
+            )
 
 
 def test_layered_reduce_trigger_kind_accepts_any_non_neutral():
-    """TRIGGER: 任何非中性信号都可触发减仓"""
+    """TRIGGER: 任何非中性信号都可触发批量减仓"""
     policy = LayeredReducePolicy(SignalKind.TRIGGER, OrderSide.SELL)
-    outer = _holding("OUTER", entry_price=0.6)
+    deep = _holding("DEEP", entry_price=0.6)
+    shallow = _holding("SHALLOW", entry_price=0.58)
 
     for direction in (SignalDirection.LONG, SignalDirection.SHORT):
-        ctx = _exit_ctx([outer], close=0.58, direction=direction)
-        assert policy.evaluate(outer, ctx).should_exit is True, (
-            f"TRIGGER 模式下 {direction.value} 信号均可触发减仓"
-        )
+        ctx = _exit_ctx([shallow, deep], close=0.55, direction=direction)
+        for position in (deep, shallow):
+            assert policy.evaluate(position, ctx).should_exit is True, (
+                f"TRIGGER 模式下 {direction.value} 信号均可触发减仓"
+            )
 
 
 def test_layered_reduce_does_not_exit_without_signal():
     """未配置信号时不减仓（空值）"""
     policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
-    outer = _holding("OUTER", entry_price=0.6)
+    deep = _holding("DEEP", entry_price=0.6)
+    shallow = _holding("SHALLOW", entry_price=0.58)
 
-    assert policy.evaluate(outer, ExitContext(positions=[outer], close=0.58)).should_exit is False, (
-        "空信号不得触发减仓"
-    )
+    ctx = ExitContext(positions=[shallow, deep], close=0.55)
+    for position in (deep, shallow):
+        assert policy.evaluate(position, ctx).should_exit is False, (
+            "空信号不得触发减仓"
+        )
 
 
 def test_layered_reduce_requires_floating_loss():
-    """止损 = 浮亏才走（Step 24）: 浮盈的最外层不归信号止损管"""
+    """止损 = 浮亏才走: 全部浮盈时即使有两层也不触发"""
     policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
-    profitable = _holding("PROFIT", entry_price=0.5)
-    ctx = _exit_ctx([profitable], close=0.55, direction=SignalDirection.SHORT)
+    first = _holding("FIRST", entry_price=0.4)
+    second = _holding("SECOND", entry_price=0.5)
+    ctx = _exit_ctx([first, second], close=0.55, direction=SignalDirection.SHORT)
 
-    assert policy.evaluate(profitable, ctx).should_exit is False, (
-        "浮盈的最外层不应被信号止损剥掉（止盈/固定止盈的职责）"
-    )
-
-
-def test_layered_reduce_reduces_at_loss():
-    """逆势减仓要求浮亏（止损的字面语义, Step 24 收紧）"""
-    policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
-    lost = _holding("LOST", entry_price=0.5)
-    ctx = _exit_ctx([lost], close=0.45, direction=SignalDirection.SHORT)
-
-    assert policy.evaluate(lost, ctx).should_exit is True, (
-        "信号反向时亏损层也应减仓（去风险）"
-    )
+    for position in (first, second):
+        assert policy.evaluate(position, ctx).should_exit is False, (
+            "浮盈层不应被信号止损剥掉（止盈/固定止盈的职责）"
+        )
 
 
-def test_layered_reduce_short_selects_lowest_price_layer():
-    """做空: 最外层是最低价层, 需看涨信号"""
+def test_layered_reduce_short_stops_all_losing_layers():
+    """做空对称: 全部浮亏层（入场价低于现价）一次性离场"""
     policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.BUY)
-    outer = _holding("LOW", position_side=PositionSide.SHORT, entry_price=0.5)
-    inner = _holding("HIGH", position_side=PositionSide.SHORT, entry_price=0.6)
-    ctx = _exit_ctx([outer, inner], close=0.52, direction=SignalDirection.LONG)
+    low = _holding("LOW", position_side=PositionSide.SHORT, entry_price=0.5)
+    middle = _holding("MIDDLE", position_side=PositionSide.SHORT, entry_price=0.52)
+    profitable = _holding(
+        "PROFIT", position_side=PositionSide.SHORT, entry_price=0.6
+    )
+    ctx = _exit_ctx(
+        [profitable, low, middle], close=0.55, direction=SignalDirection.LONG
+    )
 
-    assert policy.evaluate(outer, ctx).should_exit is True, "做空最外层是最低价层"
-    assert policy.evaluate(inner, ctx).should_exit is False
+    assert policy.evaluate(low, ctx).should_exit is True, "做空浮亏层应止损"
+    assert policy.evaluate(middle, ctx).should_exit is True, "做空浮亏层应止损"
+    assert policy.evaluate(profitable, ctx).should_exit is False, (
+        "做空浮盈层不归止损分支"
+    )
 
 
 def test_layered_reduce_ignores_empty_layers_in_selection():
-    """零数量层不参与选择（虚拟空仓位不得成为最外层）"""
+    """零数量层不参与浮亏统计, 也不被止损"""
     policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
     empty = _holding("EMPTY", entry_price=0.7, quantity=0.0)
-    real = _holding("REAL", entry_price=0.5)
-    ctx = _exit_ctx([real, empty], close=0.45, direction=SignalDirection.SHORT)
+    deep = _holding("DEEP", entry_price=0.6)
+    shallow = _holding("SHALLOW", entry_price=0.55)
+    ctx = _exit_ctx([deep, shallow, empty], close=0.5, direction=SignalDirection.SHORT)
 
-    assert policy.evaluate(real, ctx).should_exit is True, (
-        "价格更高的零数量层应被跳过, 选中真实持仓层"
-    )
+    assert policy.evaluate(deep, ctx).should_exit is True
+    assert policy.evaluate(shallow, ctx).should_exit is True
     assert policy.evaluate(empty, ctx).should_exit is False, "零数量层不得离场"
 
 
 def test_layered_reduce_keeps_selecting_layer_with_pending_exit():
-    """最外层已有未成交出场单时仍被选中（force 撤单重挂, 不越过它去剥下一层）"""
+    """浮亏层已有未成交出场单时仍被选中（force 撤单重挂）"""
     policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)
-    outer = _holding("OUTER", entry_price=0.6)
-    outer.orders.append(
+    deep = _holding("DEEP", entry_price=0.6)
+    deep.orders.append(
         make_order_record(
-            "o-OUTER-exit",
-            "OUTER",
+            "o-DEEP-exit",
+            "DEEP",
             side=OrderSide.SELL,
             price=0.6,
             quantity=100.0,
             status=OrderStatus.OPEN,
         )
     )
-    inner = _holding("INNER", entry_price=0.5)
-    ctx = _exit_ctx([inner, outer], close=0.58, direction=SignalDirection.SHORT)
+    shallow = _holding("SHALLOW", entry_price=0.58)
+    ctx = _exit_ctx([shallow, deep], close=0.55, direction=SignalDirection.SHORT)
 
-    assert outer.has_pending_exit is True, "前置条件: 最外层应有未成交出场单"
-    assert policy.evaluate(outer, ctx).should_exit is True, "仍选中在减仓中的最外层"
-    assert policy.evaluate(inner, ctx).should_exit is False, (
-        "不得越过最外层去剥下一层（一次只剥一层）"
+    assert deep.has_pending_exit is True, "前置条件: DEEP 应有未成交出场单"
+    decision = policy.evaluate(deep, ctx)
+    assert decision.should_exit is True, "仍选中在减仓中的浮亏层"
+    assert decision.force is True, "force 才能撤单重挂"
+    assert policy.evaluate(shallow, ctx).should_exit is True, (
+        "其余浮亏层同样一次性止损"
     )
 
 
@@ -663,7 +710,7 @@ def _holding(
 ) -> GridPosition:
     """构造持仓中的逻辑仓位（附一条按 `quantity` 成交的入场单）
 
-    逐层减仓的选中口径要求 `quantity > 0`, 因此不能用 `_position`（无成交）。
+    批量减仓的选中口径要求 `quantity > 0`, 因此不能用 `_position`（无成交）。
     """
     row = make_position_row(position_id, **row_overrides)
     entry_side = (

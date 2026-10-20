@@ -16,7 +16,7 @@ from smart_trader.strategy.grid_position import GridPosition
 class ExitContext(BaseModel):
     """离场策略上下文: 纯数据, 不含 Kline / DataFrame
 
-    @param positions 当前逻辑仓位快照（逐层减仓需要跨仓位选择, 与 EntryContext 对称）
+    @param positions 当前逻辑仓位快照（批量止损需要跨仓位统计, 与 EntryContext 对称）
     @param close 最新收盘价; 必填 —— 无收盘价的上下文会让策略按错误价格做离场判定
     @param market_signal 本根 K 线的行情信号; None 表示未配置信号
     """
@@ -175,13 +175,13 @@ class SignalExitPolicy(ExitPolicy):
 
 
 class LayeredReducePolicy(ExitPolicy):
-    """信号止损（反向信号命中、该层**浮亏**、且是**最外层**）
+    """信号止损（反向信号命中且全仓**至少两层浮亏**时, 全部浮亏层一起离场）
 
-    - 只对最外层（盈利方向极值且 `quantity > 0` 的持仓层）产出离场决策,
-      其余层不动 —— 策略逐仓位询问策略链, 只有一个返回 True;
-    - **要求浮亏**（`profit_and_loss_ratio(close) < 0`）: 止损的字面语义 ——
-      浮盈的最外层归止盈分支（`SignalExitPolicy` / 固定止盈）, 不被 force 剥掉;
-    - 已有未成交出场单的层仍被选中（`force=True` 撤单重挂, 不越过它去剥下一层）;
+    - `quantity > 0` 且 `profit_and_loss_ratio(close) < 0` 的层计入浮亏层;
+    - **少于两层不触发**: 单层小浮亏在震荡中是噪声, 触发只会制造磨损;
+    - 达到两层时对**全部浮亏层**产出 `should_exit=True` —— 策略逐仓位询问
+      策略链, 因此同一根完成 K 线会整批剥掉, 浮盈/持平层不动;
+    - 已有未成交出场单的浮亏层仍被选中（`force=True` 撤单重挂）;
     - `force=True`: 逆势减仓必须实际减仓, 每根完成 K 线撤单重挂到最新收盘价。
 
     由 `enable_signal_stop_loss` 独立开关装配, 与 `SignalExitPolicy` 按盈亏状态
@@ -206,20 +206,21 @@ class LayeredReducePolicy(ExitPolicy):
         ):
             return ExitDecision()
 
-        if position.profit_and_loss_ratio(ctx.close) >= 0:
-            return ExitDecision()  # 浮盈/持平: 不归止损分支
-
-        outermost = self._outermost(ctx.positions)
-        if outermost is None or outermost.id != position.id:
+        losing = self._losing_layers(ctx)
+        if len(losing) < 2:
+            return ExitDecision()
+        if not any(item.id == position.id for item in losing):
             return ExitDecision()
         return ExitDecision(should_exit=True, force=True)
 
-    def _outermost(self, positions: list[GridPosition]) -> GridPosition | None:
-        """最外层: 盈利方向极值且 `quantity > 0` 的持仓层; 无持仓层时为 None"""
-        holding = [item for item in positions if item.quantity > 0]
-        if not holding:
-            return None
-        return self._exit_side.extremum_fun()(holding, key=lambda item: item.price)
+    @staticmethod
+    def _losing_layers(ctx: ExitContext) -> list[GridPosition]:
+        """全仓浮亏层: `quantity > 0` 且 `profit_and_loss_ratio(close) < 0`"""
+        return [
+            item
+            for item in ctx.positions
+            if item.quantity > 0 and item.profit_and_loss_ratio(ctx.close) < 0
+        ]
 
 
 class RestingTakeProfitPolicy:
