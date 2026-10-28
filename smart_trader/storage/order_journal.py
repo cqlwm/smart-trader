@@ -20,26 +20,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import (
-    Engine,
-    Table,
-    create_engine,
-    delete,
-    event,
-    insert,
-    select,
-    text,
-    update,
-)
-from sqlalchemy.dialects.sqlite import dialect as sqlite_dialect
+from sqlalchemy import Table, delete, insert, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.pool import StaticPool
 
 from smart_trader import log
 from smart_trader.model import OrderSide, PositionCloseReason
-from smart_trader.storage import schema
+from smart_trader.storage import queries, schema
+from smart_trader.storage.engine import create_engine_for_path, require_current_schema
 from smart_trader.storage.records import GridPositionRow, OrderRecord
 
 logger = log.getLogger(__name__)
@@ -51,31 +40,6 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _on_connect(dbapi_connection: Any, _connection_record: Any) -> None:
-    """每个物理连接建立时设置: WAL（内存库自动忽略）+ 写锁等待 30s"""
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=30000")
-    cursor.close()
-
-
-def _create_engine(db_path: str) -> Engine:
-    """创建 SQLite 引擎: 文件库用默认连接池, 内存库（测试）用 StaticPool 共享单连接"""
-    if db_path == ":memory:":
-        engine = create_engine(
-            "sqlite://",
-            poolclass=StaticPool,
-            connect_args={"check_same_thread": False},
-        )
-    else:
-        engine = create_engine(
-            f"sqlite:///{db_path}",
-            connect_args={"check_same_thread": False},
-        )
-    event.listen(engine, "connect", _on_connect)
-    return engine
-
-
 class OrderJournal:
     """订单日志: 逻辑仓位表 + 订单流水表 + 事务, 线程安全
 
@@ -84,35 +48,10 @@ class OrderJournal:
     """
 
     def __init__(self, db_path: str = ":memory:"):
-        self._engine = _create_engine(db_path)
+        self._engine = create_engine_for_path(db_path)
         with self._engine.begin() as conn:
             schema.metadata.create_all(conn)
-            self._require_current_schema(conn)
-
-    @staticmethod
-    def _require_current_schema(conn: Connection) -> None:
-        """打开即校验库结构与 schema 一致; 缺列时报错内联可执行的 ALTER 语句"""
-        existing = {
-            str(row[1])
-            for row in conn.execute(text("PRAGMA table_info(grid_positions)"))
-        }
-        missing = [
-            column
-            for column in schema.grid_positions.columns
-            if column.name not in existing
-        ]
-        if missing:
-            statements = "; ".join(
-                f"ALTER TABLE grid_positions ADD COLUMN {column.name} "
-                f"{column.type.compile(sqlite_dialect())}"
-                for column in missing
-            )
-            raise ValueError(
-                f"账本库结构过时, grid_positions 缺少列 "
-                f"{[column.name for column in missing]}; "
-                f"请在 sqlite3 中执行: {statements}"
-                f"（或执行 scripts/migrations/ 下对应编号脚本）"
-            )
+            require_current_schema(conn)
 
     def close(self) -> None:
         self._engine.dispose()
@@ -216,66 +155,26 @@ class OrderJournal:
     def load_active_positions(self, strategy_key: str) -> list[GridPositionRow]:
         """加载策略当前仓位（active=1, 按写入序）"""
         with self._engine.connect() as conn:
-            rows = (
-                conn.execute(
-                    select(schema.grid_positions)
-                    .where(
-                        schema.grid_positions.c.strategy_key == strategy_key,
-                        schema.grid_positions.c.active == 1,
-                    )
-                    .order_by(text("rowid"))
-                )
-                .mappings()
-                .all()
+            return queries.select_positions(
+                conn, strategy_key=strategy_key, include_closed=False
             )
-        return [GridPositionRow.model_validate(dict(row)) for row in rows]
 
     def load_all_positions(self, strategy_key: str) -> list[GridPositionRow]:
         """加载策略的全部仓位（含已归档, 按写入序）"""
         with self._engine.connect() as conn:
-            rows = (
-                conn.execute(
-                    select(schema.grid_positions)
-                    .where(schema.grid_positions.c.strategy_key == strategy_key)
-                    .order_by(text("rowid"))
-                )
-                .mappings()
-                .all()
+            return queries.select_positions(
+                conn, strategy_key=strategy_key, include_closed=True
             )
-        return [GridPositionRow.model_validate(dict(row)) for row in rows]
 
     def load_orders_for_positions(self, position_ids: list[str]) -> list[OrderRecord]:
         """加载若干逻辑仓位的全部订单行（按 created_at, rowid 排序; 空列表返回 []）"""
-        if not position_ids:
-            return []
         with self._engine.connect() as conn:
-            rows = (
-                conn.execute(
-                    select(schema.orders)
-                    .where(schema.orders.c.grid_position_id.in_(position_ids))
-                    .order_by(schema.orders.c.created_at, text("rowid"))
-                )
-                .mappings()
-                .all()
-            )
-        return [OrderRecord.model_validate(dict(row)) for row in rows]
+            return queries.select_orders_for_positions(conn, position_ids)
 
     def pending_orders(self, strategy_key: str) -> list[OrderRecord]:
         """结果未确认（status IS NULL）的订单, 即待对账清单"""
         with self._engine.connect() as conn:
-            rows = (
-                conn.execute(
-                    select(schema.orders)
-                    .where(
-                        schema.orders.c.strategy_key == strategy_key,
-                        schema.orders.c.status.is_(None),
-                    )
-                    .order_by(schema.orders.c.created_at, text("rowid"))
-                )
-                .mappings()
-                .all()
-            )
-        return [OrderRecord.model_validate(dict(row)) for row in rows]
+            return queries.select_pending_orders(conn, strategy_key=strategy_key)
 
     # ---- 内部工具 ----
 

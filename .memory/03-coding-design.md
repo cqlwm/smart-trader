@@ -479,3 +479,159 @@ error 日志刷屏。对账缺口只靠 `OrderReconciler`（订单行级）无�
 - 中点事件 = 周期 1/2 处：`fetch_ohlcv(limit=1)` 取进行中 K 线 → 触发 `on_kline`；
 - 错过的事件跳过（只调度未来）；同一周期至多分发一次；
 - fetch 抛异常 → 记日志跳过本周期，循环不中断（与第五节异常策略一致）。
+
+## 五、只读 API 与 Web 控制台（P0）
+
+### 1. 读写分离：`OrderJournal` / `OrderJournalReader`
+
+- `OrderJournal`（写仓储）保持"打开即建表 + 校验结构 + 写方法"；
+- `OrderJournalReader`（只读仓储）**不建表、不暴露任何写方法**，构造时校验库文件存在与
+  结构版本（缺列时与 `OrderJournal` 报同样的 ALTER 提示），之后只发 SELECT；
+- 两者共用 `storage/queries.py` 的 SELECT 构造与 `storage/engine.py` 的连接 / 结构校验，
+  避免"读路径复制一份查询真相"；
+- 只读连接仍由 `_on_connect` 设置 `busy_timeout`，与策略进程的 WAL 写并发共存；
+  API 不设置 `journal_mode` 之外的结构性 PRAGMA，也不执行 `create_all`。
+
+### 2. 分层
+
+```
+web/ (React)  ──HTTP──▶  smart_trader/api/  ──▶  storage.reader  ──▶  sqlite (只读)
+                                │
+                                └──▶  strategy.grid_position（只读派生属性）
+```
+
+- `api/schemas.py`：响应契约（Pydantic，`extra="forbid"`），与 `records.py` 解耦；
+- `api/service.py`：聚合与派生，**只调用 `GridPosition` 的计算属性**，不重写数量/均价/盈亏公式；
+- `api/app.py`：路由 + 依赖注入（app 构造时传入 reader），路由函数保持薄层；
+- 禁止 `api` import `OrderJournal` 写方法、ccxt、execution；`web` 不直连数据库。
+
+### 3. 可测试性
+
+- `create_app(reader, ...)` 接受已构造的 reader：测试用 `tmp_path` 文件库播种后构造 reader，
+  不启动真实网络；
+- service 层是纯函数（reader → view），路由层只做参数解析与 404 映射；
+- 只读契约由测试锁定：路由表无写方法、`POST /api/orders` 返回 405、缺失库文件构造即报错。
+
+### 4. 前端约定
+
+- `web/`：React + TypeScript + Vite + TanStack Query；HashRouter 避免 SPA history fallback；
+- 开发期 Vite proxy `/api` → `127.0.0.1:8000`，生产期 `npm run build` 后由 API 托管 `web/dist`；
+- 所有金额/数量展示保留原始精度，不做前端二次计算（派生量以 API 为准）；
+- P0 只读页面不提供写操作按钮；P1 控制按钮只提交命令（不直接下单 / 不写账本），
+  并且只有危险动作（全平 / 撤入场单 / kill switch）弹二次确认。
+
+## 六、P1 控制面设计
+
+### 1. 为什么是命令表而不是 API 直接调策略
+
+API 是独立进程，不能跨进程调用策略对象；给 API 开策略进程内端口（socket / HTTP 回调）
+会引入第二套鉴权与服务生命周期。`commands` 表是天然的解耦层：提交是普通 INSERT，
+执行由策略进程轮询认领，天然支持审计、幂等与重启后补执行。
+
+### 2. 唯一写者与动作边界
+
+- `CommandStore` 只写 `commands`，不得 import / 调用 `OrderJournal` 写方法；
+- 控制动作只调用 `ControllableStrategy` 的四个方法，不直接调 `TradingPort` / `Journal`；
+- `pause` / `resume` / `request_close_all` 只改内存标志（bool 写入原子），
+  无需持锁；`cancel_entries` 会撤单并改账本，必须持 `_callback_lock`；
+- `close_all` 在 `is_running=False` 时仍由 `_on_kline_finished` 消费，
+  这是 kill switch "先全平再暂停"的语义基础（`if self.is_running or self.close_position:`）。
+
+### 3. 认领与幂等
+
+- 认领：事务内 `SELECT ... WHERE status='pending' ORDER BY requested_at LIMIT 1` 后，
+  用 `UPDATE ... WHERE id=:id AND status='pending'`；`rowcount != 1` 表示被其它执行者抢走；
+- 完成：`UPDATE ... WHERE id=:id AND status='running'`，避免重复写终态；
+- 提交幂等：`idempotency_key` 唯一索引；`IntegrityError` 时回读已有行返回，
+  前端双击不会产生两条命令。
+
+### 4. 运行态心跳（非账本状态）
+
+- 账本只记录事实, 不记录"进程是否存活 / 策略是否暂停"这类易变状态; 若把心跳写进
+  `grid_positions` 会污染逻辑仓位语义（重启时会被 `load_positions` 恢复成幽灵仓位）。
+- 因此用 `.data/runtime.json` 心跳文件: 策略进程的 `CommandRunner` 每轮原子替换写入,
+  API 只读; 文件缺失/损坏/过期一律降级为"离线", 不影响账本与命令执行。
+- 15s 新鲜度阈值（心跳每 2s）容忍短时 IO 抖动; 正常退出 `CommandRunner.stop()` 删除文件。
+- 只读侧合并规则: 心跳新鲜时用其 `symbol` / `position_side` / `timeframe` / `is_running`
+  覆盖账本摘要的展示字段; 心跳过期时不覆盖, 避免离线进程的旧信息冒充当前状态。
+- 该机制让"尚未写账本的运行中策略"出现在策略列表并可被控制, 同时让历史离线策略的
+  控制按钮置灰。
+
+### 5. 测试策略
+
+- `CommandStore` 用临时文件库：状态流转、并发认领只成功一次、幂等回读、缺表报迁移提示；
+- `RuntimeRegistry`：原子写入、暂停状态、清理、缺失/损坏容忍；API 合并运行态与 15s 过期降级；
+- 策略控制用现有 fake 装配：暂停拦截入场、恢复放行、暂停下全平仍执行、撤入场单归档空仓位；
+- `CommandRunner` 用 `FakeControllableStrategy`（显式继承 `ControllableStrategy`）与内存/文件 `CommandStore`，
+  覆盖成功、未知策略、执行异常、kill switch 全量下发；
+- API 用 `TestClient` 锁写面：POST 只出现在命令提交路由，参数非法 422，命令列表过滤与分页。
+
+## 七、P2 行情设计
+
+### 1. 数据源：行情-only 适配器
+
+`BinanceExchange` 要求私有 + 公共两个 ccxt 实例；P2 只需要公共行情。把
+`symbol_info / latest_price / fetch_ohlcv / _parse_timeframe_ms` 抽到 `_MarketDataMixin`，
+完整适配器与新增的 `BinanceMarketData`（显式继承 `MarketDataPort`）共用同一份翻译逻辑。
+`create_public_market_data()` 只构造公共 ccxt 实例，零凭据；测试用 `isinstance` 锁定它
+不携带 `TradingPort` / `AccountPort` 能力。
+
+### 2. 惰性初始化与故障隔离
+
+`create_public_market_data()` 构造即 `load_markets`（可能耗时或超时）。API 用
+`MarketDataProvider` 惰性获取：首次 `/api/market/chart` 才初始化，失败返回 503，
+不拖垮总览/持仓/订单/控制台页面。成功一次后缓存复用；前端对失败提供重试。
+
+### 3. 指标单一实现
+
+`market_service.build_market_chart` 直接调用策略层 `alpha_trend_indicator`，
+不复制 ATR/MFI/棘轮公式；K 线行与指标行按索引一一对齐。`direction` 由最后 `trend`
+符号派生，**不冒充**策略的翻转事件信号。
+
+### 4. 图表渲染
+
+- lightweight-charts v5：`addSeries(CandlestickSeries/LineSeries)`、`createSeriesMarkers`、
+  `series.createPriceLine`；时间统一用秒级 `UTCTimestamp`。
+- 订单标记按当前 timeframe 归并到 K 线时间桶；只有时间桶存在于已加载 K 线时才添加，
+  否则标记会被静默丢弃。
+- 价格线只叠加当前交易对的活跃仓位（最多 10 层），入场蓝虚线 / 止损红实线 / 止盈绿虚线。
+- 价格轴精度按最新价动态选择（`ceil(-log10(price)) + 4`，2–8 位），避免小币种被显示成 `0.08`。
+- 轮询刷新用 `setData` 并恢复可见逻辑区间，避免每 10s 把用户视野重置。
+
+## 八、P3 配置设计
+
+### 1. 为什么不做热替换
+
+`SignalGridStrategy` 实例持有 `_callback_lock`、已加载的活跃仓位、在途出场单与信号状态。
+运行中换成新配置对象会丢失这些内存状态并把开放仓位变成孤儿；因此配置只在进程启动时读取，
+保存后由前端明确提示"重启策略进程生效"。这是有意的运维语义，不是功能缺口。
+
+### 2. payload 与 `Signal` 的序列化边界
+
+`SignalGridStrategyConfig` 含 `Signal` 抽象接口（非 Pydantic 可序列化对象），不能直接落 JSON。
+`StrategyConfigPayload` 把可序列化字段单列，用 `signal_type` + `atr_multiple` + `period`
+描述信号，`to_strategy_config()` 在加载时物化实例；`from_strategy_config()` 反向转换只给
+种子脚本用。存储层因此不需要 import 策略层：`ConfigStore` 收发的 `payload` 是 JSON 文本
+（与 `CommandRecord.params` 同口径），解析与校验统一在 `StrategyConfigPayload`。
+
+### 3. 乐观锁
+
+`update` 用 `UPDATE ... WHERE strategy_key=? AND version=?`，影响 0 行时区分"不存在"与
+"版本过期"并抛不同异常；API 映射 404 / 409。前端 PUT 必带 `expected_version`，
+两个会话同时编辑时后提交者得到明确冲突而不是静默覆盖。
+
+### 4. 启动装配
+
+`build_strategy_tasks(records, data_source=...)` 是模板代码与配置行的唯一汇合点：
+过滤 `enabled` 与数据源，构造 `SignalGridStrategy` 与 `StrategyTask`。`run.py` / `run_timer.py`
+不再 import 具体策略模板；模板只保留 `*_config()` 构造函数供种子脚本使用。
+空集合直接抛错：一个没有任何任务的策略进程没有存在意义，启动即失败比静默空跑安全。
+
+### 5. 测试策略
+
+- payload：JSON 往返、两种信号物化、模板转换往返、非法交易对 / 未知字段拒绝；
+- store：版本递增、陈旧版本冲突、重复键、缺表迁移提示、列表排序稳定；
+- loader：数据源 / 启用过滤、键注入、空集合报错、顺序稳定；
+- API：只写 `strategy_configs`（写面断言更新为 GET/POST/PUT），404 / 409 / 422 映射，
+  活跃仓位护栏（禁用与身份字段），token 鉴权；
+- 前端构建通过，浏览器验收列表 / 编辑 / 停用冲突提示。

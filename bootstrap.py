@@ -7,7 +7,7 @@ import os
 
 from smart_trader import log
 from smart_trader.exchange.binance import binance_exchange
-from smart_trader.exchange.ports import Exchange
+from smart_trader.exchange.ports import Exchange, MarketDataPort
 
 logger = log.getLogger(__name__)
 
@@ -27,3 +27,8 @@ def create_binance_exchange(client_type: str) -> Exchange:
         f"api_key: {api_key[:5]}*****, api_secret: {api_secret[:5]}*****, is_test: {is_test}"
     )
     return binance_exchange.create_binance_exchange(api_key, api_secret, is_test)
+
+
+def create_public_market_data() -> MarketDataPort:
+    """只读行情（控制台 P2 使用）: 零凭据, 不触达交易/账户"""
+    return binance_exchange.create_public_market_data()

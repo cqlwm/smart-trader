@@ -17,6 +17,10 @@ class ErrorCode(Enum):
     EXCHANGE_ERROR = "exchange_error"
     SYMBOL_INFO_UNAVAILABLE = "symbol_info_unavailable"
     MARKET_DATA_UNAVAILABLE = "market_data_unavailable"
+    CONFIG_NOT_FOUND = "config_not_found"
+    CONFIG_VERSION_CONFLICT = "config_version_conflict"
+    CONFIG_KEY_EXISTS = "config_key_exists"
+    CONFIG_IN_USE = "config_in_use"
 
 
 class SmartTraderError(Exception):

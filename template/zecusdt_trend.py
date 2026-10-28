@@ -82,11 +82,12 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
 
     return StrategyTask(symbol=symbol_, strategy=strategy)
 
-def trend_short(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
+def trend_short_config() -> SignalGridStrategyConfig:
+    """空头顺势模板配置（run.py 种子来源）"""
     position_side = PositionSide.SHORT
     master_side = OrderSide.SELL
 
-    config = SignalGridStrategyConfig(
+    return SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
         position_side=position_side,
@@ -113,6 +114,10 @@ def trend_short(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         enable_order_stop_loss=True,
         order_stop_loss_rate=0.005,
     )
+
+
+def trend_short(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
+    config = trend_short_config()
     strategy = SignalGridStrategy(config, trading=exchange, market=exchange, journal=journal, account=exchange)
 
-    return StrategyTask(symbol=symbol_, strategy=strategy)
+    return StrategyTask(symbol=config.symbol, strategy=strategy)

@@ -130,6 +130,53 @@ class PlaceOrderBehavior(Enum):
     NORMAL = "normal"  # 常规
 
 
+class CommandAction(Enum):
+    """控制面动作（commands.action）"""
+
+    PAUSE = "pause"
+    RESUME = "resume"
+    CLOSE_ALL = "close_all"
+    CANCEL_ENTRIES = "cancel_entries"
+    KILL_SWITCH = "kill_switch"
+
+
+class DataSource(Enum):
+    """策略配置的行情驱动方式（决定由哪个进程入口加载）"""
+
+    WS = "ws"  # WebSocket 推送 (run.py)
+    TIMER = "timer"  # REST 定时拉取 (run_timer.py)
+
+
+class StrategySignalType(Enum):
+    """策略配置可物化的信号实现（只允许可序列化的两种）"""
+
+    ALPHA_TREND = "alpha_trend"
+    NONE = "none"
+
+
+class CommandStatus(Enum):
+    """命令状态机: pending → running → succeeded | failed"""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+    def is_finished(self) -> bool:
+        return self in (CommandStatus.SUCCEEDED, CommandStatus.FAILED)
+
+
+class StrategyRuntime(BaseModel):
+    """策略运行态快照（心跳文件, 不落账本）"""
+
+    strategy_key: str
+    symbol: str
+    position_side: PositionSide
+    timeframe: str
+    is_running: bool
+    heartbeat_at: str = ""
+
+
 class Symbol(BaseModel):
     base: str
     quote: str

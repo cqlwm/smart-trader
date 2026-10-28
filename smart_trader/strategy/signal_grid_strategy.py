@@ -23,11 +23,13 @@ from smart_trader.model import (
     PositionCloseReason,
     PositionLimit,
     SignalKind,
+    StrategyRuntime,
     timeframe_seconds,
 )
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import GridPositionRow
 from smart_trader.strategy import SingleTimeframeStrategy
+from smart_trader.strategy.control import ControllableStrategy
 from smart_trader.strategy.entry_gate import (
     DirectionalSignalGate,
     EntryContext,
@@ -73,7 +75,7 @@ logger = log.getLogger(__name__)
 _ORPHAN_MIN_AGE_SECONDS = 600
 
 
-class SignalGridStrategy(SingleTimeframeStrategy):
+class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
     def __init__(
         self,
         config: SignalGridStrategyConfig,
@@ -241,6 +243,61 @@ class SignalGridStrategy(SingleTimeframeStrategy):
     def position_limit(self) -> PositionLimit:
         """仓位数量上限（开仓闸门与强制离场共用的唯一权威来源）"""
         return self._limit
+
+    # ---- 控制面（P1 ControllableStrategy） ----
+
+    @property
+    def strategy_key(self) -> str:
+        return self.config.strategy_key
+
+    def runtime_info(self) -> StrategyRuntime:
+        return StrategyRuntime(
+            strategy_key=self.config.strategy_key,
+            symbol=self.config.symbol.ccxt(),
+            position_side=self.config.position_side,
+            timeframe=self.config.timeframe,
+            is_running=self.is_running,
+        )
+
+    def pause(self) -> None:
+        """暂停决策: 不再产生新的入场/离场单; 在途出场单跟踪与对账不受影响"""
+        self.is_running = False
+        logger.info("策略已暂停: %s", self.config.strategy_key)
+
+    def resume(self) -> None:
+        """恢复决策（止损暂停后同样可手动恢复）"""
+        self.is_running = True
+        logger.info("策略已恢复: %s", self.config.strategy_key)
+
+    def request_close_all(self) -> None:
+        """请求全平: 边沿标志, 下一根完成 K 线消费; 暂停状态下也会执行"""
+        self.close_position = True
+        logger.info("策略全平请求已排队: %s", self.config.strategy_key)
+
+    def cancel_pending_entries(self) -> tuple[int, int]:
+        """撤销全部未成交入场单（持回调锁, 与 K 线决策串行）
+
+        只动入场单, 不碰出场单: 出场是风险管理, 撤销入口在 ExitPolicy / StopLossPolicy。
+        """
+        with self._callback_lock:
+            affected = 0
+            archived: list[GridPosition] = []
+            for position in self.positions:
+                if not position.pending_entry_orders:
+                    continue
+                affected += 1
+                if (
+                    self._lifecycle.settle_pending_entries(position)
+                    and not position.has_live_orders
+                ):
+                    archived.append(position)
+            self._archive(archived, PositionCloseReason.ENTRY_DISCARDED)
+            logger.info(
+                "撤销入场挂单: 涉及仓位 %s, 归档 %s",
+                affected,
+                len(archived),
+            )
+            return affected, len(archived)
 
     def add_position(self, position: GridPosition) -> None:
         """登记逻辑仓位"""
@@ -521,7 +578,9 @@ class SignalGridStrategy(SingleTimeframeStrategy):
 
         # 平仓优先于开仓: 本根K线一旦产生平仓动作, 就不再开仓
         # (check_close_position 可能因止损暂停把 is_running 置为 False, 需重新判断)
-        if self.is_running:
+        # 手动全平 / kill switch 在暂停状态下也必须执行: 边沿标志 close_position
+        # 只在下一根完成 K 线消费一次, 不依赖 is_running。
+        if self.is_running or self.close_position:
             outcome = self.check_close_position()
             archives.extend(
                 (position, PositionCloseReason.EXIT_SETTLED)

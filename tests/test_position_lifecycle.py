@@ -31,7 +31,6 @@ CONFIG = SignalGridStrategyConfig(
     fixed_take_profit_rate=0.01,
 )
 
-FRESH_CREATED_AT = datetime.now(UTC).isoformat()
 STALE_CREATED_AT = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
 
 
@@ -161,7 +160,10 @@ class TestSettleEntryFills:
     def test_settle_entry_skips_too_fresh_missing_order(self) -> None:
         """查询不到且订单距创建过近: 跳过(防交易所 settle 延迟), 不按 EXPIRED 结算"""
         journal = OrderJournal()
-        position = make_pending_position(journal, created_at=FRESH_CREATED_AT)
+        # 在用例内取时间: 模块级常量会随整套测试耗时增长而"变旧", 导致偶发失败
+        position = make_pending_position(
+            journal, created_at=datetime.now(UTC).isoformat()
+        )
         order_id = position.orders[0].order_id
         trading = FakeTradingPort()
         trading.queue_query(None)

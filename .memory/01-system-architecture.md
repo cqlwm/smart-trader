@@ -15,6 +15,12 @@ strategy / task / template              (业务编排: 网格、信号、止损)
         │          │  适配器实现端口
         └──────────┴── adapters (smart_trader/exchange/binance/binance_exchange.py)
                            ccxt / REST 细节只存在于这里
+
+web (web/)                                 浏览器控制台（只读展示）
+        │ HTTP / JSON
+api (smart_trader/api/)                    只读 API: 账本查询 + 派生视图
+        │
+storage (queries.py / reader.py)           只读仓储: 只发 SELECT, 不建表/不写
 ```
 
 依赖规则（强制）：
@@ -25,6 +31,7 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 4. 交易所异常在适配器内统一翻译为 `SmartTraderError` + `ErrorCode`，业务层不感知 ccxt 异常类型。
 5. **storage 是纯数据层**：只做 sqlite 存取与事务，只依赖 `model` 与 SQLAlchemy（SQLAlchemy 仅限 storage 内部，对外只暴露 Pydantic 记录与 `OrderJournal`）；不 import ccxt、不依赖 execution / strategy。storage 之外的任何层不得 import sqlalchemy。
 6. **所有下单路径必须经过 `JournaledTradingPort`**（策略常规单、追单的每次尝试）：id 预留与记账不可绕过，否则最终一致性失效（见第十一节）。
+7. **只读侧不得写库、不得调交易所**：`api` 只依赖 `storage.reader`（`OrderJournalReader`）与 `strategy.grid_position` 的派生属性，不得 import `OrderJournal` 写方法、ccxt 或 execution；`web` 只依赖 API，不直连 sqlite / 交易所。
 
 ## 二、端口定义
 
@@ -86,6 +93,16 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | `smart_trader/storage/records.py` | 存储记录模型（Pydantic）：`GridPositionRow` / `OrderRecord`，存储层对外的数据契约 |
 | `smart_trader/storage/schema.py` | 表结构元数据（SQLAlchemy Core）：schema 唯一来源（列/约束/索引），建库走 `metadata.create_all` |
 | `smart_trader/storage/order_journal.py` | 订单日志仓储（SQLAlchemy Core 语句 + 事务）：`grid_positions`（逻辑仓位，含 `closed_reason` 归档原因；打开即校验结构，缺列时报错内联等价 ALTER 语句）+ `orders`（订单，`status` 为空承担 WAL） |
+| `smart_trader/storage/queries.py` | 只读查询构造（SQLAlchemy Core SELECT）：仓位 / 订单 / 策略键；写仓储与只读仓储共用，避免第二份查询真相 |
+| `smart_trader/storage/reader.py` | `OrderJournalReader`：只读账本（不建表、不写、不调交易所），供 API 进程打开存量库 |
+| `smart_trader/storage/command_store.py` | `CommandStore`：只写 `commands` 表（提交 / 原子认领 / 完成 / 查询），不碰仓位与订单 |
+| `smart_trader/strategy/control.py` | `ControllableStrategy` ABC：运行态快照 / 暂停 / 恢复 / 全平请求 / 撤销入场挂单 |
+| `smart_trader/task/command_runner.py` | `CommandRunner`：策略进程内的命令轮询线程，认领并执行 `commands` 行；每轮写运行态心跳 |
+| `smart_trader/runtime.py` | `RuntimeRegistry`：`.data/runtime.json` 心跳文件（原子替换），记录可控策略的 key/symbol/方向/timeframe/is_running；API 读取后与账本摘要合并 |
+| `smart_trader/api/` | `schemas`（响应契约）+ `service`（账本派生与聚合）+ `market_service`（K线+AlphaTrend）+ `market_provider`（惰性行情实例）+ `command_service`（命令视图）+ `app`（FastAPI 路由；P0 只读 + P1 命令提交 + P2 公共行情） |
+| `smart_trader/exchange/binance/binance_exchange.py` | 完整适配器 + `BinanceMarketData`（只读公共行情，无交易/账户能力）+ `create_public_market_data`（零凭据） |
+| `web/` | React + Vite 控制台（总览 / 持仓 / 订单 / 行情），HashRouter；`npm run build` 产物可由 API 托管 |
+| `run_api.py` | 控制台 API 入口（独立进程；读账本 + 只写 `commands`） |
 | `scripts/migrations/` | 库结构演化编号脚本（纯运维，与业务包解耦）：每次演化新增一个编号文件，手动对存量库执行一次；幂等，重复执行无害 |
 | `smart_trader/execution/limit_order_chaser.py` | 追单执行策略 |
 | `smart_trader/execution/journaled_trading.py` | 记账下单包装（TradingPort 装饰器）：预写仓位/订单 → 下单 → 回写结果 |
@@ -127,6 +144,9 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 | Step 27 | **持仓对账（外部平仓同步）**：新增 `PositionReconciler`（`strategy/position_reconciler.py`），每根完成 K 线经 `AccountPort.positions` 查询交易所实际持仓并与本地派生量比对：本地多出（外部手动平仓）按 LIFO（最外层优先，盈利方向极值层先分摊）分摊缺口 —— 被全吃的仓位先撤挂单结算再内部归档（不下对冲单），部分被吃的仓位记录外部扣减量供平仓下单 clamp；交易所多于本地（来源不明仓位）仅告警不自动改动；查询/撤单异常单仓容忍，下一根重试。策略构造新增必需依赖 `account: AccountPort`；启动时在 `load_positions` 之后立即对账一次（设计见 `03-coding-design.md` 三.16，不变量见第十节 12） | 已完成 |
 | Step 28 | **归档原因落库（审计可查）**：`grid_positions` 新增 `closed_reason` 列（`PositionCloseReason` 枚举：`EXIT_SETTLED` / `EXTERNAL_RECONCILED` / `ORPHAN_REAPED` / `ENTRY_DISCARDED`），与 `active=0` 同语句写入。**结构演化与业务包完全解耦**：schema.py 是"当前结构"的唯一声明，代码不维护迁移历史；演化以编号脚本归档于 `scripts/migrations/`（`001_add_grid_positions_closed_reason.py`，幂等，手动对每个存量库执行一次），`OrderJournal` 打开缺列旧库时从 schema 元数据动态生成等价 ALTER 语句并响亮报错（有专门测试锁定不自动改表）。`_archive` 按归档来源分组传 reason，`CloseOutcome.archived` 拆为 `exit_settled` / `entry_discarded` 两个具名列表 —— 顺带修复"出场结算耗尽的仓位在 `check_close_position` 被误判为 `entry_discarded` 覆盖 `EXIT_SETTLED`"的重复归档缺陷（归档判定收进"确有入场单被撤"分支）。**审计列必须排在表尾**：`ALTER ADD COLUMN` 只能追加，schema/冻结契约中 `closed_reason` 置于 `updated_at` 之后才能保证手动演化后结构与契约一致（设计见 `02-domain-model.md` 七、`03-coding-design.md` 三.16） | 已完成 |
 | Step 29 | **顺势回踩带加仓 + 第二层特例 + 信号止损双层门槛**：`TrendSpacingGate` 增加两条放行分支 —— 只有一层已成交仓位时第二层无条件加仓（逆势/顺势都加）；两层及以上按价格高低取最外层两层 `quantity > 0` 的仓位均价，收盘价落在两者闭区间内即加仓（小回踩不破最外层两层开仓价，仍视为顶部加仓成功；示例 `100,101,103,106` + `105` → `100,101,103,105,106`）；`LayeredReducePolicy` 从"每根只剥最外层一层"改为"全仓浮亏层 ≥ 2 才触发，触发后全部浮亏层一次性 force 离场"（单层浮亏的震荡不触发，减少磨损）；对账 LIFO 的最外层定义不再与减仓策略的"单层选择"耦合（设计见 `02-domain-model.md` 八.3.2/八.4、`03-coding-design.md` 三.10/三.11） | 已完成 |
+| Step 30 | **只读 Web 控制台（P0）**：新增 `storage/queries.py`（SELECT 共用）+ `storage/reader.py`（`OrderJournalReader`：不建表、不写、不调交易所）+ `smart_trader/api/`（FastAPI 只读端点 health/overview/strategies/positions/orders）+ `run_api.py`；`web/` 三页 React 控制台（总览/持仓/订单），HashRouter + Vite 代理，构建产物可由 API 托管；写仓储的读方法改为复用 `queries.py`（行为零变化） | 已完成 |
+| Step 31 | **P1 控制面（命令表 + 策略内执行）**：新增 `commands` 表（`CommandAction` / `CommandStatus`，`strategy_key=NULL` 表示全局）与 `CommandStore`（提交 / 原子认领 / 完成，幂等键去重）；`ControllableStrategy` ABC + `SignalGridStrategy` 的暂停 / 恢复 / 全平请求 / 撤销入场挂单（持 `_callback_lock`，复用 `PositionLifecycle.settle_pending_entries`）；`CommandRunner` 在策略进程内每 2s 轮询认领，异常记录并标记 failed；新增 `.data/runtime.json` 运行态心跳（`RuntimeRegistry`），解决"运行中但尚未写账本"的策略在只读策略列表中不可见的问题；API 合并心跳与账本摘要，前端总览页接入暂停/恢复/全平/撤入场单、全局 kill switch、运行态与命令历史 | 已完成 |
+| Step 32 | **P2 行情与指标**：适配器抽出 `_MarketDataMixin`，新增 `BinanceMarketData` / `create_public_market_data`（零凭据、行情-only，显式实现 `MarketDataPort`）；API 新增 `GET /api/market/chart`（惰性 `MarketDataProvider`，初始化失败 503 不影响控制台其它页面），复用策略层 `alpha_trend_indicator` 输出 K 线 + AlphaTrend 点；前端新增"行情"页（lightweight-charts v5 蜡烛图 + AlphaTrend 线 + 订单 IN/OUT 标记 + 活跃仓位入场/止损/止盈价格线），10s 刷新 | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -391,3 +411,123 @@ strategy / task / template              (业务编排: 网格、信号、止损)
 
 - 记账包装 `JournaledTradingPort` 实现 `TradingPort`：`place` 内完成 预写 / 回写；`query` / `cancel` 透传。策略与追单器只依赖端口，不感知日志存在。
 - 策略加载：`strategy_key` → `OrderJournal.load_active_positions`（含关联订单聚合）。
+
+## 十二、只读 Web 控制台（P0）
+
+**部署形态**：`run_api.py` 是独立进程，用 `OrderJournalReader` 打开策略进程同一个 sqlite 文件，
+只发 SELECT，不建表、不写、不调交易所；API 与策略进程零耦合，任一方重启互不影响。
+WAL 允许多进程"一写多读"，API 的读事务不会阻塞策略写入。
+
+**端点（全部 `GET`，`/api` 前缀）**：
+
+| 端点 | 返回 |
+| --- | --- |
+| `/api/health` | 服务时间 + 账本路径 + 结构校验状态 |
+| `/api/overview` | 策略数、仓位/订单计数、已实现盈亏、未确认订单告警 |
+| `/api/strategies` | 按 `strategy_key` 聚合的策略摘要 |
+| `/api/positions?strategy_key=&include_closed=` | 逻辑仓位派生视图（数量/均价/phase/止损止盈线/待成交出场单） |
+| `/api/positions/{id}` | 仓位详情 + 全部订单 |
+| `/api/orders?strategy_key=&status=&limit=&offset=` | 订单分页（`status=unconfirmed` 映射 `status IS NULL`） |
+
+**边界约束**：
+
+- 派生逻辑只有一份：API 复用 `GridPosition` 的计算属性，不在 service 里重写数量/均价/盈亏公式；
+- 响应模型定义在 `api/schemas.py`，`extra="forbid"`，与存储记录解耦；
+- 账本端点全部只读（GET）；P1 的写面仅限 `commands` 提交（见第十三节），API 仍不写仓位 / 订单；
+- 前端 `web/` 使用 HashRouter，`npm run build` 产物可挂到 API 根路径，避免 SPA history fallback；
+- 默认只监听 `127.0.0.1`；设置 `SMART_TRADER_API_TOKEN` 时校验 `Authorization: Bearer`。
+
+## 十三、P1 控制面（命令表 + 策略内执行）
+
+**边界**：API 进程只写 `commands` 表，绝不写 `grid_positions` / `orders`、不调交易所；
+所有控制动作由策略进程内的 `CommandRunner` 认领执行，保持"账本唯一写者"不变。
+
+```
+web ──POST /api/.../commands──▶ commands(pending) ──认领──▶ CommandRunner
+                                                              │
+                                                              ▼
+                                              ControllableStrategy（持 _callback_lock）
+                                                              │
+                                                              ▼
+                                           既有 Gateway / PositionLifecycle / 交易所
+```
+
+**命令动作与语义**：
+
+| action | 执行 | 说明 |
+| --- | --- | --- |
+| `pause` | `is_running=False` | 停止新的入场/离场决策；在途出场单仍每根跟踪、持仓对账仍执行 |
+| `resume` | `is_running=True` | 恢复决策；止损暂停后也可手动恢复 |
+| `close_all` | `close_position=True` | 一次性边沿标志，下一根完成 K 线消费；`is_running=False` 时也执行（kill switch 依赖） |
+| `cancel_entries` | 持锁逐仓位 `settle_pending_entries` | 只撤未成交入场单，不碰出场单；归零仓位按 `ENTRY_DISCARDED` 归档 |
+| `kill_switch` | 对全部可控策略 `request_close_all` + `pause` | 先置全平标志再暂停，下一根仍会执行全平 |
+
+**状态机**：`pending → running → succeeded | failed`。认领用条件 UPDATE（`WHERE status='pending'`）
+保证多进程/多线程只有一个执行者；执行异常由 runner 记录并标记 `failed`，不中断轮询线程。
+
+**审计**：`commands` 行即审计记录（requested_by / requested_at / started_at / finished_at / result）；
+`idempotency_key` 唯一索引用于前端防重复提交。
+
+**运行态心跳（非账本）**：策略列表从账本派生，而"刚启动、尚未产生订单"的策略在账本中不存在。
+`CommandRunner` 每轮把 `ControllableStrategy.runtime_info()` 原子写入 `.data/runtime.json`
+（`RuntimeRegistry`，临时文件 + `os.replace`）；API 读取后与账本摘要按 `strategy_key` 合并：
+心跳 ≤15s 视为在线并回报 `is_running`，过期/缺失视为离线（`alive=False`、`running=None`）。
+进程正常退出时删除心跳；文件损坏只记录 warning，不影响账本与命令执行。
+前端根据 `alive` 禁用控制按钮，避免对离线策略提交注定失败的命令。
+
+**迁移**：`scripts/migrations/002_add_commands.py` 幂等建表；`CommandStore` 打开缺表库时响亮报错并指向该脚本，
+不在业务代码里自动迁移。
+
+## 十四、P2 行情与指标
+
+**数据源**：API 进程不持有交易/账户能力，只通过 `BinanceMarketData`（`MarketDataPort`）读取公共行情。
+`create_public_market_data()` 零凭据构造；`MarketDataProvider` 在首次请求时才 `load_markets`，失败返回 503，
+控制台其它页面不受影响。行情请求不写账本、不下单。
+
+**端点**：
+
+| 端点 | 返回 |
+| --- | --- |
+| `GET /api/market/chart?symbol=&timeframe=&limit=` | 公共 OHLCV + AlphaTrend 点（`alpha_value` / `trend` / `is_breakout`）+ 当前趋势方向 + 最近突破时间 |
+
+指标复用策略层 `alpha_trend_indicator`（ATR 1.0 / period 8，与 `AlphaTrendSignal` 默认参数一致），
+API 不复制公式；`limit` 20–1000，默认 300。非法交易对 / 周期 422，无行情或上游失败 502/503。
+
+**前端**：`web/` 新增"行情"页（04）：lightweight-charts v5 蜡烛图 + AlphaTrend 线，叠加
+账本中的活跃仓位入场/止损/止盈价格线与订单 IN/OUT 标记（按 K 线周期归并，WAL 未确认用琥珀色）；
+价格轴精度按最新价动态选择，避免小币种被截断成两位小数。P2 不引入"闸门判定解释"，
+该能力需要策略侧决策快照，留待后续。
+
+## 十五、P3 策略配置管理
+
+**边界**：策略参数从 `template/*.py` 迁移到 sqlite `strategy_configs`；API 进程只写该表，
+不写 `grid_positions` / `orders`、不调交易所。策略进程仍是账本唯一写者。
+
+**生效模型**：配置在策略进程**启动时**读取一次并构造 `StrategyTask`
+（`run.py` 载入 `data_source=ws`，`run_timer.py` 载入 `data_source=timer`）。
+保存修改后必须重启对应入口才生效；**不做运行中热替换** —— 运行中的策略对象持有开放仓位
+与在途出场单，替换会孤立这些状态。
+
+**端点**：
+
+| 方法 | 端点 | 语义 |
+| --- | --- | --- |
+| `GET /api/configs` | 配置列表 | 按 `strategy_key` 排序 |
+| `GET /api/configs/defaults` | 表单默认值 | 新建配置预填 |
+| `GET /api/configs/{key}` | 单条配置 | 不存在 404 |
+| `POST /api/configs` | 新建配置 | 键冲突 409，版本从 1 开始 |
+| `PUT /api/configs/{key}` | 覆盖更新 | `expected_version` 乐观锁；陈旧版本 409 |
+
+`strategy_key` 不可变，不提供删除接口（只允许 `enabled=false`），避免与历史账本失联。
+
+**护栏**：账本中该 key 存在活跃仓位时，禁止禁用配置或修改
+`symbol` / `timeframe` / `position_side` / `master_side`（409）；其余参数允许修改，
+但仍需重启生效。
+
+**加载器**：`strategy/config_loader.py::build_strategy_tasks` 过滤 `enabled=1` 且
+`data_source` 匹配的行，经 `StrategyConfigPayload.to_strategy_config()` 物化信号实例；
+空集合启动即报错，避免静默空跑的进程。
+
+**迁移与种子**：`scripts/migrations/003_add_strategy_configs.py` 幂等建表；
+`004_seed_template_configs.py` 从模板配置构造函数播种（`INSERT OR IGNORE`，不覆盖已编辑行）。
+`ConfigStore` 打开缺表库时响亮报错并指向 003，不在业务代码里自动迁移。

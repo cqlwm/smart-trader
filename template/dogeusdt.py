@@ -15,13 +15,14 @@ symbol_ = Symbol(base="doge", quote="usdt")
 timeframe_ = "1m"
 
 
-def grid(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
+def grid_config() -> SignalGridStrategyConfig:
+    """空头网格模板配置（种子脚本 / 测试复用）"""
     # 空头网格: 以卖单入场、买单出场。原实现靠 position_reverse 反转
     # LONG/BUY 得到该效果, 现改为直接声明真实方向。
     position_side = PositionSide.SHORT
     master_side = OrderSide.SELL
 
-    config = SignalGridStrategyConfig(
+    return SignalGridStrategyConfig(
         symbol=symbol_,
         timeframe=timeframe_,
         position_side=position_side,
@@ -41,8 +42,12 @@ def grid(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         enable_order_stop_loss=True,
         order_stop_loss_rate=0.05,
     )
+
+
+def grid(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
+    config = grid_config()
     strategy = SignalGridStrategy(
         config, trading=exchange, market=exchange, journal=journal, account=exchange
     )
 
-    return StrategyTask(symbol=symbol_, strategy=strategy)
+    return StrategyTask(symbol=config.symbol, strategy=strategy)

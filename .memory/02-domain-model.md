@@ -382,3 +382,98 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 `position_reverse` 删除后，方向直接来自 config：`position_side` 即实际持仓方向，
 `master_side` 即实际入场方向，`GridPositionRow.main_order_side` 与 `position_side` 同值
 （`main_order_side` 只表示网格主攻方向，**不参与**入/出场归类）。
+
+## 九、只读 API 视图（P0）
+
+API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视图，不落库、不新增表**：
+
+| 视图 | 来源 | 说明 |
+| --- | --- | --- |
+| `OrderView` | `OrderRecord` + 所属仓位的 `position_side` | `role` 由 `entry_side` / `exit_side` 派生；`unconfirmed = status is None`（WAL） |
+| `PositionView` | `GridPosition` | `phase`、`quantity`、`price`、`realized_pnl` 直接取计算属性；`stop_loss_price` / `take_profit_price` 由均价与费率派生 |
+| `PositionDetailView` | `PositionView` + 关联订单 | 详情页使用 |
+| `StrategySummaryView` | 同 `strategy_key` 的仓位 + 订单聚合 + 运行态心跳 | 活跃/归档仓位数、已实现盈亏、挂单数、未确认数、最后更新时间；`timeframe` / `alive` / `running` / `heartbeat_at` 来自心跳文件（账本不含 timeframe 与运行态） |
+| `OverviewView` | 全库聚合 | 计数、盈亏合计、策略摘要、告警（未确认订单） |
+
+派生规则：
+
+- `stop_loss_price`：`enable_stop_loss=False` → `None`；跟踪止损 → `trailing_stop_price`
+  （缺失为 `None`）；固定止损 → 均价 `× (1 - stop_loss_rate)`（多头）/
+  `× (1 + stop_loss_rate)`（空头）—— 与 `StopLossPolicy` 的实时口径一致，不读死快照；
+- `take_profit_price`：均价 `× (1 + fixed_take_profit_rate)`（多头）/
+  `× (1 - fixed_take_profit_rate)`（空头），仅作展示，不代表开关已启用；
+- `entry_pending`：`pending_entry_orders` 的 `quantity - filled_qty` 之和（仅未了结入场单）；
+- 浮动盈亏不在后端计算：后端没有最新价，P0 前端不展示未实现盈亏。
+
+## 十、控制命令（P1，`commands` 表）
+
+控制面与交易账本分离：`commands` 是**输入队列 + 审计日志**，`grid_positions` / `orders` 仍是账本唯一事实。
+
+| 列 | 说明 |
+| --- | --- |
+| `id` | TEXT PK，`CMD` + 随机串 |
+| `strategy_key` | 目标策略；`NULL` 表示全局（仅 `kill_switch`） |
+| `action` | `CommandAction`：`pause` / `resume` / `close_all` / `cancel_entries` / `kill_switch` |
+| `status` | `CommandStatus`：`pending` / `running` / `succeeded` / `failed` |
+| `params` | JSON 文本，预留参数位（P1 固定 `{}`） |
+| `result` | 执行结果 / 错误摘要 |
+| `requested_by` | 发起方（P1 固定 `web`） |
+| `idempotency_key` | 可空唯一键，前端防重复提交 |
+| `requested_at` / `started_at` / `finished_at` / `updated_at` | UTC 时间戳 |
+
+状态机：`pending → running → succeeded | failed`。认领是条件 UPDATE，只有 `pending` 才能变 `running`；
+执行异常由 `CommandRunner` 捕获、记录 `failed`，轮询线程继续运行。
+
+命令语义见 `01-system-architecture.md` 第十三节。`close_all` 是边沿触发标志：
+策略在下一根完成 K 线消费，`is_running=False` 时也会执行（kill switch 依赖）；
+`cancel_entries` 只撤未成交入场单，归零仓位按 `ENTRY_DISCARDED` 归档。
+
+## 十一、行情图表视图（P2）
+
+定义于 `smart_trader/api/schemas.py`，**不落库**：
+
+| 视图 | 来源 | 说明 |
+| --- | --- | --- |
+| `CandleView` | `MarketDataPort.fetch_ohlcv` | `timestamp` 为毫秒；`finished` 表示该根是否收盘 |
+| `IndicatorPoint` | 复用 `alpha_trend_indicator` 的输出 | `alpha_value` / `trend` / `is_breakout`，与 K 线按索引对齐 |
+| `MarketChartView` | 上述两者 | 另含 `direction`（由最后 `trend` 符号派生）、`last_price`、`last_breakout_timestamp` |
+
+- 指标参数固定为 ATR 1.0 / period 8，与 `AlphaTrendSignal` 默认值一致；若策略改参，图表需同步，
+  因此不把参数写进前端。
+- `direction` 只是指标趋势方向，不等于策略的 `MarketSignal`（后者只在翻转根产出信号）。
+- 行情不写入 SQLite：P2 以公共接口按需拉取，避免 K 线写放大与保留策略问题。
+
+## 十二、策略配置（P3，`strategy_configs` 表）
+
+策略参数从代码模板迁移到数据库，一行即一个策略实例：
+
+| 列 | 说明 |
+| --- | --- |
+| `strategy_key` | TEXT PK，账本归属键，创建后不可变 |
+| `payload` | `StrategyConfigPayload` 的 JSON 文本 |
+| `version` | 乐观锁版本，从 1 递增 |
+| `enabled` | 启动时是否加载；无删除，只能停用 |
+| `updated_by` | 最后修改方（当前固定 `web`） |
+| `created_at` / `updated_at` | UTC 时间戳 |
+
+`StrategyConfigPayload`（`strategy/config_payload.py`）是**纯参数模型**，不含 `strategy_key`：
+
+- 身份 / 数据源：`symbol`（ccxt 形式，规范化为 `BASE/QUOTE`）、`timeframe`、
+  `data_source`（`ws` / `timer`）；
+- 信号：`signal_type`（`alpha_trend` / `none`）、`atr_multiple`、`period`、`signal_kind`；
+- 方向：`position_side`、`master_side`；
+- 网格：`per_order_qty`、`grid_spacing_rate`、`trend_spacing_rate`、`max_order`、
+  `highest_price`、`lowest_price`；
+- 止盈止损：`enable_signal_take_profit`、`enable_signal_stop_loss`、
+  `fixed_rate_take_profit`、`fixed_take_profit_rate`、`take_profit_use_limit_order`、
+  `enable_order_stop_loss`、`order_stop_loss_rate`、`enable_max_order_stop_loss`、
+  `paused_after_stop_loss`、`enable_trailing_stop`、`trailing_stop_rate`、
+  `trailing_stop_activation_profit_rate`；
+- 执行：`place_order_behavior`。
+
+转换：`to_strategy_config(strategy_key)` 物化 `Symbol` 与
+`AlphaTrendSignal` / `None`；`from_strategy_config(config, data_source)` 供模板播种。
+不可序列化的 `Signal` 实现只允许上述两种，其它实现直接报错。
+
+护栏：活跃仓位存在时禁止禁用或修改 `symbol` / `timeframe` / `position_side` /
+`master_side`；其余字段可改，重启策略进程后生效。

@@ -21,7 +21,7 @@ from ccxt.base.types import ConstructorArgs  # pyright: ignore[reportMissingType
 
 from smart_trader import log
 from smart_trader.exceptions import ErrorCode, SmartTraderError
-from smart_trader.exchange.ports import Exchange
+from smart_trader.exchange.ports import Exchange, MarketDataPort
 from smart_trader.model import (
     Kline,
     OrderRequest,
@@ -380,21 +380,15 @@ def build_private_ccxt(
     return raw
 
 
-class BinanceExchange(Exchange):
-    """Binance U 本位合约适配器, 显式实现 MarketDataPort / TradingPort / AccountPort
+class _MarketDataMixin:
+    """公共行情翻译（无凭据）; 由完整适配器与只读行情适配器共用"""
 
-    只依赖 `CcxtExchange` 最小接口做翻译, 不直接触达 ccxt;
-    生产组装见 `create_binance_exchange`(双实例按能力分流)。
-    """
+    _public_exchange: CcxtExchange
+    _symbol_info_cache: dict[str, SymbolInfo]
 
-    def __init__(
-        self, private_exchange: CcxtExchange, public_exchange: CcxtExchange
-    ) -> None:
-        self._private_exchange = private_exchange
+    def _init_market_data(self, public_exchange: CcxtExchange) -> None:
         self._public_exchange = public_exchange
-        self._symbol_info_cache: dict[str, SymbolInfo] = {}
-
-    # ---- MarketDataPort ----
+        self._symbol_info_cache = {}
 
     def symbol_info(self, symbol: Symbol) -> SymbolInfo:
         key = symbol.binance()
@@ -439,6 +433,33 @@ class BinanceExchange(Exchange):
                 )
             )
         return klines
+
+    def _parse_timeframe_ms(self, timeframe: str) -> int:
+        """
+        解析周期字符串(如 1m/1h)为毫秒
+        @param timeframe: 周期
+        @raise SmartTraderError: 非法周期
+        """
+        try:
+            return timeframe_seconds(timeframe) * 1000
+        except ValueError as error:
+            raise SmartTraderError(
+                ErrorCode.EXCHANGE_ERROR, f"不支持的K线周期: {timeframe}"
+            ) from error
+
+
+class BinanceExchange(_MarketDataMixin, Exchange):
+    """Binance U 本位合约适配器, 显式实现 MarketDataPort / TradingPort / AccountPort
+
+    只依赖 `CcxtExchange` 最小接口做翻译, 不直接触达 ccxt;
+    生产组装见 `create_binance_exchange`(双实例按能力分流)。
+    """
+
+    def __init__(
+        self, private_exchange: CcxtExchange, public_exchange: CcxtExchange
+    ) -> None:
+        self._private_exchange = private_exchange
+        self._init_market_data(public_exchange)
 
     # ---- TradingPort ----
 
@@ -565,20 +586,17 @@ class BinanceExchange(Exchange):
                 results.append(canceled)
         return results
 
-    # ---- 内部工具 ----
 
-    def _parse_timeframe_ms(self, timeframe: str) -> int:
-        """
-        解析周期字符串(如 1m/1h)为毫秒
-        @param timeframe: 周期
-        @raise SmartTraderError: 非法周期
-        """
-        try:
-            return timeframe_seconds(timeframe) * 1000
-        except ValueError as error:
-            raise SmartTraderError(
-                ErrorCode.EXCHANGE_ERROR, f"不支持的K线周期: {timeframe}"
-            ) from error
+class BinanceMarketData(_MarketDataMixin, MarketDataPort):
+    """只读公共行情适配器（无凭据、无交易/账户能力）"""
+
+    def __init__(self, public_exchange: CcxtExchange) -> None:
+        self._init_market_data(public_exchange)
+
+
+def create_public_market_data() -> MarketDataPort:
+    """只读行情入口: 公共 ccxt 实例, 零凭据, 不构造私有实例"""
+    return BinanceMarketData(build_public_ccxt())
 
 
 def create_binance_exchange(

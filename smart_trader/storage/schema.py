@@ -72,3 +72,41 @@ orders = Table(
 )
 Index("idx_orders_position", orders.c.grid_position_id)
 Index("idx_orders_pending", orders.c.strategy_key, orders.c.status)
+
+# ---- commands: 控制面输入队列 + 审计日志 ----
+# 只由 CommandStore 写; strategy_key 为空表示全局命令（仅 kill_switch）。
+
+commands = Table(
+    "commands",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("strategy_key", Text),
+    Column("action", Text, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("params", Text, nullable=False, server_default=text("'{}'")),
+    Column("result", Text),
+    Column("requested_by", Text, nullable=False, server_default=text("'web'")),
+    Column("idempotency_key", Text, unique=True),
+    Column("requested_at", Text, nullable=False),
+    Column("started_at", Text),
+    Column("finished_at", Text),
+    Column("updated_at", Text, nullable=False),
+)
+Index("idx_commands_status", commands.c.status, commands.c.requested_at)
+Index("idx_commands_strategy", commands.c.strategy_key, commands.c.requested_at)
+
+# ---- strategy_configs: P3 策略实例参数 ----
+# payload 是 StrategyConfigPayload 的 JSON 文本; 存储层不 import 策略层。
+# 无删除语义: enabled=0 即停用, 保留行以维持策略键与历史账本的关联。
+
+strategy_configs = Table(
+    "strategy_configs",
+    metadata,
+    Column("strategy_key", Text, primary_key=True),
+    Column("payload", Text, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("enabled", Integer, nullable=False, server_default=text("1")),
+    Column("updated_by", Text, nullable=False, server_default=text("'web'")),
+    Column("created_at", Text, nullable=False),
+    Column("updated_at", Text, nullable=False),
+)

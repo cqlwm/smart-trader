@@ -12,6 +12,8 @@
 from pydantic import BaseModel, ConfigDict
 
 from smart_trader.model import (
+    CommandAction,
+    CommandStatus,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -62,5 +64,42 @@ class OrderRecord(BaseModel):
     filled_qty: float = 0.0
     avg_price: float | None = None
     status: OrderStatus | None = None
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class CommandRecord(BaseModel):
+    """commands 表的一行: 控制命令 + 审计记录"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = ""
+    strategy_key: str | None = None
+    action: CommandAction
+    status: CommandStatus = CommandStatus.PENDING
+    params: str = "{}"
+    result: str | None = None
+    requested_by: str = "web"
+    idempotency_key: str | None = None
+    requested_at: str = ""
+    started_at: str | None = None
+    finished_at: str | None = None
+    updated_at: str = ""
+
+
+class StrategyConfigRecord(BaseModel):
+    """strategy_configs 表的一行: 一个策略实例的参数与元数据
+
+    `payload` 为 JSON 原样文本, 解析与校验由策略层 `StrategyConfigPayload` 负责,
+    存储层不 import 策略层, 避免依赖倒置。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    strategy_key: str = ""
+    payload: str
+    version: int = 1
+    enabled: bool = True
+    updated_by: str = "web"
     created_at: str = ""
     updated_at: str = ""

@@ -19,3 +19,7 @@ uv.lock
 smart_trader.egg-info
 .data
 logs/
+
+web/node_modules
+web/dist
+web/.vite

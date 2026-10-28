@@ -9,6 +9,7 @@ from ccxt.base.types import ConstructorArgs  # pyright: ignore[reportMissingType
 from smart_trader.exceptions import ErrorCode, SmartTraderError
 from smart_trader.exchange.binance.binance_exchange import (
     BinanceExchange,
+    BinanceMarketData,
     CcxtExchange,
     build_private_ccxt,
     build_public_ccxt,
@@ -82,6 +83,25 @@ def build_request(
         position_side=PositionSide.LONG,
         time_in_force=time_in_force,
     )
+
+
+class TestPublicMarketData:
+    def test_is_market_data_only(self):
+        fake = FakeCcxtExchange()
+        market = BinanceMarketData(fake)
+
+        assert isinstance(market, MarketDataPort)
+        assert not isinstance(market, TradingPort), "只读行情不得携带交易能力"
+        assert not isinstance(market, AccountPort), "只读行情不得携带账户能力"
+
+    def test_fetch_ohlcv_uses_keyword_limit(self):
+        fake = FakeCcxtExchange()
+        market = BinanceMarketData(fake)
+
+        market.fetch_ohlcv(SYMBOL, "1m", limit=2)
+
+        assert fake.ohlcv_calls[-1]["limit"] == 2, "limit 必须走关键字参数"
+        assert fake.ohlcv_calls[-1]["since"] is None
 
 
 class TestParseSymbolInfo:

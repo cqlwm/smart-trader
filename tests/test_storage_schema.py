@@ -21,7 +21,7 @@ from sqlalchemy import create_engine, text
 from smart_trader.storage import schema
 from smart_trader.storage.order_journal import OrderJournal
 
-_TABLES = ("grid_positions", "orders")
+_TABLES = ("grid_positions", "orders", "commands", "strategy_configs")
 
 
 def _normalize_columns(
@@ -99,7 +99,8 @@ class TestSchemaEquivalence:
 
     def test_metadata_defines_exactly_expected_tables(self):
         assert set(schema.metadata.tables) == set(_TABLES), (
-            "metadata 只应包含两张订单日志表, 不得多也不得少"
+            "metadata 只应包含账本两张表 + commands 控制面表 + strategy_configs 配置表,"
+            " 不得多也不得少"
         )
 
 
@@ -221,4 +222,31 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 CREATE INDEX IF NOT EXISTS idx_orders_position ON orders(grid_position_id);
 CREATE INDEX IF NOT EXISTS idx_orders_pending ON orders(strategy_key, status);
+
+CREATE TABLE IF NOT EXISTS commands (
+    id TEXT PRIMARY KEY,
+    strategy_key TEXT,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL,
+    params TEXT NOT NULL DEFAULT '{}',
+    result TEXT,
+    requested_by TEXT NOT NULL DEFAULT 'web',
+    idempotency_key TEXT UNIQUE,
+    requested_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status, requested_at);
+CREATE INDEX IF NOT EXISTS idx_commands_strategy ON commands(strategy_key, requested_at);
+
+CREATE TABLE IF NOT EXISTS strategy_configs (
+    strategy_key TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_by TEXT NOT NULL DEFAULT 'web',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
