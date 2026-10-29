@@ -251,12 +251,22 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
         return self.config.strategy_key
 
     def runtime_info(self) -> StrategyRuntime:
+        reconcile = self._position_reconciler.snapshot().model_copy(
+            update={
+                "tracked_exit_orders": self._lifecycle.tracked_exit_order_count(),
+                "max_exit_query_failures": (
+                    self._lifecycle.max_exit_query_failures()
+                ),
+                "failing_exit_orders": self._lifecycle.failing_exit_order_ids(),
+            }
+        )
         return StrategyRuntime(
             strategy_key=self.config.strategy_key,
             symbol=self.config.symbol.ccxt(),
             position_side=self.config.position_side,
             timeframe=self.config.timeframe,
             is_running=self.is_running,
+            reconcile=reconcile,
         )
 
     def pause(self) -> None:

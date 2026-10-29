@@ -15,6 +15,7 @@ from smart_trader.api.app import create_app
 from smart_trader.config import DB_PATH
 from smart_trader.storage.command_store import CommandStore
 from smart_trader.storage.config_store import ConfigStore
+from smart_trader.storage.position_ack_store import PositionAckStore
 from smart_trader.storage.reader import OrderJournalReader
 
 dotenv.load_dotenv()
@@ -32,6 +33,7 @@ def main() -> None:
     reader = OrderJournalReader(DB_PATH)
     commands = CommandStore(DB_PATH)
     config_store = ConfigStore(DB_PATH)
+    ack_store = PositionAckStore(DB_PATH)
     market_provider = MarketDataProvider(create_public_market_data)
     app = create_app(
         reader,
@@ -41,6 +43,7 @@ def main() -> None:
         runtime_path=Path(DB_PATH).parent / "runtime.json",
         market_provider=market_provider,
         config_store=config_store,
+        ack_store=ack_store,
     )
     host = os.environ.get("SMART_TRADER_API_HOST", "127.0.0.1")
     port = int(os.environ.get("SMART_TRADER_API_PORT", "8000"))

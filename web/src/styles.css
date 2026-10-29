@@ -1709,6 +1709,55 @@ a:focus-visible {
   gap: 8px;
 }
 
+.reconcile-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.modal-field input,
+.modal-field textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 12px;
+  resize: vertical;
+}
+
+.modal-field input:focus,
+.modal-field textarea:focus {
+  outline: none;
+  border-color: var(--amber);
+}
+
+.ack-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line-strong);
+  color: var(--ink-dim);
+  font-size: 10px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
 @media (max-width: 760px) {
   .config-head-actions {
     flex-wrap: wrap;

@@ -14,17 +14,22 @@
 - **交易所多于本地**(手动加仓 / 来源不明仓位): 仅告警, 不自动收编;
 - **数量一致**: 无动作。
 
+无论本地是否有仓位都会查询交易所持仓: 本地为零、交易所非零同样属于
+"来源不明仓位", 必须在运行态快照中暴露（P3 对账可观测）。
+
 对账**不回写账本数字**: `orders` 行只保存订单事实, 外部平仓的成交价本地
 拿不到, 不伪装记账; 归档仓位保留原始订单行, 由日志留痕。
 """
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict
 
 from smart_trader import log
 from smart_trader.exceptions import SmartTraderError
 from smart_trader.exchange.ports import AccountPort
+from smart_trader.model import ReconcileSnapshot
 from smart_trader.strategy.grid_position import GridPosition
 from smart_trader.strategy.position_lifecycle import PositionLifecycle
 from smart_trader.strategy.signal_grid_config import SignalGridStrategyConfig
@@ -66,12 +71,16 @@ class PositionReconciler:
         self._lifecycle = lifecycle
         # 上一次已告警的差额: 告警只在差额变化时重复（首轮 None = 必告警）
         self._last_reported_gap: float | None = None
+        # 最近一次成功查询的运行态快照（心跳文件用, 不落账本）
+        self._snapshot = ReconcileSnapshot()
+
+    def snapshot(self) -> ReconcileSnapshot:
+        """当前对账快照（副本, 调用方可叠加出场跟踪计数）"""
+        return self._snapshot.model_copy(deep=True)
 
     def reconcile(self) -> PositionReconcileResult:
         """执行一轮持仓对账; 查询异常跳过本轮, 绝不中断主循环"""
         held = [item for item in self._positions() if item.quantity > _QTY_EPS]
-        if not held:
-            return PositionReconcileResult()
 
         try:
             exchange_qty = self._exchange_quantity()
@@ -81,6 +90,14 @@ class PositionReconciler:
 
         local_qty = sum(item.quantity for item in held)
         gap = local_qty - exchange_qty
+        self._snapshot = self._snapshot.model_copy(
+            update={
+                "checked_at": datetime.now(UTC).isoformat(),
+                "exchange_qty": exchange_qty,
+                "local_qty": local_qty,
+                "gap": gap,
+            }
+        )
         if gap <= _QTY_EPS:
             if gap < -_QTY_EPS:
                 if self._mark_gap_reported(gap):

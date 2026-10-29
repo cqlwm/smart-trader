@@ -17,6 +17,7 @@ from smart_trader.model import (
     OrderSide,
     OrderStatus,
     OrderType,
+    PositionAckStatus,
     PositionCloseReason,
     PositionSide,
 )
@@ -102,4 +103,23 @@ class StrategyConfigRecord(BaseModel):
     enabled: bool = True
     updated_by: str = "web"
     created_at: str = ""
+    updated_at: str = ""
+
+
+class PositionAckRecord(BaseModel):
+    """position_acks 表的一行: 人工外部仓位声明（不参与交易）"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = ""
+    strategy_key: str
+    symbol: str
+    position_side: PositionSide
+    external_qty: float
+    note: str = ""
+    status: PositionAckStatus = PositionAckStatus.ACTIVE
+    acknowledged_by: str = "web"
+    acknowledged_at: str = ""
+    revoked_at: str | None = None
+    revoked_by: str | None = None
     updated_at: str = ""

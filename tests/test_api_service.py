@@ -16,13 +16,16 @@ from smart_trader.api.service import (
 from smart_trader.model import (
     OrderSide,
     OrderStatus,
+    PositionAckStatus,
     PositionCloseReason,
     PositionSide,
+    ReconcileSnapshot,
     StrategyRuntime,
 )
 from smart_trader.runtime import RuntimeSnapshot
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.reader import OrderJournalReader
+from smart_trader.storage.records import PositionAckRecord
 from tests.api_harness import (
     DEFAULT_STRATEGY_KEY,
     DEFAULT_SYMBOL,
@@ -569,6 +572,7 @@ def _runtime(
     heartbeat_at: str | None = None,
     running: bool = True,
     symbol: str = DEFAULT_SYMBOL,
+    reconcile: ReconcileSnapshot | None = None,
 ) -> StrategyRuntime:
     return StrategyRuntime(
         strategy_key=strategy_key,
@@ -577,6 +581,39 @@ def _runtime(
         timeframe="1m",
         is_running=running,
         heartbeat_at=heartbeat_at or datetime.now(UTC).isoformat(),
+        reconcile=reconcile,
+    )
+
+
+def _reconcile(**overrides: object) -> ReconcileSnapshot:
+    fields: dict[str, object] = {
+        "checked_at": datetime.now(UTC).isoformat(),
+        "exchange_qty": 3500.0,
+        "local_qty": 500.0,
+        "gap": -3000.0,
+        "tracked_exit_orders": 1,
+        "max_exit_query_failures": 0,
+        "failing_exit_orders": [],
+    }
+    fields.update(overrides)
+    return ReconcileSnapshot.model_validate(fields)
+
+
+def _ack(
+    *,
+    external_qty: float = 3000.0,
+    status: PositionAckStatus = PositionAckStatus.ACTIVE,
+) -> PositionAckRecord:
+    now = datetime.now(UTC).isoformat()
+    return PositionAckRecord(
+        id="ACK1",
+        strategy_key="signal_grid_short_sell_dogeusdt_1m",
+        symbol=DEFAULT_SYMBOL,
+        position_side=PositionSide.LONG,
+        external_qty=external_qty,
+        status=status,
+        acknowledged_at=now,
+        updated_at=now,
     )
 
 
@@ -643,6 +680,225 @@ def test_overview_includes_runtime_only_strategy(reader: OrderJournalReader):
     assert len(overview.strategies) == 1
     assert overview.strategies[0].alive is True
     assert overview.active_position_count == 0
+
+
+def test_summary_exposes_reconcile_snapshot(reader: OrderJournalReader):
+    summaries = list_strategy_summaries(
+        reader,
+        _snapshot(
+            _runtime("signal_grid_short_sell_dogeusdt_1m", reconcile=_reconcile())
+        ),
+    )
+
+    summary = summaries[0]
+    assert summary.reconcile is not None
+    assert summary.reconcile.exchange_qty == 3500.0
+    assert summary.reconcile.local_qty == 500.0
+    assert summary.reconcile.gap == -3000.0
+    assert summary.reconcile.tracked_exit_orders == 1
+
+
+def test_stale_runtime_hides_reconcile_snapshot(reader: OrderJournalReader):
+    stale = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
+
+    summaries = list_strategy_summaries(
+        reader,
+        _snapshot(
+            _runtime(
+                "signal_grid_short_sell_dogeusdt_1m",
+                heartbeat_at=stale,
+                reconcile=_reconcile(),
+            )
+        ),
+    )
+
+    assert summaries[0].reconcile is None, "过期运行态不得展示旧对账数据"
+
+
+def test_overview_alerts_for_exchange_surplus(reader: OrderJournalReader):
+    overview = build_overview(
+        reader,
+        _snapshot(
+            _runtime("signal_grid_short_sell_dogeusdt_1m", reconcile=_reconcile())
+        ),
+    )
+
+    alert = next(
+        item
+        for item in overview.alerts
+        if item.code == "exchange_position_surplus"
+    )
+    assert alert.severity == "critical"
+    assert alert.strategy_key == "signal_grid_short_sell_dogeusdt_1m"
+    assert "3000" in alert.message
+    assert alert.created_at is not None
+
+
+def test_overview_alerts_for_repeated_exit_query_failures(
+    reader: OrderJournalReader,
+):
+    reconcile = _reconcile(
+        max_exit_query_failures=3,
+        failing_exit_orders=["exit1", "exit2"],
+    )
+    overview = build_overview(
+        reader,
+        _snapshot(
+            _runtime("signal_grid_short_sell_dogeusdt_1m", reconcile=reconcile)
+        ),
+    )
+
+    alert = next(
+        item for item in overview.alerts if item.code == "exit_query_failing"
+    )
+    assert alert.severity == "warning"
+    assert alert.order_id == "exit1"
+    assert "3" in alert.message
+
+
+@pytest.mark.parametrize(
+    "reconcile",
+    [
+        _reconcile(gap=100.0, exchange_qty=400.0, local_qty=500.0),
+        _reconcile(
+            gap=0.0,
+            exchange_qty=500.0,
+            local_qty=500.0,
+            max_exit_query_failures=2,
+            failing_exit_orders=["exit1"],
+        ),
+    ],
+)
+def test_overview_skips_reconcile_alert_below_risk_threshold(
+    reader: OrderJournalReader, reconcile: ReconcileSnapshot
+):
+    overview = build_overview(
+        reader,
+        _snapshot(
+            _runtime("signal_grid_short_sell_dogeusdt_1m", reconcile=reconcile)
+        ),
+    )
+
+    codes = {item.code for item in overview.alerts}
+    assert "exchange_position_surplus" not in codes
+    assert "exit_query_failing" not in codes, "未达连续失败阈值不得告警"
+
+
+def test_summary_exposes_active_ack(reader: OrderJournalReader):
+    summaries = list_strategy_summaries(
+        reader,
+        _snapshot(
+            _runtime(
+                "signal_grid_short_sell_dogeusdt_1m", reconcile=_reconcile()
+            )
+        ),
+        [_ack()],
+    )
+
+    summary = summaries[0]
+    assert summary.ack is not None
+    assert summary.ack.external_qty == 3000.0
+    assert summary.ack.status is PositionAckStatus.ACTIVE
+
+
+def test_overview_suppresses_surplus_alert_when_ack_covers_gap(
+    reader: OrderJournalReader,
+):
+    overview = build_overview(
+        reader,
+        _snapshot(
+            _runtime(
+                "signal_grid_short_sell_dogeusdt_1m", reconcile=_reconcile()
+            )
+        ),
+        [_ack()],
+    )
+
+    assert all(
+        alert.code != "exchange_position_surplus" for alert in overview.alerts
+    ), "人工声明覆盖全部差额时必须静默"
+
+
+def test_overview_alerts_unexplained_surplus_with_partial_ack(
+    reader: OrderJournalReader,
+):
+    overview = build_overview(
+        reader,
+        _snapshot(
+            _runtime(
+                "signal_grid_short_sell_dogeusdt_1m", reconcile=_reconcile()
+            )
+        ),
+        [_ack(external_qty=2000.0)],
+    )
+
+    alert = next(
+        item
+        for item in overview.alerts
+        if item.code == "exchange_position_surplus"
+    )
+    assert "未解释差额 1000" in alert.message
+    assert "已标记人工 2000" in alert.message
+
+
+def test_overview_alerts_stale_ack_when_overclaimed(
+    reader: OrderJournalReader,
+):
+    overview = build_overview(
+        reader,
+        _snapshot(
+            _runtime(
+                "signal_grid_short_sell_dogeusdt_1m", reconcile=_reconcile()
+            )
+        ),
+        [_ack(external_qty=4000.0)],
+    )
+
+    alert = next(
+        item for item in overview.alerts if item.code == "position_ack_stale"
+    )
+    assert alert.severity == "warning"
+    assert alert.order_id == "ACK1"
+    assert "标记数量大于当前" in alert.message
+
+
+def test_overview_alerts_stale_ack_when_surplus_gone(
+    reader: OrderJournalReader,
+):
+    overview = build_overview(
+        reader,
+        _snapshot(
+            _runtime(
+                "signal_grid_short_sell_dogeusdt_1m",
+                reconcile=_reconcile(
+                    exchange_qty=500.0, local_qty=500.0, gap=0.0
+                ),
+            )
+        ),
+        [_ack()],
+    )
+
+    alert = next(
+        item for item in overview.alerts if item.code == "position_ack_stale"
+    )
+    assert "当前交易所已无多于本地的差额" in alert.message
+
+
+def test_revoked_ack_does_not_suppress_alert(reader: OrderJournalReader):
+    overview = build_overview(
+        reader,
+        _snapshot(
+            _runtime(
+                "signal_grid_short_sell_dogeusdt_1m", reconcile=_reconcile()
+            )
+        ),
+        [_ack(status=PositionAckStatus.REVOKED)],
+    )
+
+    assert any(
+        alert.code == "exchange_position_surplus"
+        for alert in overview.alerts
+    ), "已撤销声明不得继续抑制告警"
 
 
 def test_position_detail_returns_orders_and_missing_returns_none(

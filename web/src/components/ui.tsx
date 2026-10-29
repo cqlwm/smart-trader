@@ -70,11 +70,17 @@ export function PnL({ value, digits = 4 }: { value: number; digits?: number }) {
 export function Pill({
   children,
   variant = "neutral",
+  title,
 }: {
   children: ReactNode;
   variant?: "neutral" | "green" | "amber" | "red" | "blue" | "dim";
+  title?: string;
 }) {
-  return <span className={`pill pill-${variant}`}>{children}</span>;
+  return (
+    <span className={`pill pill-${variant}`} title={title}>
+      {children}
+    </span>
+  );
 }
 
 export function EmptyState({

@@ -13,6 +13,7 @@ from smart_trader.model import (
     OrderSide,
     OrderStatus,
     OrderType,
+    PositionAckStatus,
     PositionCloseReason,
     PositionSide,
 )
@@ -87,6 +88,46 @@ class PositionDetailView(PositionView):
     orders: list[OrderView]
 
 
+class ReconcileView(ApiModel):
+    """持仓对账与出场跟踪运行态（心跳文件派生, 不落库）"""
+
+    checked_at: str | None
+    exchange_qty: float | None
+    local_qty: float | None
+    gap: float
+    tracked_exit_orders: int
+    max_exit_query_failures: int
+    failing_exit_orders: list[str]
+
+
+class PositionAckView(ApiModel):
+    """人工外部仓位声明（API 写, 不参与交易）"""
+
+    id: str
+    strategy_key: str
+    symbol: str
+    position_side: PositionSide
+    external_qty: float
+    note: str
+    status: PositionAckStatus
+    acknowledged_by: str
+    acknowledged_at: str
+    revoked_at: str | None
+    revoked_by: str | None
+
+
+class PositionAckCreateRequest(ApiModel):
+    external_qty: float = Field(gt=0)
+    note: str = ""
+
+
+class PositionAckPage(ApiModel):
+    items: list[PositionAckView]
+    total: int
+    limit: int
+    offset: int
+
+
 class StrategySummaryView(ApiModel):
     strategy_key: str
     symbol: str
@@ -101,6 +142,8 @@ class StrategySummaryView(ApiModel):
     alive: bool = False
     running: bool | None = None
     heartbeat_at: str | None = None
+    reconcile: ReconcileView | None = None
+    ack: PositionAckView | None = None
 
 
 class AlertView(ApiModel):

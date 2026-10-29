@@ -392,7 +392,8 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 | `OrderView` | `OrderRecord` + 所属仓位的 `position_side` | `role` 由 `entry_side` / `exit_side` 派生；`unconfirmed = status is None`（WAL） |
 | `PositionView` | `GridPosition` | `phase`、`quantity`、`price`、`realized_pnl` 直接取计算属性；`stop_loss_price` / `take_profit_price` 由均价与费率派生 |
 | `PositionDetailView` | `PositionView` + 关联订单 | 详情页使用 |
-| `StrategySummaryView` | 同 `strategy_key` 的仓位 + 订单聚合 + 运行态心跳 | 活跃/归档仓位数、已实现盈亏、挂单数、未确认数、最后更新时间；`timeframe` / `alive` / `running` / `heartbeat_at` 来自心跳文件（账本不含 timeframe 与运行态） |
+| `StrategySummaryView` | 同 `strategy_key` 的仓位 + 订单聚合 + 运行态心跳 | 活跃/归档仓位数、已实现盈亏、挂单数、未确认数、最后更新时间；`timeframe` / `alive` / `running` / `heartbeat_at` / `reconcile` 来自心跳文件（账本不含 timeframe 与运行态） |
+| `ReconcileView` | 心跳文件中的 `ReconcileSnapshot` | `exchange_qty` / `local_qty` / `gap` / `checked_at` / `tracked_exit_orders` / `max_exit_query_failures` / `failing_exit_orders`；只读，不落库 |
 | `OverviewView` | 全库聚合 | 计数、盈亏合计、策略摘要、告警（未确认订单） |
 
 派生规则：
@@ -404,6 +405,12 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
   `× (1 - fixed_take_profit_rate)`（空头），仅作展示，不代表开关已启用；
 - `entry_pending`：`pending_entry_orders` 的 `quantity - filled_qty` 之和（仅未了结入场单）；
 - 浮动盈亏不在后端计算：后端没有最新价，P0 前端不展示未实现盈亏。
+
+**对账视图**：`gap = local_qty - exchange_qty`。`gap < 0` 表示交易所持仓多于本地
+（手工加仓 / 来源不明），必须作为 critical 告警人工处置；`gap > 0` 由策略按最外层优先
+内部归档 / 扣减，属于既有收敛路径。`max_exit_query_failures` 是单个出场单的连续查询
+失败次数，达到 3 次生成 warning；查询成功后计数清零。心跳过期时整个 `reconcile` 为
+`None`，不展示旧的差额数据。
 
 ## 十、控制命令（P1，`commands` 表）
 
@@ -427,6 +434,26 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 命令语义见 `01-system-architecture.md` 第十三节。`close_all` 是边沿触发标志：
 策略在下一根完成 K 线消费，`is_running=False` 时也会执行（kill switch 依赖）；
 `cancel_entries` 只撤未成交入场单，归零仓位按 `ENTRY_DISCARDED` 归档。
+
+### 人工仓位声明（P3，`position_acks` 表）
+
+对账差额的操作者声明，**不参与交易、不写入账本**：
+
+| 列 | 说明 |
+| --- | --- |
+| `id` | TEXT PK，`ACK` + 随机串 |
+| `strategy_key` / `symbol` / `position_side` | 声明归属；来自创建时的运行态心跳 |
+| `external_qty` | 声明为人工仓位的数量；必须 ≤ 当前交易所多于本地的差额 |
+| `note` | 操作者备注 |
+| `status` | `active` / `revoked`；同一策略同时最多一条 active |
+| `acknowledged_by` / `acknowledged_at` | 创建人 / UTC 时间 |
+| `revoked_at` / `revoked_by` | 软撤销审计 |
+| `updated_at` | UTC 时间 |
+
+判定：`surplus = exchange_qty - local_qty`（交易所多于本地为正）。
+声明覆盖 `surplus` 时静默；`surplus > external_qty` 时对未解释差额继续告警；
+`external_qty > surplus` 或 `surplus <= 0` 时声明失效（`position_ack_stale`）。
+创建前要求策略心跳新鲜且有成功对账数据；新建声明自动撤销旧 active 声明，撤销幂等。
 
 ## 十一、行情图表视图（P2）
 

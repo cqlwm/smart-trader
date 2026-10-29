@@ -11,6 +11,7 @@ import type {
   OrderStatus,
   OverviewView,
   PositionDetailView,
+  PositionAckView,
   PositionView,
   StrategyConfigCreateRequest,
   StrategyConfigPayload,
@@ -203,6 +204,42 @@ export function useUpdateConfig() {
       ),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["configs"] });
+    },
+  });
+}
+
+export interface CreatePositionAckInput {
+  strategyKey: string;
+  externalQty: number;
+  note: string;
+}
+
+export function useCreatePositionAck() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreatePositionAckInput) =>
+      apiPost<PositionAckView>(
+        `/api/strategies/${encodeURIComponent(input.strategyKey)}/position-acks`,
+        { external_qty: input.externalQty, note: input.note },
+      ),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["overview"] });
+      void client.invalidateQueries({ queryKey: ["strategies"] });
+    },
+  });
+}
+
+export function useRevokePositionAck() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (ackId: string) =>
+      apiPost<PositionAckView>(
+        `/api/position-acks/${encodeURIComponent(ackId)}/revoke`,
+        {},
+      ),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["overview"] });
+      void client.invalidateQueries({ queryKey: ["strategies"] });
     },
   });
 }

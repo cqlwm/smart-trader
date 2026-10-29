@@ -147,7 +147,9 @@ def test_openapi_write_surface_is_commands_and_configs_only(client: TestClient):
         "/api/strategies/{strategy_key}/commands",
         "/api/commands/kill-switch",
         "/api/configs",
-    }, f"POST 只允许命令提交与新建配置, 实际: {post_paths}"
+        "/api/strategies/{strategy_key}/position-acks",
+        "/api/position-acks/{ack_id}/revoke",
+    }, f"POST 只允许命令提交、新建配置与仓位声明, 实际: {post_paths}"
     assert put_paths == {"/api/configs/{strategy_key}"}, (
         f"PUT 只允许更新配置, 实际: {put_paths}"
     )

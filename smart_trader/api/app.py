@@ -11,10 +11,19 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 
 from smart_trader import log
-from smart_trader.api import command_service, config_service, service
+from smart_trader.api import (
+    command_service,
+    config_service,
+    position_ack_service,
+    service,
+)
 from smart_trader.api.config_service import ConfigInUseError
 from smart_trader.api.market_provider import MarketDataProvider
 from smart_trader.api.market_service import build_market_chart
+from smart_trader.api.position_ack_service import (
+    AckInvalidError,
+    AckTargetUnavailableError,
+)
 from smart_trader.api.schemas import (
     CommandPage,
     CommandRequest,
@@ -24,6 +33,9 @@ from smart_trader.api.schemas import (
     MarketChartView,
     OrderPage,
     OverviewView,
+    PositionAckCreateRequest,
+    PositionAckPage,
+    PositionAckView,
     PositionDetailView,
     PositionView,
     StrategyConfigCreateRequest,
@@ -41,7 +53,12 @@ from smart_trader.storage.config_store import (
     ConfigStore,
     ConfigVersionConflictError,
 )
+from smart_trader.storage.position_ack_store import (
+    PositionAckNotFoundError,
+    PositionAckStore,
+)
 from smart_trader.storage.reader import OrderJournalReader
+from smart_trader.storage.records import PositionAckRecord
 from smart_trader.strategy.config_payload import StrategyConfigPayload
 
 logger = log.getLogger(__name__)
@@ -89,6 +106,23 @@ def _config_store(request: Request) -> ConfigStore:
     return store
 
 
+def _ack_store(request: Request) -> PositionAckStore | None:
+    return cast(PositionAckStore | None, request.app.state.acks)
+
+
+def _require_ack_store(request: Request) -> PositionAckStore:
+    store = _ack_store(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="人工仓位声明存储未配置")
+    return store
+
+
+def _active_acks(request: Request) -> list[PositionAckRecord] | None:
+    """活跃的人工仓位声明; 未配置存储时不抑制告警"""
+    store = _ack_store(request)
+    return None if store is None else store.list_active()
+
+
 @router.get("/health", response_model=HealthView)
 def get_health(request: Request) -> HealthView:
     """服务时间 + 账本路径"""
@@ -102,15 +136,17 @@ def get_health(request: Request) -> HealthView:
 
 @router.get("/overview", response_model=OverviewView)
 def get_overview(request: Request) -> OverviewView:
-    """全库聚合与告警（账本 + 运行态心跳）"""
-    return service.build_overview(_reader(request), _runtime_snapshot(request))
+    """全库聚合与告警（账本 + 运行态心跳 + 人工仓位声明）"""
+    return service.build_overview(
+        _reader(request), _runtime_snapshot(request), _active_acks(request)
+    )
 
 
 @router.get("/strategies", response_model=list[StrategySummaryView])
 def get_strategies(request: Request) -> list[StrategySummaryView]:
-    """按 strategy_key 聚合的策略摘要（账本 + 运行态心跳）"""
+    """按 strategy_key 聚合的策略摘要（账本 + 运行态心跳 + 人工仓位声明）"""
     return service.list_strategy_summaries(
-        _reader(request), _runtime_snapshot(request)
+        _reader(request), _runtime_snapshot(request), _active_acks(request)
     )
 
 
@@ -310,6 +346,54 @@ def get_command(request: Request, command_id: str) -> CommandView:
     return view
 
 
+@router.get("/position-acks", response_model=PositionAckPage)
+def get_position_acks(
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> PositionAckPage:
+    """人工仓位声明审计（含已撤销, 按最新优先）"""
+    return position_ack_service.list_ack_page(
+        _require_ack_store(request), limit=limit, offset=offset
+    )
+
+
+@router.post(
+    "/strategies/{strategy_key}/position-acks",
+    response_model=PositionAckView,
+    status_code=201,
+)
+def create_position_ack(
+    request: Request, strategy_key: str, body: PositionAckCreateRequest
+) -> PositionAckView:
+    """标记人工外部仓位; 新建即替换该策略的旧声明"""
+    try:
+        return position_ack_service.create_ack(
+            _require_ack_store(request),
+            _runtime_snapshot(request),
+            strategy_key,
+            external_qty=body.external_qty,
+            note=body.note,
+        )
+    except AckTargetUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AckInvalidError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post(
+    "/position-acks/{ack_id}/revoke", response_model=PositionAckView
+)
+def revoke_position_ack(request: Request, ack_id: str) -> PositionAckView:
+    """撤销人工仓位声明（幂等, 保留审计）"""
+    try:
+        return position_ack_service.revoke_ack(
+            _require_ack_store(request), ack_id
+        )
+    except PositionAckNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 def create_app(
     reader: OrderJournalReader,
     command_store: CommandStore,
@@ -319,6 +403,7 @@ def create_app(
     runtime_path: Path | None = None,
     market_provider: MarketDataProvider | None = None,
     config_store: ConfigStore | None = None,
+    ack_store: PositionAckStore | None = None,
 ) -> FastAPI:
     """装配控制台 API; 依赖注入 app.state 便于测试"""
     app = FastAPI(title="Smart Trader Console API", version="0.1.0")
@@ -328,6 +413,7 @@ def create_app(
     app.state.runtime_path = runtime_path
     app.state.market_provider = market_provider
     app.state.configs = config_store
+    app.state.acks = ack_store
     app.include_router(
         router,
         dependencies=[Depends(_require_token)],

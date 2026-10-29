@@ -154,6 +154,13 @@ class StrategySignalType(Enum):
     NONE = "none"
 
 
+class PositionAckStatus(Enum):
+    """人工外部仓位声明状态: active 生效中, revoked 已撤销（保留审计）"""
+
+    ACTIVE = "active"
+    REVOKED = "revoked"
+
+
 class CommandStatus(Enum):
     """命令状态机: pending → running → succeeded | failed"""
 
@@ -166,6 +173,29 @@ class CommandStatus(Enum):
         return self in (CommandStatus.SUCCEEDED, CommandStatus.FAILED)
 
 
+class ReconcileSnapshot(BaseModel):
+    """持仓对账与出场跟踪的运行态快照（心跳文件, 不落账本）
+
+    @param checked_at 最近一次成功查询交易所持仓的 UTC 时间; 查询失败保持上次值
+    @param exchange_qty 交易所该方向实际持仓量
+    @param local_qty 本地账本派生的同方向持仓总量
+    @param gap local - exchange; 负数表示交易所多于本地（来源不明, 仅告警）
+    @param tracked_exit_orders 在途出场单数量
+    @param max_exit_query_failures 单个出场单的最大连续查询失败次数
+    @param failing_exit_orders 当前连续查询失败的出场单号
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    checked_at: str | None = None
+    exchange_qty: float | None = None
+    local_qty: float | None = None
+    gap: float = 0.0
+    tracked_exit_orders: int = 0
+    max_exit_query_failures: int = 0
+    failing_exit_orders: list[str] = []
+
+
 class StrategyRuntime(BaseModel):
     """策略运行态快照（心跳文件, 不落账本）"""
 
@@ -175,6 +205,7 @@ class StrategyRuntime(BaseModel):
     timeframe: str
     is_running: bool
     heartbeat_at: str = ""
+    reconcile: ReconcileSnapshot | None = None
 
 
 class Symbol(BaseModel):

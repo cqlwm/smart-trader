@@ -66,6 +66,39 @@ export interface PositionDetailView extends PositionView {
   orders: OrderView[];
 }
 
+export interface ReconcileView {
+  checked_at: string | null;
+  exchange_qty: number | null;
+  local_qty: number | null;
+  gap: number;
+  tracked_exit_orders: number;
+  max_exit_query_failures: number;
+  failing_exit_orders: string[];
+}
+
+export type PositionAckStatus = "active" | "revoked";
+
+export interface PositionAckView {
+  id: string;
+  strategy_key: string;
+  symbol: string;
+  position_side: PositionSide;
+  external_qty: number;
+  note: string;
+  status: PositionAckStatus;
+  acknowledged_by: string;
+  acknowledged_at: string;
+  revoked_at: string | null;
+  revoked_by: string | null;
+}
+
+export interface PositionAckPage {
+  items: PositionAckView[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface StrategySummaryView {
   strategy_key: string;
   symbol: string;
@@ -80,6 +113,8 @@ export interface StrategySummaryView {
   alive: boolean;
   running: boolean | null;
   heartbeat_at: string | null;
+  reconcile: ReconcileView | null;
+  ack: PositionAckView | null;
 }
 
 export interface AlertView {

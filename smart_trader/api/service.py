@@ -12,19 +12,31 @@ from smart_trader.api.schemas import (
     OrderRole,
     OrderView,
     OverviewView,
+    PositionAckView,
     PositionDetailView,
     PositionPhase,
     PositionView,
+    ReconcileView,
     StrategySummaryView,
 )
-from smart_trader.model import OrderSide, OrderStatus, PositionSide, StrategyRuntime
+from smart_trader.model import (
+    OrderSide,
+    OrderStatus,
+    PositionAckStatus,
+    PositionSide,
+    ReconcileSnapshot,
+    StrategyRuntime,
+)
 from smart_trader.runtime import RuntimeSnapshot
 from smart_trader.storage.reader import OrderJournalReader
-from smart_trader.storage.records import OrderRecord
+from smart_trader.storage.records import OrderRecord, PositionAckRecord
 from smart_trader.strategy.grid_position import GridPosition
 
 _UNCONFIRMED_ALERT_LIMIT = 50
 _RUNTIME_STALE_SECONDS = 15.0
+# 出场单连续查询失败达到该次数必须告警（心跳每 2s, 完成 K 线每周期一次查询）
+_EXIT_QUERY_ALERT_THRESHOLD = 3
+_QTY_EPS = 1e-6
 
 
 def _now() -> str:
@@ -223,7 +235,7 @@ def list_order_views(
     return OrderPage(items=items, total=total, limit=limit, offset=offset)
 
 
-def _runtime_state(
+def runtime_state(
     runtime: StrategyRuntime, now: datetime
 ) -> tuple[bool, bool | None]:
     """心跳是否新鲜; 新鲜才回报 is_running, 过期视为离线"""
@@ -239,9 +251,36 @@ def _runtime_state(
     return (True, runtime.is_running) if alive else (False, None)
 
 
+def _reconcile_view(snapshot: ReconcileSnapshot | None) -> ReconcileView | None:
+    """运行态对账快照 → API 视图; 缺失保持 None"""
+    if snapshot is None:
+        return None
+    return ReconcileView(**snapshot.model_dump())
+
+
+def ack_view(record: PositionAckRecord | None) -> PositionAckView | None:
+    """人工仓位声明 → API 视图; 缺失保持 None"""
+    if record is None:
+        return None
+    return PositionAckView(
+        id=record.id,
+        strategy_key=record.strategy_key,
+        symbol=record.symbol,
+        position_side=record.position_side,
+        external_qty=record.external_qty,
+        note=record.note,
+        status=record.status,
+        acknowledged_by=record.acknowledged_by,
+        acknowledged_at=record.acknowledged_at,
+        revoked_at=record.revoked_at,
+        revoked_by=record.revoked_by,
+    )
+
+
 def _summaries_from(
     positions: list[GridPosition],
     runtime: RuntimeSnapshot | None = None,
+    acks: list[PositionAckRecord] | None = None,
 ) -> list[StrategySummaryView]:
     grouped: dict[str, list[GridPosition]] = {}
     for position in positions:
@@ -251,6 +290,11 @@ def _summaries_from(
     runtime_by_key = (
         {item.strategy_key: item for item in runtime.strategies} if runtime else {}
     )
+    ack_by_key = {
+        ack.strategy_key: ack
+        for ack in (acks or [])
+        if ack.status is PositionAckStatus.ACTIVE
+    }
 
     summaries: list[StrategySummaryView] = []
     for strategy_key in sorted(grouped):
@@ -261,7 +305,7 @@ def _summaries_from(
         ]
         runtime_info = runtime_by_key.pop(strategy_key, None)
         alive, running = (
-            _runtime_state(runtime_info, now)
+            runtime_state(runtime_info, now)
             if runtime_info is not None
             else (False, None)
         )
@@ -307,13 +351,19 @@ def _summaries_from(
                     if runtime_info is not None and alive
                     else None
                 ),
+                reconcile=(
+                    _reconcile_view(runtime_info.reconcile)
+                    if runtime_info is not None and alive
+                    else None
+                ),
+                ack=ack_view(ack_by_key.get(strategy_key)),
             )
         )
 
     # 运行中但尚未写账本的策略: 用运行态补齐, 否则前端看不到它
     for strategy_key in sorted(runtime_by_key):
         runtime_info = runtime_by_key[strategy_key]
-        alive, running = _runtime_state(runtime_info, now)
+        alive, running = runtime_state(runtime_info, now)
         summaries.append(
             StrategySummaryView(
                 strategy_key=strategy_key,
@@ -329,6 +379,10 @@ def _summaries_from(
                 alive=alive,
                 running=running,
                 heartbeat_at=runtime_info.heartbeat_at or None,
+                reconcile=(
+                    _reconcile_view(runtime_info.reconcile) if alive else None
+                ),
+                ack=ack_view(ack_by_key.get(strategy_key)),
             )
         )
     return summaries
@@ -337,10 +391,11 @@ def _summaries_from(
 def list_strategy_summaries(
     reader: OrderJournalReader,
     runtime: RuntimeSnapshot | None = None,
+    acks: list[PositionAckRecord] | None = None,
 ) -> list[StrategySummaryView]:
-    """按 strategy_key 聚合的策略摘要（账本 + 运行态心跳合并）"""
+    """按 strategy_key 聚合的策略摘要（账本 + 运行态心跳 + 人工仓位声明）"""
     return _summaries_from(
-        _load_positions(reader, include_closed=True), runtime
+        _load_positions(reader, include_closed=True), runtime, acks
     )
 
 
@@ -359,15 +414,147 @@ def _alert(order: OrderRecord) -> AlertView:
     )
 
 
+def _qty_text(value: float | None) -> str:
+    return "?" if value is None else f"{value:g}"
+
+
+def _surplus_alert(
+    item: StrategyRuntime,
+    snapshot: ReconcileSnapshot,
+    ack: PositionAckRecord | None,
+) -> AlertView:
+    surplus = (snapshot.exchange_qty or 0.0) - (snapshot.local_qty or 0.0)
+    if ack is None:
+        message = (
+            f"交易所持仓多于本地 {surplus:g}: "
+            f"exchange={_qty_text(snapshot.exchange_qty)} "
+            f"local={_qty_text(snapshot.local_qty)}; "
+            "来源不明, 需人工确认处置"
+        )
+    else:
+        unexplained = surplus - ack.external_qty
+        message = (
+            f"未解释差额 {unexplained:g}（交易所多于本地 {surplus:g}, "
+            f"已标记人工 {ack.external_qty:g}）; 请补充标记或处置"
+        )
+    return AlertView(
+        severity="critical",
+        code="exchange_position_surplus",
+        message=message,
+        strategy_key=item.strategy_key,
+        order_id=None,
+        created_at=snapshot.checked_at,
+    )
+
+
+def _ack_stale_alert(
+    item: StrategyRuntime,
+    snapshot: ReconcileSnapshot,
+    ack: PositionAckRecord,
+    reason: str,
+) -> AlertView:
+    surplus = (snapshot.exchange_qty or 0.0) - (snapshot.local_qty or 0.0)
+    return AlertView(
+        severity="warning",
+        code="position_ack_stale",
+        message=(
+            f"人工仓位标记 {ack.external_qty:g} 已失效: {reason} "
+            f"(当前差额 {surplus:g}); 请更新或撤销标记"
+        ),
+        strategy_key=item.strategy_key,
+        order_id=ack.id,
+        created_at=snapshot.checked_at,
+    )
+
+
+def _runtime_alerts(
+    runtime: RuntimeSnapshot | None,
+    acks: list[PositionAckRecord] | None,
+    now: datetime,
+) -> list[AlertView]:
+    """对账差异、人工仓位声明与出场单查询失败告警（只读, 不触发交易动作）
+
+    - 交易所多于本地且未标记: critical `exchange_position_surplus`;
+    - 已标记但仍有未解释差额: critical, 消息给出未解释量;
+    - 标记数量大于当前差额 / 差额已消失: warning `position_ack_stale`;
+    - 单个出场单连续查询失败达到阈值: warning `exit_query_failing`。
+    """
+    if runtime is None:
+        return []
+    ack_by_key = {
+        ack.strategy_key: ack
+        for ack in (acks or [])
+        if ack.status is PositionAckStatus.ACTIVE
+    }
+    alerts: list[AlertView] = []
+    for item in runtime.strategies:
+        alive, _ = runtime_state(item, now)
+        snapshot = item.reconcile
+        if not alive or snapshot is None:
+            continue
+        ack = ack_by_key.get(item.strategy_key)
+        if snapshot.exchange_qty is not None and snapshot.local_qty is not None:
+            surplus = snapshot.exchange_qty - snapshot.local_qty
+            if surplus > _QTY_EPS:
+                if ack is None:
+                    alerts.append(_surplus_alert(item, snapshot, None))
+                elif ack.external_qty > surplus + _QTY_EPS:
+                    alerts.append(
+                        _ack_stale_alert(
+                            item,
+                            snapshot,
+                            ack,
+                            "标记数量大于当前交易所多于本地的差额",
+                        )
+                    )
+                elif surplus - ack.external_qty > _QTY_EPS:
+                    alerts.append(_surplus_alert(item, snapshot, ack))
+                # 标记覆盖全部差额: 静默
+            elif ack is not None:
+                alerts.append(
+                    _ack_stale_alert(
+                        item,
+                        snapshot,
+                        ack,
+                        "当前交易所已无多于本地的差额",
+                    )
+                )
+        if (
+            snapshot.max_exit_query_failures
+            >= _EXIT_QUERY_ALERT_THRESHOLD
+        ):
+            failing = ",".join(snapshot.failing_exit_orders) or "?"
+            alerts.append(
+                AlertView(
+                    severity="warning",
+                    code="exit_query_failing",
+                    message=(
+                        f"出场单连续查询失败 "
+                        f"{snapshot.max_exit_query_failures} 次: {failing}; "
+                        "策略仍保留待跟踪, 请检查交易所连通性"
+                    ),
+                    strategy_key=item.strategy_key,
+                    order_id=(
+                        snapshot.failing_exit_orders[0]
+                        if snapshot.failing_exit_orders
+                        else None
+                    ),
+                    created_at=item.heartbeat_at or snapshot.checked_at,
+                )
+            )
+    return alerts
+
+
 def build_overview(
     reader: OrderJournalReader,
     runtime: RuntimeSnapshot | None = None,
+    acks: list[PositionAckRecord] | None = None,
 ) -> OverviewView:
-    """全库聚合: 计数 / 盈亏 / 策略摘要 / 未确认订单告警"""
+    """全库聚合: 计数 / 盈亏 / 策略摘要 / 对账与未确认订单告警"""
     positions = _load_positions(reader, include_closed=True)
     orders = [order for position in positions for order in position.orders]
     unconfirmed = [order for order in orders if order.status is None]
-    summaries = _summaries_from(positions, runtime)
+    summaries = _summaries_from(positions, runtime, acks)
 
     return OverviewView(
         generated_at=_now(),
@@ -388,7 +575,8 @@ def build_overview(
         ),
         strategies=summaries,
         alerts=[
-            _alert(order) for order in unconfirmed[:_UNCONFIRMED_ALERT_LIMIT]
+            *_runtime_alerts(runtime, acks, datetime.now(UTC)),
+            *[_alert(order) for order in unconfirmed[:_UNCONFIRMED_ALERT_LIMIT]],
         ],
     )
 

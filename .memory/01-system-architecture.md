@@ -475,6 +475,21 @@ web ──POST /api/.../commands──▶ commands(pending) ──认领──�
 进程正常退出时删除心跳；文件损坏只记录 warning，不影响账本与命令执行。
 前端根据 `alive` 禁用控制按钮，避免对离线策略提交注定失败的命令。
 
+**对账运行态（资金安全）**：`PositionReconciler` 每次成功查询交易所持仓后，把
+`exchange_qty` / `local_qty` / `gap`（本地减交易所）与查询时间写入心跳快照；
+`PositionLifecycle` 统计每个出场单的连续查询失败次数。心跳随 `StrategyRuntime` 上报，
+API 在 `/api/overview` 对 `gap < 0`（交易所多于本地，来源不明）与连续失败 ≥3 次
+生成 critical / warning 告警，并在策略摘要中返回 `reconcile` 视图。
+**只暴露事实，不自动收编外部仓位、不自动平仓**：处置必须由人工确认，避免策略
+把来源不明的仓位误当成自己的网格层。本地为零、交易所非零同样会查询并暴露，
+"无本地仓位就跳过"会掩盖外部单独开仓。
+
+**人工仓位声明（`position_acks`）**：操作者可在总览页把"交易所多于本地"的差额声明为人工仓位。
+声明只影响告警抑制，不改变账本与交易：API 写入 `position_acks`（软撤销、保留历史），
+策略进程不读取该表。概览按当前差额与声明数量判定——覆盖则静默；仍有未解释差额继续
+critical 告警；声明大于当前差额或差额已消失时 warning `position_ack_stale`。
+新建声明自动替换同策略的旧声明（旧行置 revoked），撤销幂等，不提供物理删除。
+
 **迁移**：`scripts/migrations/002_add_commands.py` 幂等建表；`CommandStore` 打开缺表库时响亮报错并指向该脚本，
 不在业务代码里自动迁移。
 

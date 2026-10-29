@@ -21,7 +21,13 @@ from sqlalchemy import create_engine, text
 from smart_trader.storage import schema
 from smart_trader.storage.order_journal import OrderJournal
 
-_TABLES = ("grid_positions", "orders", "commands", "strategy_configs")
+_TABLES = (
+    "grid_positions",
+    "orders",
+    "commands",
+    "strategy_configs",
+    "position_acks",
+)
 
 
 def _normalize_columns(
@@ -249,4 +255,20 @@ CREATE TABLE IF NOT EXISTS strategy_configs (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS position_acks (
+    id TEXT PRIMARY KEY,
+    strategy_key TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    position_side TEXT NOT NULL,
+    external_qty REAL NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    acknowledged_by TEXT NOT NULL DEFAULT 'web',
+    acknowledged_at TEXT NOT NULL,
+    revoked_at TEXT,
+    revoked_by TEXT,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_position_acks_active ON position_acks(strategy_key, status);
 """

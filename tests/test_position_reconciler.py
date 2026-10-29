@@ -149,12 +149,31 @@ def orders_with_pending_exit(
 # ------------------------------------------------------------------ 基础行为
 
 
-def test_no_positions_skips_exchange_query() -> None:
+def test_no_positions_with_flat_exchange_reports_consistent_snapshot() -> None:
     harness = ReconcileHarness([])
     result = harness.reconciler.reconcile()
     assert result.archived == [], "无仓位时不应有归档"
     assert result.adjustments == {}, "无仓位时不应有扣减"
-    assert harness.account.positions_calls == 0, "无仓位时不应查询交易所持仓"
+    assert harness.account.positions_calls == 1, (
+        "无本地仓位也要查询交易所, 否则漏掉外部单独开仓"
+    )
+    snapshot = harness.reconciler.snapshot()
+    assert snapshot.checked_at is not None, "成功查询必须记录对账时间"
+    assert snapshot.exchange_qty == 0.0
+    assert snapshot.local_qty == 0.0
+    assert snapshot.gap == 0.0
+
+
+def test_external_only_position_is_reported_as_negative_gap() -> None:
+    """本地无仓位、交易所却有持仓: 必须暴露为负差额供人工处置"""
+    harness = ReconcileHarness([])
+    harness.set_exchange_position(3000.0)
+    result = harness.reconciler.reconcile()
+    assert result.archived == [], "外部单独开仓不产生本地归档"
+    snapshot = harness.reconciler.snapshot()
+    assert snapshot.exchange_qty == 3000.0
+    assert snapshot.local_qty == 0.0
+    assert snapshot.gap == -3000.0, "交易所多于本地必须为负差额"
 
 
 def test_matching_quantity_no_action() -> None:
@@ -163,6 +182,10 @@ def test_matching_quantity_no_action() -> None:
     harness.set_exchange_position(100.0)
     result = harness.reconciler.reconcile()
     assert result.archived == [], f"数量一致不应归档, 实际 {result.archived}"
+    snapshot = harness.reconciler.snapshot()
+    assert snapshot.exchange_qty == 100.0
+    assert snapshot.local_qty == 100.0
+    assert snapshot.gap == 0.0
     assert result.adjustments == {}, f"数量一致不应有扣减, 实际 {result.adjustments}"
 
 
@@ -183,6 +206,10 @@ def test_exchange_surplus_only_warns_without_change() -> None:
     result = harness.reconciler.reconcile()
     assert result.archived == [], "反向偏差不应归档仓位"
     assert result.adjustments == {}, "反向偏差不应产生扣减"
+    snapshot = harness.reconciler.snapshot()
+    assert snapshot.exchange_qty == 150.0
+    assert snapshot.local_qty == 100.0
+    assert snapshot.gap == -50.0, "交易所多于本地必须暴露为负差额"
 
 
 def test_opposite_side_exchange_position_ignored() -> None:
@@ -339,6 +366,9 @@ def test_account_failure_skips_round() -> None:
     result = harness.reconciler.reconcile()
     assert result.archived == [], "查询异常应跳过本轮而非崩溃"
     assert result.adjustments == {}, "查询异常本轮不应产出扣减"
+    assert harness.reconciler.snapshot().checked_at is None, (
+        "查询失败不得伪造对账时间"
+    )
 
 
 def test_cancel_failure_keeps_position_for_retry() -> None:

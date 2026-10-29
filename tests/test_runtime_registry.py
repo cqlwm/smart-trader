@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from smart_trader.model import ReconcileSnapshot
 from smart_trader.runtime import RuntimeRegistry
 from smart_trader.storage.command_store import CommandStore
 from smart_trader.storage.order_journal import OrderJournal
@@ -21,6 +22,28 @@ def test_heartbeat_writes_snapshot(tmp_path: Path):
     assert snapshot.strategies[0].strategy_key == KEY
     assert snapshot.strategies[0].is_running is True
     assert snapshot.strategies[0].heartbeat_at, "必须带心跳时间戳"
+
+
+def test_heartbeat_roundtrips_reconcile_snapshot(tmp_path: Path):
+    reconcile = ReconcileSnapshot(
+        checked_at="2026-10-29T00:00:00+00:00",
+        exchange_qty=3500.0,
+        local_qty=500.0,
+        gap=-3000.0,
+        tracked_exit_orders=1,
+        max_exit_query_failures=3,
+        failing_exit_orders=["exit1"],
+    )
+    registry = RuntimeRegistry(tmp_path / "runtime.json")
+
+    registry.heartbeat([FakeControllableStrategy(KEY, reconcile=reconcile)])
+
+    snapshot = registry.read()
+    assert snapshot is not None
+    loaded = snapshot.strategies[0].reconcile
+    assert loaded is not None
+    assert loaded.gap == -3000.0
+    assert loaded.failing_exit_orders == ["exit1"]
 
 
 def test_heartbeat_reflects_pause(tmp_path: Path):

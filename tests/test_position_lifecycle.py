@@ -299,3 +299,80 @@ class TestSettleEntryFills:
         assert trading.queries == [], (
             f"无未了结入场单不应查询, 实际查询了 {trading.queries}"
         )
+
+
+def make_pending_exit_position(journal: OrderJournal) -> GridPosition:
+    """入场已成交 + 一张 OPEN 出场挂单"""
+    row = make_position_row()
+    entry = make_order_record(
+        "entry1",
+        "",
+        side=OrderSide.BUY,
+        price=0.5,
+        quantity=100.0,
+        filled_qty=100.0,
+        avg_price=0.5,
+        status=OrderStatus.CLOSED,
+    )
+    position_id, _ = journal.open_position(row, entry)
+    journal.append_order(
+        make_order_record(
+            "exit1",
+            position_id,
+            side=OrderSide.SELL,
+            price=0.6,
+            quantity=100.0,
+            status=OrderStatus.OPEN,
+        )
+    )
+    records = journal.load_orders_for_positions([position_id])
+    return GridPosition.from_row(
+        row.model_copy(update={"id": position_id}), records
+    )
+
+
+class TestExitTrackingCounters:
+    """出场单查询失败的连续计数: 供运行态告警使用, 不改变保留待跟踪语义"""
+
+    def test_failures_are_counted_then_cleared_on_success(self) -> None:
+        journal = OrderJournal()
+        position = make_pending_exit_position(journal)
+        trading = FakeTradingPort()
+        trading.queue_query(
+            *[
+                SmartTraderError(ErrorCode.EXCHANGE_UNAVAILABLE, "query boom")
+                for _ in range(3)
+            ]
+        )
+        lifecycle = PositionLifecycle(
+            config=CONFIG,
+            trading=trading,
+            journal=journal,
+            positions=lambda: [position],
+        )
+
+        for _ in range(3):
+            lifecycle.track_pending_exits()
+
+        assert lifecycle.tracked_exit_order_count() == 1
+        assert lifecycle.max_exit_query_failures() == 3, (
+            "连续查询失败必须被计数"
+        )
+        assert lifecycle.failing_exit_order_ids() == ["exit1"]
+
+        trading.queue_query(exchange_result("exit1", OrderStatus.OPEN, 0.0))
+        lifecycle.track_pending_exits()
+
+        assert lifecycle.max_exit_query_failures() == 0, (
+            "查询成功后必须清零连续失败计数"
+        )
+        assert lifecycle.failing_exit_order_ids() == []
+
+    def test_no_pending_exit_orders_means_zero_counts(self) -> None:
+        journal = OrderJournal()
+        lifecycle = build_lifecycle(FakeTradingPort(), journal)
+
+        assert lifecycle.tracked_exit_order_count() == 0
+        assert lifecycle.max_exit_query_failures() == 0
+        assert lifecycle.failing_exit_order_ids() == []
+

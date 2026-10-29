@@ -9,6 +9,7 @@ from smart_trader.model import (
     CommandAction,
     CommandStatus,
     PositionSide,
+    ReconcileSnapshot,
     StrategyRuntime,
 )
 from smart_trader.storage.command_store import CommandStore
@@ -38,12 +39,14 @@ class FakeControllableStrategy(ControllableStrategy):
         fail_resume: bool = False,
         fail_close: bool = False,
         fail_cancel: bool = False,
+        reconcile: ReconcileSnapshot | None = None,
     ):
         self._key = key
         self.fail_pause = fail_pause
         self.fail_resume = fail_resume
         self.fail_close = fail_close
         self.fail_cancel = fail_cancel
+        self.reconcile = reconcile
         self.paused = False
         self.close_requests = 0
         self.cancel_calls = 0
@@ -59,6 +62,7 @@ class FakeControllableStrategy(ControllableStrategy):
             position_side=PositionSide.LONG,
             timeframe="1m",
             is_running=not self.paused,
+            reconcile=self.reconcile,
         )
 
     def pause(self) -> None:

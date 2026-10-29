@@ -40,6 +40,41 @@ class PositionLifecycle:
         self._trading = trading
         self._journal = journal
         self._positions = positions
+        # 出场单连续查询失败计数: 运行态告警用, 不改变"保留待跟踪"语义
+        self._exit_query_failures: dict[str, int] = {}
+
+    # ---- 出场跟踪运行态（心跳文件用） ----
+
+    def tracked_exit_order_count(self) -> int:
+        """在途出场单数量"""
+        return sum(
+            1
+            for position in self._positions()
+            if position.pending_exit_order is not None
+        )
+
+    def failing_exit_order_ids(self) -> list[str]:
+        """当前仍存在且连续查询失败的出场单号（已离开仓位的计数自动忽略）"""
+        active = {
+            position.pending_exit_order.order_id
+            for position in self._positions()
+            if position.pending_exit_order is not None
+        }
+        return sorted(
+            order_id
+            for order_id, failures in self._exit_query_failures.items()
+            if failures > 0 and order_id in active
+        )
+
+    def max_exit_query_failures(self) -> int:
+        """单个出场单的最大连续查询失败次数"""
+        return max(
+            (
+                self._exit_query_failures[order_id]
+                for order_id in self.failing_exit_order_ids()
+            ),
+            default=0,
+        )
 
     def settle_order(
         self, position: GridPosition, order: OrderRecord, result: OrderResult
@@ -195,8 +230,15 @@ class PositionLifecycle:
             try:
                 result = self._trading.query(order.order_id, self._config.symbol)
             except SmartTraderError:
-                logger.warning("查询出场单失败, 保留待跟踪: %s", order.order_id)
+                failures = self._exit_query_failures.get(order.order_id, 0) + 1
+                self._exit_query_failures[order.order_id] = failures
+                logger.warning(
+                    "查询出场单失败(连续 %s 次), 保留待跟踪: %s",
+                    failures,
+                    order.order_id,
+                )
                 continue
+            self._exit_query_failures.pop(order.order_id, None)
 
             if result is None:
                 # 订单可能只是新单索引延迟, 撤单复核后再判定是否存在

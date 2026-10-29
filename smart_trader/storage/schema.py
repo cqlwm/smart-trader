@@ -110,3 +110,30 @@ strategy_configs = Table(
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
 )
+
+# ---- position_acks: 人工外部仓位声明（对账告警抑制, 不参与交易） ----
+# 一行表示"某策略某方向的交易所持仓中, 有 external_qty 是人工仓位"。
+# 只由 API 的 PositionAckStore 写; 策略进程不读取, 不改变本地账本。
+# 无删除: status=revoked 保留历史, 同一策略同时最多一条 active。
+
+position_acks = Table(
+    "position_acks",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("strategy_key", Text, nullable=False),
+    Column("symbol", Text, nullable=False),
+    Column("position_side", Text, nullable=False),
+    Column[float]("external_qty", REAL, nullable=False),
+    Column("note", Text, nullable=False, server_default=text("''")),
+    Column("status", Text, nullable=False),
+    Column("acknowledged_by", Text, nullable=False, server_default=text("'web'")),
+    Column("acknowledged_at", Text, nullable=False),
+    Column("revoked_at", Text),
+    Column("revoked_by", Text),
+    Column("updated_at", Text, nullable=False),
+)
+Index(
+    "idx_position_acks_active",
+    position_acks.c.strategy_key,
+    position_acks.c.status,
+)

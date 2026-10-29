@@ -3,8 +3,10 @@ import { useState } from "react";
 import { newIdempotencyKey } from "../api/client";
 import {
   useCommands,
+  useCreatePositionAck,
   useKillSwitch,
   useOverview,
+  useRevokePositionAck,
   useSubmitCommand,
 } from "../api/hooks";
 import type {
@@ -13,8 +15,11 @@ import type {
   CommandStatus,
   CommandView,
   OverviewView,
+  PositionAckView,
+  StrategySummaryView,
 } from "../api/types";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { PositionAckDialog } from "../components/PositionAckDialog";
 import {
   EmptyState,
   ErrorPanel,
@@ -64,9 +69,22 @@ export function OverviewPage() {
   const overview = useOverview();
   const submitCommand = useSubmitCommand();
   const killSwitch = useKillSwitch();
+  const createAck = useCreatePositionAck();
+  const revokeAck = useRevokePositionAck();
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [ackTarget, setAckTarget] = useState<{
+    strategyKey: string;
+    surplus: number;
+  } | null>(null);
+  const [ackError, setAckError] = useState<string | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<{
+    strategyKey: string;
+    ackId: string;
+    externalQty: number;
+  } | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
   const busy = submitCommand.isPending || killSwitch.isPending;
 
@@ -133,6 +151,46 @@ export function OverviewPage() {
 
   const dialogCopy = pendingAction ? describeAction(pendingAction) : null;
 
+  async function handleCreateAck(externalQty: number, note: string) {
+    if (!ackTarget) {
+      return;
+    }
+    setAckError(null);
+    try {
+      await createAck.mutateAsync({
+        strategyKey: ackTarget.strategyKey,
+        externalQty,
+        note,
+      });
+      setNotice({
+        tone: "info",
+        text: `已将 ${externalQty} 标记为人工仓位；差额未变化前不再告警。`,
+      });
+      setAckTarget(null);
+      void overview.refetch();
+    } catch (error) {
+      setAckError(messageOf(error));
+    }
+  }
+
+  async function handleRevokeAck() {
+    if (!revokeTarget) {
+      return;
+    }
+    setRevokeError(null);
+    try {
+      await revokeAck.mutateAsync(revokeTarget.ackId);
+      setNotice({
+        tone: "info",
+        text: `已撤销 ${revokeTarget.strategyKey} 的人工仓位标记，差额告警恢复。`,
+      });
+      setRevokeTarget(null);
+      void overview.refetch();
+    } catch (error) {
+      setRevokeError(messageOf(error));
+    }
+  }
+
   return (
     <>
       <PageHeader
@@ -198,6 +256,18 @@ export function OverviewPage() {
             void submitQuick(strategyKey, action);
           }}
           onRequest={requestAction}
+          onMarkAck={(strategyKey, surplus) => {
+            setAckError(null);
+            setAckTarget({ strategyKey, surplus });
+          }}
+          onRevokeAck={(ack) => {
+            setRevokeError(null);
+            setRevokeTarget({
+              strategyKey: ack.strategy_key,
+              ackId: ack.id,
+              externalQty: ack.external_qty,
+            });
+          }}
         />
       ) : null}
 
@@ -223,8 +293,55 @@ export function OverviewPage() {
           onClose={closeDialog}
         />
       ) : null}
+
+      {ackTarget ? (
+        <PositionAckDialog
+          open
+          strategyKey={ackTarget.strategyKey}
+          surplus={ackTarget.surplus}
+          busy={createAck.isPending}
+          error={ackError}
+          onConfirm={(externalQty, note) => {
+            void handleCreateAck(externalQty, note);
+          }}
+          onClose={() => {
+            if (createAck.isPending) {
+              return;
+            }
+            setAckTarget(null);
+            setAckError(null);
+          }}
+        />
+      ) : null}
+
+      {revokeTarget ? (
+        <ConfirmDialog
+          open
+          kicker="POSITION / ACK"
+          title={`撤销 ${revokeTarget.strategyKey} 的人工仓位标记？`}
+          description={`撤销后将重新对差额告警。已声明人工仓位 ${revokeTarget.externalQty}；撤销记录会保留在审计中。`}
+          confirmLabel="撤销标记"
+          tone="amber"
+          busy={revokeAck.isPending}
+          error={revokeError}
+          onConfirm={() => {
+            void handleRevokeAck();
+          }}
+          onClose={() => {
+            if (revokeAck.isPending) {
+              return;
+            }
+            setRevokeTarget(null);
+            setRevokeError(null);
+          }}
+        />
+      ) : null}
     </>
   );
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function describeAction(action: PendingAction): {
@@ -265,11 +382,15 @@ function OverviewBody({
   busy,
   onQuick,
   onRequest,
+  onMarkAck,
+  onRevokeAck,
 }: {
   data: OverviewView;
   busy: boolean;
   onQuick: (strategyKey: string, action: "pause" | "resume") => void;
   onRequest: (action: PendingAction) => void;
+  onMarkAck: (strategyKey: string, surplus: number) => void;
+  onRevokeAck: (ack: PositionAckView) => void;
 }) {
   const pnlTone =
     data.realized_pnl_total > 0
@@ -316,20 +437,21 @@ function OverviewBody({
           <div className="alert-head">
             <span className="alert-mark">!</span>
             <div>
-              <div className="alert-title">未确认订单</div>
+              <div className="alert-title">告警</div>
               <div className="alert-hint">
-                这些行 `status` 为空，结果未确认；策略启动对账后会被交易所事实回写。
+                对账差额、出场单连续查询失败与 WAL 未确认订单；差额可在策略行点击
+                “标记人工”声明为手工仓位，系统不会自动收编外部仓位。
               </div>
             </div>
           </div>
           <ul className="alert-list">
             {data.alerts.map((alert) => (
-              <li key={`${alert.order_id}-${alert.created_at}`}>
+              <li key={`${alert.code}-${alert.order_id ?? ""}-${alert.created_at ?? ""}`}>
                 <span className={`severity severity-${alert.severity}`}>
                   {alert.severity.toUpperCase()}
                 </span>
-                <span className="mono alert-order">{alert.order_id}</span>
-                <span className="alert-strategy">{alert.strategy_key}</span>
+                <span className="mono alert-order">{alert.code}</span>
+                <span className="alert-strategy">{alert.message}</span>
                 <span className="mono alert-time">{formatUtc(alert.created_at)}</span>
               </li>
             ))}
@@ -390,7 +512,14 @@ function OverviewBody({
                       </Pill>
                     </td>
                     <td>
-                      <RuntimePill alive={strategy.alive} running={strategy.running} />
+                      <div className="cell-stack">
+                        <RuntimePill alive={strategy.alive} running={strategy.running} />
+                        <ReconcileBadge
+                          strategy={strategy}
+                          onMarkAck={onMarkAck}
+                          onRevokeAck={onRevokeAck}
+                        />
+                      </div>
                     </td>
                     <td className="num mono">{formatNumber(strategy.active_positions)}</td>
                     <td className="num mono dim">{formatNumber(strategy.archived_positions)}</td>
@@ -497,6 +626,78 @@ function RuntimePill({
     return <Pill variant="green">运行中 RUNNING</Pill>;
   }
   return <Pill variant="amber">已暂停 PAUSED</Pill>;
+}
+
+function ReconcileBadge({
+  strategy,
+  onMarkAck,
+  onRevokeAck,
+}: {
+  strategy: StrategySummaryView;
+  onMarkAck: (strategyKey: string, surplus: number) => void;
+  onRevokeAck: (ack: PositionAckView) => void;
+}) {
+  const reconcile = strategy.reconcile;
+  const ack = strategy.ack;
+  const surplus =
+    reconcile?.exchange_qty != null && reconcile.local_qty != null
+      ? reconcile.exchange_qty - reconcile.local_qty
+      : 0;
+
+  if (ack) {
+    const stale =
+      reconcile?.checked_at != null &&
+      reconcile.exchange_qty != null &&
+      reconcile.local_qty != null &&
+      Math.abs(ack.external_qty - Math.max(surplus, 0)) > 0.000001;
+    return (
+      <div className="reconcile-actions">
+        <Pill variant={stale ? "amber" : "blue"} title={ack.note || undefined}>
+          {stale ? "人工基线失效" : `人工 ${formatNumber(ack.external_qty)}`}
+        </Pill>
+        {stale && surplus > 0.000001 ? (
+          <button
+            type="button"
+            className="btn-xs"
+            onClick={() => onMarkAck(strategy.strategy_key, surplus)}
+          >
+            更新
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="btn-xs"
+          onClick={() => onRevokeAck(ack)}
+        >
+          撤销
+        </button>
+      </div>
+    );
+  }
+
+  if (reconcile?.checked_at && surplus > 0.000001) {
+    return (
+      <div className="reconcile-actions">
+        <Pill variant="red">差额 {formatNumber(reconcile.gap)}</Pill>
+        <button
+          type="button"
+          className="btn-xs btn-xs-amber"
+          onClick={() => onMarkAck(strategy.strategy_key, surplus)}
+        >
+          标记人工
+        </button>
+      </div>
+    );
+  }
+
+  if (reconcile && reconcile.max_exit_query_failures >= 3) {
+    return (
+      <Pill variant="amber">
+        查单失败 {reconcile.max_exit_query_failures}
+      </Pill>
+    );
+  }
+  return null;
 }
 
 function CommandHistory() {
