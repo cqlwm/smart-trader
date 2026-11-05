@@ -162,6 +162,7 @@ class BinanceDataEventLoop(DataEventLoop):
         self.session_factory = session_factory
         self.retry_interval = retry_interval
         self.max_connections = max_connections
+        self._session: Any = None
 
     def start(self):
         """建立连接, 断开后自动重连, 直到 stop() 或达到 max_connections"""
@@ -181,6 +182,7 @@ class BinanceDataEventLoop(DataEventLoop):
                 on_close=self.on_close,
                 on_pong=self.on_pong,
             )
+            self._session = ws_session
             ws_session.run_forever(ping_interval=20, ping_timeout=15)
 
             if not self.running:
@@ -191,6 +193,17 @@ class BinanceDataEventLoop(DataEventLoop):
             time.sleep(self.retry_interval)
 
         logger.info("连接循环结束, 累计建立 %s 个连接", connections)
+
+    def stop(self):
+        """停止重连并关闭当前连接: 运行在后台线程时, 只置标志位无法唤醒 run_forever"""
+        super().stop()
+        session = self._session
+        if session is None:
+            return
+        try:
+            session.close()
+        except Exception:  # 边界: 关闭失败不得阻断进程退出
+            logger.exception("关闭 WebSocket 会话失败")
 
     def _subscribe(self, ws: websocket.WebSocketApp):
         params: dict[str, Any] = {

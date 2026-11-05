@@ -145,16 +145,20 @@ def test_task_order_follows_input_order(journal: OrderJournal, exchange: Exchang
     ], "加载顺序必须与输入一致, 便于复现"
 
 
-def test_empty_selection_raises_loudly(journal: OrderJournal, exchange: Exchange):
+def test_empty_selection_returns_empty_list(
+    journal: OrderJournal, exchange: Exchange
+):
+    """统一入口允许只启动控制台: 空集合交给运行时决定, 不再在加载器里抛错"""
     records = [_record("timer_disabled", DataSource.TIMER, enabled=False)]
 
-    with pytest.raises(ValueError, match="没有启用的 timer 策略配置"):
-        build_strategy_tasks(
-            records,
-            data_source=DataSource.TIMER,
-            exchange=exchange,
-            journal=journal,
-        )
+    tasks = build_strategy_tasks(
+        records,
+        data_source=DataSource.TIMER,
+        exchange=exchange,
+        journal=journal,
+    )
+
+    assert tasks == [], "没有启用且数据源匹配的配置时应返回空列表"
 
 
 def test_invalid_payload_names_the_offending_strategy(

@@ -524,9 +524,10 @@ web/ (React)  ──HTTP──▶  smart_trader/api/  ──▶  storage.reader 
 
 ### 1. 为什么是命令表而不是 API 直接调策略
 
-API 是独立进程，不能跨进程调用策略对象；给 API 开策略进程内端口（socket / HTTP 回调）
-会引入第二套鉴权与服务生命周期。`commands` 表是天然的解耦层：提交是普通 INSERT，
-执行由策略进程轮询认领，天然支持审计、幂等与重启后补执行。
+控制台路由与策略运行时虽同进程，仍不直接调用策略对象：直接调用会绕过审计与幂等，
+并把 HTTP 请求生命周期绑定到策略回调锁（`cancel_entries` 必须持 `_callback_lock` 撤单）。
+`commands` 表是天然的解耦层：提交是普通 INSERT，执行由 `CommandRunner` 轮询认领，
+天然支持审计、幂等与重启后补执行；即使未来再拆进程也无需改动。
 
 ### 2. 唯一写者与动作边界
 
@@ -549,8 +550,9 @@ API 是独立进程，不能跨进程调用策略对象；给 API 开策略进�
 
 - 账本只记录事实, 不记录"进程是否存活 / 策略是否暂停"这类易变状态; 若把心跳写进
   `grid_positions` 会污染逻辑仓位语义（重启时会被 `load_positions` 恢复成幽灵仓位）。
-- 因此用 `.data/runtime.json` 心跳文件: 策略进程的 `CommandRunner` 每轮原子替换写入,
-  API 只读; 文件缺失/损坏/过期一律降级为"离线", 不影响账本与命令执行。
+- 因此用 `.data/runtime.json` 心跳文件: `CommandRunner` 每轮原子替换写入, 控制台只读;
+  文件缺失/损坏/过期一律降级为"离线", 不影响账本与命令执行。控制台路由不持有策略对象,
+  心跳文件同时保留未来拆进程与外部监控的接缝。
 - 15s 新鲜度阈值（心跳每 2s）容忍短时 IO 抖动; 正常退出 `CommandRunner.stop()` 删除文件。
 - 只读侧合并规则: 心跳新鲜时用其 `symbol` / `position_side` / `timeframe` / `is_running`
   覆盖账本摘要的展示字段; 心跳过期时不覆盖, 避免离线进程的旧信息冒充当前状态。
@@ -653,16 +655,18 @@ API 派生 `ReconcileView` 与告警。这里刻意**不做**自动收编 / 自�
 
 ### 4. 启动装配
 
-`build_strategy_tasks(records, data_source=...)` 是模板代码与配置行的唯一汇合点：
-过滤 `enabled` 与数据源，构造 `SignalGridStrategy` 与 `StrategyTask`。`run.py` / `run_timer.py`
+`build_strategy_tasks(records, data_source=...)` 是配置行与策略实例的唯一汇合点：
+过滤 `enabled` 与数据源，构造 `SignalGridStrategy` 与 `StrategyTask`。统一入口
+`run.py` 按每个配置行的 `data_source` 分别调用它（WS / Timer 循环可同时存在），
 不再 import 具体策略模板；模板只保留 `*_config()` 构造函数供种子脚本使用。
-空集合直接抛错：一个没有任何任务的策略进程没有存在意义，启动即失败比静默空跑安全。
+空集合返回空列表：统一入口以控制台为宿主，零策略仍须能配置与查看；
+"只读模式"告警由 `StrategyRuntime` 负责。
 
 ### 5. 测试策略
 
 - payload：JSON 往返、两种信号物化、模板转换往返、非法交易对 / 未知字段拒绝；
 - store：版本递增、陈旧版本冲突、重复键、缺表迁移提示、列表排序稳定；
-- loader：数据源 / 启用过滤、键注入、空集合报错、顺序稳定；
+- loader：数据源 / 启用过滤、键注入、空集合返回空列表、顺序稳定；
 - API：只写 `strategy_configs`（写面断言更新为 GET/POST/PUT），404 / 409 / 422 映射，
   活跃仓位护栏（禁用与身份字段），token 鉴权；
 - 前端构建通过，浏览器验收列表 / 编辑 / 停用冲突提示。

@@ -47,6 +47,23 @@ def client(reader: OrderJournalReader, commands: CommandStore) -> Iterator[TestC
         yield instance
 
 
+def test_lifespan_runs_startup_and_shutdown_hooks(
+    reader: OrderJournalReader, commands: CommandStore
+) -> None:
+    """统一入口依赖这两个钩子管理策略运行时"""
+    events: list[str] = []
+
+    app = create_app(
+        reader,
+        commands,
+        on_startup=lambda: events.append("start"),
+        on_shutdown=lambda: events.append("stop"),
+    )
+    with TestClient(app):
+        assert events == ["start"], "进入应用时必须执行启动钩子"
+    assert events == ["start", "stop"], "退出应用时必须执行停止钩子"
+
+
 def _seed_single_position(journal: OrderJournal) -> None:
     seed_position(
         journal,

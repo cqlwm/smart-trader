@@ -141,10 +141,10 @@ class CommandAction(Enum):
 
 
 class DataSource(Enum):
-    """策略配置的行情驱动方式（决定由哪个进程入口加载）"""
+    """策略配置的行情驱动方式（统一入口按此装配事件循环）"""
 
-    WS = "ws"  # WebSocket 推送 (run.py)
-    TIMER = "timer"  # REST 定时拉取 (run_timer.py)
+    WS = "ws"  # WebSocket 推送
+    TIMER = "timer"  # REST 定时拉取
 
 
 class StrategySignalType(Enum):

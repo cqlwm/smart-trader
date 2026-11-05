@@ -185,6 +185,40 @@ def test_on_message_logs_unparsable_message(caplog: pytest.LogCaptureFixture):
     ), "无法解析的消息必须记录 debug 日志"
 
 
+def test_stop_closes_active_session():
+    """运行中 stop() 必须关闭当前连接, 否则 run_forever 会一直阻塞线程"""
+    started = threading.Event()
+    sessions: list[FakeWebSocketSession] = []
+
+    class BlockingSession(FakeWebSocketSession):
+        def run_forever(self, **kwargs: Any) -> bool:
+            self.on_open(self)
+            started.set()
+            while not self.closed:
+                time.sleep(0.01)
+            return False
+
+    def factory(url: str, on_open: Any, **callbacks: Any) -> FakeWebSocketSession:
+        session = BlockingSession(on_open=on_open, outcomes=[])
+        sessions.append(session)
+        return session
+
+    loop = BinanceDataEventLoop(
+        kline_subscribes=["dogeusdt@kline_1m"],
+        session_factory=factory,  # type: ignore[arg-type]
+        retry_interval=0.0,
+    )
+    worker = threading.Thread(target=loop.start, daemon=True)
+    worker.start()
+    assert started.wait(1.0), "连接必须已建立"
+
+    loop.stop()
+
+    assert sessions[0].closed, "stop() 必须关闭当前 WebSocket 会话"
+    worker.join(timeout=1.0)
+    assert not worker.is_alive(), "会话关闭后 start() 循环必须退出"
+
+
 def test_stop_ends_the_reconnect_loop():
     loop, sessions = build_loop([False] * 10)
     connections: list[int] = []

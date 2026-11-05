@@ -24,4 +24,7 @@ docker run --name "${CONTAINER_NAME}" --restart=always \
   -v /etc/localtime:/etc/localtime \
   -v ./.env:/usr/local/app/.env \
   -v ./.data:/usr/local/app/.data \
+  -e PROJECT_PATH=/usr/local/app \
+  -e SMART_TRADER_API_HOST=0.0.0.0 \
+  -p 127.0.0.1:8000:8000 \
   -d "$IMAGE_NAME:$IMAGE_TAG"

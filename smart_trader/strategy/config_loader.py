@@ -1,9 +1,11 @@
 """按数据库配置装配策略任务（P3）
 
-`run.py` 只加载 `data_source=ws`，`run_timer.py` 只加载 `data_source=timer`；
-配置在进程启动时读取一次，运行中不热替换（见 .memory/01 第十五节）。
+统一入口按每个配置行的 `data_source` 分别调用本加载器：`ws` 交给 WebSocket
+事件循环、`timer` 交给定时拉取事件循环。配置在进程启动时读取一次，
+运行中不热替换（见 .memory/01 第十五节）。
 
-空集合直接报错: 没有任何任务的策略进程没有存在意义, 启动即失败比静默空跑安全。
+空集合返回空列表: 统一入口以控制台为宿主, 没有可运行策略时仍须提供
+配置与账本查看能力; 是否告警由调用方（`StrategyRuntime`）决定。
 """
 
 from collections.abc import Iterable
@@ -27,10 +29,11 @@ def build_strategy_tasks(
     """把启用且数据源匹配的配置行装配为 StrategyTask 列表
 
     @param records 配置行（顺序即加载顺序, 便于复现）
-    @param data_source 本进程入口的行情驱动方式
+    @param data_source 要装配的数据源类型
     @param exchange 交易 / 行情 / 账户端口
     @param journal 账本（策略据此恢复活跃仓位）
-    @raise ValueError 载荷非法或没有任何可用配置
+    @return 匹配 data_source 的启用策略任务; 没有匹配项时为空列表
+    @raise ValueError 载荷非法
     """
     tasks: list[StrategyTask] = []
     for record in records:
@@ -53,9 +56,4 @@ def build_strategy_tasks(
             account=exchange,
         )
         tasks.append(StrategyTask(symbol=config.symbol, strategy=strategy))
-    if not tasks:
-        raise ValueError(
-            f"没有启用的 {data_source.value} 策略配置; "
-            "请检查 strategy_configs 或执行种子脚本"
-        )
     return tasks

@@ -503,4 +503,4 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 不可序列化的 `Signal` 实现只允许上述两种，其它实现直接报错。
 
 护栏：活跃仓位存在时禁止禁用或修改 `symbol` / `timeframe` / `position_side` /
-`master_side`；其余字段可改，重启策略进程后生效。
+`master_side`；其余字段可改，重启统一入口后生效。

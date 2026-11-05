@@ -1,12 +1,30 @@
+"""统一入口: 控制台 API + 策略运行时
+
+- 控制台 API 负责只读账本、策略配置、控制命令提交与行情展示;
+- 策略运行时与控制台同进程, 按每个启用的策略配置自身的 `data_source`
+  决定使用 WebSocket 推送还是 REST 定时拉取;
+- 没有启用配置或策略运行时装配失败时, 控制台仍然可用 (记录日志并继续)。
+
+运行: uv run python run.py
+"""
+
+import os
 from pathlib import Path
 
 import dotenv
+import uvicorn
 
-from bootstrap import create_binance_exchange
+from bootstrap import create_binance_exchange, create_public_market_data
 from smart_trader import log
-from smart_trader.data_event_loop import BinanceDataEventLoop
-from smart_trader.exchange.ports import Exchange
-from smart_trader.task.strategy_task import StrategyTask
+from smart_trader.api.app import create_app
+from smart_trader.api.market_provider import MarketDataProvider
+from smart_trader.runtime import RuntimeRegistry
+from smart_trader.storage.command_store import CommandStore
+from smart_trader.storage.config_store import ConfigStore
+from smart_trader.storage.order_journal import OrderJournal
+from smart_trader.storage.position_ack_store import PositionAckStore
+from smart_trader.storage.reader import OrderJournalReader
+from smart_trader.strategy_runtime import StrategyRuntime
 
 dotenv.load_dotenv()
 
@@ -14,58 +32,54 @@ log.init_logging()
 
 logger = log.getLogger(__name__)
 
-# main binance exchange
-main_exchange: Exchange = create_binance_exchange("main")
 
-
-def main():
+def main() -> None:
     from smart_trader.config import DB_PATH
-    from smart_trader.model import DataSource
-    from smart_trader.runtime import RuntimeRegistry
-    from smart_trader.storage.command_store import CommandStore
-    from smart_trader.storage.config_store import ConfigStore
-    from smart_trader.storage.order_journal import OrderJournal
-    from smart_trader.strategy.config_loader import build_strategy_tasks
-    from smart_trader.task.command_runner import (
-        CommandRunner,
-        controllable_strategies,
-    )
+
+    db_path = Path(DB_PATH)
+    static_dir = Path(__file__).resolve().parent / "web" / "dist"
+
+    # OrderJournal 先建库: schema.py 是当前结构的唯一声明, 其余仓储随后打开
     journal = OrderJournal(DB_PATH)
-    command_store = CommandStore(DB_PATH)
+    commands = CommandStore(DB_PATH)
     config_store = ConfigStore(DB_PATH)
-    tasks: list[StrategyTask] = build_strategy_tasks(
+    ack_store = PositionAckStore(DB_PATH)
+    reader = OrderJournalReader(DB_PATH)
+    registry = RuntimeRegistry(db_path.parent / "runtime.json")
+
+    runtime = StrategyRuntime(
         config_store.list(),
-        data_source=DataSource.WS,
-        exchange=main_exchange,
+        exchange_factory=lambda: create_binance_exchange("main"),
         journal=journal,
-    )
-    command_runner = CommandRunner(
-        command_store,
-        controllable_strategies(tasks),
-        registry=RuntimeRegistry(Path(DB_PATH).parent / "runtime.json"),
+        command_store=commands,
+        registry=registry,
     )
 
-    kline_subscribes: list[str] = []
-    data_event_loop = BinanceDataEventLoop(kline_subscribes=kline_subscribes)
+    app = create_app(
+        reader,
+        commands,
+        token=os.environ.get("SMART_TRADER_API_TOKEN"),
+        static_dir=static_dir if (static_dir / "index.html").is_file() else None,
+        runtime_path=registry.path,
+        market_provider=MarketDataProvider(create_public_market_data),
+        config_store=config_store,
+        ack_store=ack_store,
+        on_startup=runtime.start,
+        on_shutdown=runtime.stop,
+    )
 
-    for task in tasks:
-        for timeframe in task.strategy.timeframes:
-            sub_key = task.symbol.binance_ws_sub_kline(timeframe)
-            if sub_key not in kline_subscribes:
-                kline_subscribes.append(sub_key)
-        data_event_loop.add_task(task)
-
-    command_runner.start()
+    host = os.environ.get("SMART_TRADER_API_HOST", "127.0.0.1")
+    port = int(os.environ.get("SMART_TRADER_API_PORT", "8000"))
+    logger.info("控制台与策略运行时启动: http://%s:%s", host, port)
     try:
-        # 阻塞运行; 连接断开时由 start() 内部自动重连
-        data_event_loop.start()
-    except KeyboardInterrupt:
-        logger.info("收到退出信号, 停止事件循环")
+        uvicorn.run(app, host=host, port=port)
     finally:
-        data_event_loop.stop()
-        command_runner.stop()
+        runtime.stop()
+        reader.close()
+        ack_store.close()
         config_store.close()
-        command_store.close()
+        commands.close()
+        journal.close()
 
 
 if __name__ == "__main__":

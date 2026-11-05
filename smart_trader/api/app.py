@@ -3,6 +3,8 @@
 路由只做参数解析、404 映射与依赖取用; 派生与聚合全部在 `service.py`。
 """
 
+from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal, cast
@@ -404,9 +406,28 @@ def create_app(
     market_provider: MarketDataProvider | None = None,
     config_store: ConfigStore | None = None,
     ack_store: PositionAckStore | None = None,
+    on_startup: Callable[[], None] | None = None,
+    on_shutdown: Callable[[], None] | None = None,
 ) -> FastAPI:
-    """装配控制台 API; 依赖注入 app.state 便于测试"""
-    app = FastAPI(title="Smart Trader Console API", version="0.1.0")
+    """装配控制台 API; 依赖注入 app.state 便于测试
+
+    @param on_startup 应用启动钩子（统一入口用它启动策略运行时）
+    @param on_shutdown 应用停止钩子（统一入口用它停止策略运行时）
+    """
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+        if on_startup is not None:
+            on_startup()
+        try:
+            yield
+        finally:
+            if on_shutdown is not None:
+                on_shutdown()
+
+    app = FastAPI(
+        title="Smart Trader Console API", version="0.1.0", lifespan=lifespan
+    )
     app.state.reader = reader
     app.state.commands = command_store
     app.state.token = token
