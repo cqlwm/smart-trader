@@ -9,6 +9,7 @@
 """
 
 import os
+import threading
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +41,8 @@ class RuntimeRegistry:
 
     def __init__(self, path: str | Path):
         self._path = Path(path)
+        # 命令轮询线程与配置监督线程都可能写心跳, 临时文件写入必须串行
+        self._lock = threading.Lock()
 
     @property
     def path(self) -> Path:
@@ -57,9 +60,10 @@ class RuntimeRegistry:
         )
         tmp = self._path.with_name(f"{self._path.name}.tmp")
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(snapshot.model_dump_json(), encoding="utf-8")
-            os.replace(tmp, self._path)
+            with self._lock:
+                self._path.parent.mkdir(parents=True, exist_ok=True)
+                tmp.write_text(snapshot.model_dump_json(), encoding="utf-8")
+                os.replace(tmp, self._path)
         except OSError as exc:
             logger.warning("运行态心跳写入失败: %s", exc)
 

@@ -10,6 +10,7 @@ import {
 import type {
   DataSource,
   OrderSide,
+  OrderSizeUnit,
   PlaceOrderBehavior,
   PositionSide,
   SignalKind,
@@ -39,7 +40,8 @@ interface Draft {
   signal_kind: SignalKind;
   position_side: PositionSide;
   master_side: OrderSide;
-  per_order_qty: string;
+  per_order_amount: string;
+  per_order_unit: OrderSizeUnit;
   grid_spacing_rate: string;
   trend_spacing_rate: string;
   max_order: string;
@@ -73,6 +75,7 @@ const DATA_SOURCE_OPTIONS: { value: DataSource; label: string }[] = [
 
 const SIGNAL_TYPE_OPTIONS: { value: StrategySignalType; label: string }[] = [
   { value: "alpha_trend", label: "alpha_trend" },
+  { value: "alpha_trend_inverse", label: "alpha_trend_inverse · 反向解读" },
   { value: "none", label: "none（无信号）" },
 ];
 
@@ -84,6 +87,11 @@ const SIGNAL_KIND_OPTIONS: { value: SignalKind; label: string }[] = [
 const POSITION_SIDE_OPTIONS: { value: PositionSide; label: string }[] = [
   { value: "long", label: "long · 多头" },
   { value: "short", label: "short · 空头" },
+];
+
+const ORDER_SIZE_UNIT_OPTIONS: { value: OrderSizeUnit; label: string }[] = [
+  { value: "base", label: "币数量" },
+  { value: "quote", label: "USDT 名义价值" },
 ];
 
 const MASTER_SIDE_OPTIONS: { value: OrderSide; label: string }[] = [
@@ -118,7 +126,8 @@ function draftFromPayload(
     signal_kind: payload.signal_kind,
     position_side: payload.position_side,
     master_side: payload.master_side,
-    per_order_qty: String(payload.per_order_qty),
+    per_order_amount: String(payload.per_order_amount),
+    per_order_unit: payload.per_order_unit,
     grid_spacing_rate: String(payload.grid_spacing_rate),
     trend_spacing_rate:
       payload.trend_spacing_rate === null
@@ -176,7 +185,8 @@ function payloadFromDraft(draft: Draft): StrategyConfigPayload {
     signal_kind: draft.signal_kind,
     position_side: draft.position_side,
     master_side: draft.master_side,
-    per_order_qty: parseNumber("单层数量", draft.per_order_qty),
+    per_order_amount: parseNumber("单层规模", draft.per_order_amount),
+    per_order_unit: draft.per_order_unit,
     grid_spacing_rate: parseNumber("网格间距", draft.grid_spacing_rate),
     trend_spacing_rate:
       draft.trend_spacing_rate.trim() === ""
@@ -281,7 +291,7 @@ export function ConfigsPage() {
           enabled: editor.draft.enabled,
           payload,
         });
-        setNotice(`${key} 已创建；重启对应策略进程后生效。`);
+        setNotice(`${key} 已创建；启用后将自动热加载（结构字段与停用仍需重启）。`);
       } else {
         await updateConfig.mutateAsync({
           strategyKey: editor.draft.strategy_key,
@@ -291,7 +301,9 @@ export function ConfigsPage() {
             payload,
           },
         });
-        setNotice(`${editor.draft.strategy_key} 已保存；重启对应策略进程后生效。`);
+        setNotice(
+          `${editor.draft.strategy_key} 已保存；调参将自动热更新（结构字段仍需重启）。`,
+        );
       }
       setEditor(null);
     } catch (error) {
@@ -312,7 +324,9 @@ export function ConfigsPage() {
         },
       });
       setNotice(
-        `${config.strategy_key} 已${config.enabled ? "停用" : "启用"}；重启策略进程后生效。`,
+        config.enabled
+          ? `${config.strategy_key} 已停用；重启策略进程后生效。`
+          : `${config.strategy_key} 已启用；将自动热加载。`,
       );
     } catch (error) {
       setActionError(`${config.strategy_key}: ${messageOf(error)}`);
@@ -349,10 +363,11 @@ export function ConfigsPage() {
       <div className="setup-banner reveal">
         <span className="setup-mark">!</span>
         <div>
-          <div className="setup-title">保存后重启策略进程生效</div>
+          <div className="setup-title">新增与调参自动热加载</div>
           <div className="setup-hint">
-            配置只在进程启动时读取一次。运行中的策略持有开放仓位与在途出场单，
-            不做热替换；修改后请重启 run.py（ws）或 run_timer.py（timer）。
+            运行时每 2 秒读取一次配置：新增策略与调参自动生效；交易对 / 周期 /
+            数据源 / 持仓方向 / 入场方向创建后不可修改，停用仍需重启 run.py，
+            启用未运行的配置会自动加载。
           </div>
         </div>
       </div>
@@ -523,8 +538,8 @@ export function ConfigsPage() {
       ) : null}
 
       <p className="foot-note reveal">
-        活跃仓位存在时，API 拒绝停用配置或修改 symbol / timeframe / position_side /
-        master_side；其余参数可改，重启后生效。乐观锁版本冲突会提示刷新后重试。
+        交易对 / 周期 / 数据源 / 持仓方向 / 入场方向创建后不可修改；其余参数可改，
+        保存后自动热更新。存在活跃仓位时禁止停用。乐观锁版本冲突会提示刷新后重试。
       </p>
     </>
   );
@@ -559,7 +574,7 @@ function ConfigEditor({
               : `UPDATE · BASE VERSION ${editor.version}`}
           </span>
         </div>
-        <span className="panel-note">保存后需重启策略进程</span>
+        <span className="panel-note">新增/调参自动热加载；身份字段创建后不可变</span>
       </div>
 
       <div className="config-form">
@@ -573,26 +588,29 @@ function ConfigEditor({
               onChange={(event) => onPatch("strategy_key", event.target.value)}
             />
           </ConfigField>
-          <ConfigField label="交易对 · ccxt">
+          <ConfigField label="交易对 · 创建后不可变">
             <input
               type="text"
               value={draft.symbol}
               placeholder="DOGE/USDT"
+              disabled={editor.mode === "edit"}
               onChange={(event) => onPatch("symbol", event.target.value)}
             />
           </ConfigField>
-          <ConfigField label="周期">
+          <ConfigField label="周期 · 创建后不可变">
             <input
               type="text"
               value={draft.timeframe}
               placeholder="1m"
+              disabled={editor.mode === "edit"}
               onChange={(event) => onPatch("timeframe", event.target.value)}
             />
           </ConfigField>
-          <ConfigField label="数据源">
+          <ConfigField label="数据源 · 创建后不可变">
             <SelectInput
               value={draft.data_source}
               options={DATA_SOURCE_OPTIONS}
+              disabled={editor.mode === "edit"}
               onChange={(value) => onPatch("data_source", value)}
             />
           </ConfigField>
@@ -604,17 +622,19 @@ function ConfigEditor({
         </ConfigSection>
 
         <ConfigSection title="方向与仓位">
-          <ConfigField label="持仓方向">
+          <ConfigField label="持仓方向 · 创建后不可变">
             <SelectInput
               value={draft.position_side}
               options={POSITION_SIDE_OPTIONS}
+              disabled={editor.mode === "edit"}
               onChange={(value) => onPatch("position_side", value)}
             />
           </ConfigField>
-          <ConfigField label="入场方向">
+          <ConfigField label="入场方向 · 创建后不可变">
             <SelectInput
               value={draft.master_side}
               options={MASTER_SIDE_OPTIONS}
+              disabled={editor.mode === "edit"}
               onChange={(value) => onPatch("master_side", value)}
             />
           </ConfigField>
@@ -625,12 +645,21 @@ function ConfigEditor({
               onChange={(value) => onPatch("signal_kind", value)}
             />
           </ConfigField>
-          <ConfigField label="单层数量">
+          <ConfigField label="单层规模">
             <input
               type="text"
               inputMode="decimal"
-              value={draft.per_order_qty}
-              onChange={(event) => onPatch("per_order_qty", event.target.value)}
+              value={draft.per_order_amount}
+              onChange={(event) =>
+                onPatch("per_order_amount", event.target.value)
+              }
+            />
+          </ConfigField>
+          <ConfigField label="规模单位">
+            <SelectInput
+              value={draft.per_order_unit}
+              options={ORDER_SIZE_UNIT_OPTIONS}
+              onChange={(value) => onPatch("per_order_unit", value)}
             />
           </ConfigField>
           <ConfigField label="最大层数">
@@ -859,14 +888,17 @@ function SelectInput<T extends string>({
   value,
   options,
   onChange,
+  disabled = false,
 }: {
   value: T;
   options: { value: T; label: string }[];
   onChange: (value: T) => void;
+  disabled?: boolean;
 }) {
   return (
     <select
       value={value}
+      disabled={disabled}
       onChange={(event) => onChange(event.target.value as T)}
     >
       {options.map((option) => (

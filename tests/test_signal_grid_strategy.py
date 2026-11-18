@@ -14,9 +14,11 @@ from smart_trader.model import (
     Kline,
     OrderResult,
     OrderSide,
+    OrderSizeUnit,
     OrderStatus,
     PlaceOrderBehavior,
     PositionSide,
+    Symbol,
 )
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.strategy.signal_grid_strategy import (
@@ -29,6 +31,7 @@ from tests.fakes import (
     DEFAULT_SYMBOL,
     FakeAccountPort,
     FakeMarketDataPort,
+    FakeSignal,
     FakeTradingPort,
     LedgerMirroringAccountPort,
     make_exchange_position,
@@ -55,7 +58,8 @@ def build_strategy(
         "symbol": DEFAULT_SYMBOL,
         "timeframe": TIMEFRAME,
         "strategy_key": DEFAULT_STRATEGY_KEY,
-        "per_order_qty": 100.0,
+        "per_order_amount": 100.0,
+        "per_order_unit": OrderSizeUnit.BASE,
         "grid_spacing_rate": 0.01,
         # NORMAL 直接走 TradingPort.place, 避免追单器引入额外分支
         "place_order_behavior": PlaceOrderBehavior.NORMAL,
@@ -287,9 +291,9 @@ def test_empty_position_uses_opening_price_as_grid_reference():
     assert trading.placed == []
 
 
-def test_zero_per_order_qty_registers_position_without_order():
-    """per_order_qty=0: 只登记空仓位(网格参考), 不发任何订单"""
-    strategy, trading, journal, _ = build_strategy(per_order_qty=0)
+def test_zero_per_order_amount_registers_position_without_order():
+    """per_order_amount=0: 只登记空仓位(网格参考), 不发任何订单"""
+    strategy, trading, journal, _ = build_strategy(per_order_amount=0)
 
     push_kline(strategy, 0.5)
 
@@ -308,15 +312,206 @@ def test_zero_per_order_qty_registers_position_without_order():
     )
 
 
-def test_zero_per_order_qty_respects_grid_spacing():
-    """per_order_qty=0: 闸门链照常生效, 间距内不重复登记空仓位"""
-    strategy, trading, _, _ = build_strategy(per_order_qty=0)
+def test_zero_per_order_amount_respects_grid_spacing():
+    """per_order_amount=0: 闸门链照常生效, 间距内不重复登记空仓位"""
+    strategy, trading, _, _ = build_strategy(per_order_amount=0)
 
     push_kline(strategy, 0.5)
     push_kline(strategy, 0.5005, timestamp=TIMESTAMP + 60_000)  # 0.1% < 1% 间距
 
     assert len(strategy.positions) == 1, "间距内不得重复登记空仓位"
     assert trading.placed == []
+
+
+# ------------------------------------------------------------- 单层规模换算
+
+
+def test_quote_amount_converts_to_quantity_at_entry_price():
+    """quote: 100 USDT / 0.5 = 200 个"""
+    strategy, trading, _, _ = build_strategy(
+        per_order_amount=100.0, per_order_unit=OrderSizeUnit.QUOTE
+    )
+
+    push_kline(strategy, 0.5)
+
+    assert len(trading.placed) == 1, "quote 模式应正常发出首单"
+    assert trading.placed[0].quantity == pytest.approx(200.0), (
+        f"应按收盘价折算数量, 实际 {trading.placed[0].quantity}"
+    )
+
+
+def test_quote_amount_floors_quantity_to_step_size():
+    """quote: 100 / 0.3 = 333.33…, 按 step_size=1 向下取整为 333"""
+    strategy, trading, _, _ = build_strategy(
+        per_order_amount=100.0, per_order_unit=OrderSizeUnit.QUOTE
+    )
+
+    push_kline(strategy, 0.3)
+
+    assert trading.placed[0].quantity == pytest.approx(333.0), (
+        f"必须向下取整到 step_size, 实际 {trading.placed[0].quantity}"
+    )
+
+
+def test_base_unit_ignores_entry_price():
+    """base: 每层数量就是配置值, 不随价格变化"""
+    strategy, trading, _, _ = build_strategy(
+        per_order_amount=100.0, per_order_unit=OrderSizeUnit.BASE
+    )
+
+    push_kline(strategy, 0.5)
+
+    assert trading.placed[0].quantity == pytest.approx(100.0), (
+        f"base 模式应原样使用配置数量, 实际 {trading.placed[0].quantity}"
+    )
+
+
+def test_quote_amount_below_min_qty_is_rejected_without_ledger_rows():
+    """0.4 USDT / 0.5 = 0.8, 向下取整为 0 → 低于最小数量, 不得写账本"""
+    strategy, trading, journal, _ = build_strategy(
+        per_order_amount=0.4, per_order_unit=OrderSizeUnit.QUOTE
+    )
+
+    with pytest.raises(SmartTraderError) as exc_info:
+        push_kline(strategy, 0.5)
+
+    assert exc_info.value.error_code is ErrorCode.ORDER_QUANTITY_TOO_SMALL, (
+        f"应报数量过小, 实际 {exc_info.value.error_code}"
+    )
+    assert trading.placed == [], "校验失败不得发单"
+    assert strategy.positions == [], "校验失败不得登记内存仓位"
+    assert journal.load_active_positions(DEFAULT_STRATEGY_KEY) == [], (
+        "校验失败不得写仓位行"
+    )
+
+
+def test_quote_amount_below_min_notional_is_rejected_without_order():
+    """4 USDT / 4 = 1 个, 数量达标但名义价值 4 < min_notional=5"""
+    strategy, trading, journal, _ = build_strategy(
+        per_order_amount=4.0, per_order_unit=OrderSizeUnit.QUOTE
+    )
+
+    with pytest.raises(SmartTraderError) as exc_info:
+        push_kline(strategy, 4.0)
+
+    assert exc_info.value.error_code is ErrorCode.ORDER_NOTIONAL_TOO_SMALL, (
+        f"应报名义价值过小, 实际 {exc_info.value.error_code}"
+    )
+    assert trading.placed == []
+    assert journal.load_active_positions(DEFAULT_STRATEGY_KEY) == []
+
+
+def test_quote_amount_exactly_at_min_notional_is_allowed():
+    """边界: 5 USDT / 5 = 1 个, 名义价值恰好等于 min_notional, 应放行"""
+    strategy, trading, _, _ = build_strategy(
+        per_order_amount=5.0, per_order_unit=OrderSizeUnit.QUOTE
+    )
+
+    push_kline(strategy, 5.0)
+
+    assert len(trading.placed) == 1, "恰好达到最小名义价值应允许下单"
+    assert trading.placed[0].quantity == pytest.approx(1.0)
+
+
+def test_zero_quote_amount_registers_empty_position_without_order():
+    """quote 模式下金额为 0 仍表示空仓位（网格参考）, 不发单"""
+    strategy, trading, _, _ = build_strategy(
+        per_order_amount=0.0, per_order_unit=OrderSizeUnit.QUOTE
+    )
+
+    push_kline(strategy, 0.5)
+
+    assert trading.placed == [], "零金额配置只登记仓位, 不得发单"
+    assert len(strategy.positions) == 1
+    assert strategy.positions[0].quantity == 0.0
+
+
+# ------------------------------------------------------------- 离场上下文契约
+
+
+# ------------------------------------------------------------- 调参热更新
+
+
+def test_apply_config_updates_tuning_and_keeps_positions():
+    """热更新调参: 新间距与新单层规模立即生效, 既有仓位保留"""
+    strategy, trading, _, _ = build_strategy()
+    push_kline(strategy, 0.5)
+    position_id = strategy.positions[0].id
+
+    strategy.apply_config(
+        strategy.config.model_copy(
+            update={"grid_spacing_rate": 0.05, "per_order_amount": 50.0}
+        )
+    )
+
+    assert strategy.config.grid_spacing_rate == pytest.approx(0.05)
+    assert strategy.config.per_order_amount == pytest.approx(50.0)
+    assert [position.id for position in strategy.positions] == [position_id], (
+        "热更新不得丢失既有仓位"
+    )
+
+    push_kline(strategy, 0.47, timestamp=TIMESTAMP + 60_000)
+
+    assert len(trading.placed) == 2, "新间距 5% 应允许 -6% 处加仓"
+    assert trading.placed[-1].quantity == pytest.approx(50.0), (
+        f"新层应使用新单层规模, 实际 {trading.placed[-1].quantity}"
+    )
+
+
+def test_apply_config_rejects_identity_changes_without_partial_update():
+    """身份字段变更必须拒绝, 且不得部分写入其它调参字段"""
+    strategy, _, _, _ = build_strategy()
+
+    with pytest.raises(ValueError, match="symbol"):
+        strategy.apply_config(
+            strategy.config.model_copy(
+                update={
+                    "symbol": Symbol(base="BTC", quote="USDT"),
+                    "grid_spacing_rate": 0.05,
+                }
+            )
+        )
+
+    assert strategy.config.symbol == DEFAULT_SYMBOL
+    assert strategy.config.grid_spacing_rate == pytest.approx(0.01), (
+        "拒绝热更新时不得部分写入"
+    )
+
+
+def test_apply_config_rebuilds_position_limit():
+    """max_order 变更后, 仓位上限闸门必须按新值生效"""
+    strategy, trading, _, _ = build_strategy()
+    push_kline(strategy, 0.5)
+
+    strategy.apply_config(strategy.config.model_copy(update={"max_order": 1}))
+    push_kline(strategy, 0.49, timestamp=TIMESTAMP + 60_000)
+
+    assert len(strategy.positions) == 1, "max_order=1 时不得再开新仓"
+    assert len(trading.placed) == 1
+
+
+def test_apply_config_replaces_changed_signal_instance():
+    """信号实现变化时必须替换实例并清空当前 K 线缓存"""
+    strategy, _, _, _ = build_strategy(signal=FakeSignal())
+    replacement = FakeSignal()
+
+    strategy.apply_config(
+        strategy.config.model_copy(update={"signal": replacement})
+    )
+
+    assert strategy.config.signal is replacement, "信号变化应替换实例"
+
+
+def test_apply_config_keeps_signal_instance_when_signal_unchanged():
+    """仅调参时保留信号实例, 避免重置翻转去重状态"""
+    signal = FakeSignal()
+    strategy, _, _, _ = build_strategy(signal=signal)
+
+    strategy.apply_config(
+        strategy.config.model_copy(update={"grid_spacing_rate": 0.02})
+    )
+
+    assert strategy.config.signal is signal, "信号参数未变时不得替换实例"
 
 
 # ------------------------------------------------------------- 离场上下文契约

@@ -26,7 +26,7 @@ CONFIG = SignalGridStrategyConfig(
     symbol=DEFAULT_SYMBOL,
     timeframe="1m",
     strategy_key="lifecycle_long_buy_1m",
-    per_order_qty=100.0,
+    per_order_amount=100.0,
     fixed_rate_take_profit=True,
     fixed_take_profit_rate=0.01,
 )

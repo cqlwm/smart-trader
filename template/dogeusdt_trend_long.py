@@ -22,7 +22,7 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
       顺势阶梯 —— 价格相对**最外层**仓位再顺向走出 `trend_spacing_rate`, 或
       回踩不破最外层两层开仓价时加一层;
     - 出场: 固定比例止盈（单层 10%）+ 单层止损（0.5%）;
-    - 规模: 金字塔最多 `max_order` 层, 每层 `per_order_qty`。
+    - 规模: 金字塔最多 `max_order` 层, 每层 `per_order_amount`。
 
     @note 加仓节奏受信号语义约束: `AlphaTrendSignal` 是翻转事件信号,
           每次看涨翻转最多加一层; 若需"趋势延续中每隔 X% 加一层",
@@ -38,7 +38,7 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         timeframe=timeframe_,
         position_side=position_side,
         master_side=master_side,
-        per_order_qty=500,
+        per_order_amount=500,
         # 顺势加仓间距: 越过最外层 0.01% 或回踩不破最外层两层开仓价时加一层（顺势阶梯, 替代网格间距口径）
         trend_spacing_rate=0.0001,
         max_order=10,

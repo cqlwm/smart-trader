@@ -42,10 +42,18 @@ class CommandRunner:
     ):
         self._store = store
         self._strategies = dict(strategies)
+        self._strategies_lock = threading.Lock()
         self._poll_interval = poll_interval
         self._registry = registry
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+
+    def add_strategy(self, strategy: ControllableStrategy) -> None:
+        """注册热新增的策略, 使命令与 kill switch 立即覆盖它"""
+        with self._strategies_lock:
+            self._strategies[strategy.strategy_key] = strategy
+        self.heartbeat()
+        logger.info("命令执行器新增策略: %s", strategy.strategy_key)
 
     def start(self) -> None:
         """启动后台轮询线程（幂等: 已启动则忽略）"""
@@ -71,7 +79,9 @@ class CommandRunner:
     def heartbeat(self) -> None:
         """把当前策略运行态写入心跳文件（未配置 registry 时为空操作）"""
         if self._registry is not None:
-            self._registry.heartbeat(self._strategies.values())
+            with self._strategies_lock:
+                strategies = list(self._strategies.values())
+            self._registry.heartbeat(strategies)
 
     def run_once(self) -> bool:
         """认领并执行一条命令; 无命令返回 False（供测试同步驱动）"""
@@ -112,7 +122,8 @@ class CommandRunner:
         strategy_key = command.strategy_key
         if strategy_key is None:
             raise ValueError(f"{command.action.value} 缺少 strategy_key")
-        strategy = self._strategies.get(strategy_key)
+        with self._strategies_lock:
+            strategy = self._strategies.get(strategy_key)
         if strategy is None:
             raise ValueError(f"策略未运行: {strategy_key}")
 
@@ -131,10 +142,12 @@ class CommandRunner:
         raise ValueError(f"不支持的命令: {command.action.value}")
 
     def _kill_switch(self) -> str:
-        if not self._strategies:
+        with self._strategies_lock:
+            strategies = list(self._strategies.items())
+        if not strategies:
             return "没有可控策略"
         failures: list[str] = []
-        for strategy_key, strategy in self._strategies.items():
+        for strategy_key, strategy in strategies:
             try:
                 strategy.request_close_all()
                 strategy.pause()
@@ -143,4 +156,4 @@ class CommandRunner:
                 failures.append(f"{strategy_key}: {exc}")
         if failures:
             raise RuntimeError("部分策略失败: " + "; ".join(failures))
-        return f"已暂停 {len(self._strategies)} 个策略并提交全平请求"
+        return f"已暂停 {len(strategies)} 个策略并提交全平请求"

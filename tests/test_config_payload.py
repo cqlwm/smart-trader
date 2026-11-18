@@ -9,6 +9,7 @@ from smart_trader.model import (
     DataSource,
     MarketSignal,
     OrderSide,
+    OrderSizeUnit,
     PlaceOrderBehavior,
     PositionSide,
     SignalKind,
@@ -17,6 +18,7 @@ from smart_trader.model import (
 )
 from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from smart_trader.strategy.config_payload import StrategyConfigPayload
+from smart_trader.strategy.inverted_signal import InvertedSignal
 from smart_trader.strategy.signal import Signal
 from smart_trader.strategy.signal_grid_config import SignalGridStrategyConfig
 
@@ -27,7 +29,7 @@ def _template_config() -> SignalGridStrategyConfig:
         timeframe="1m",
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
-        per_order_qty=500,
+        per_order_amount=500,
         grid_spacing_rate=0.0001,
         max_order=50,
         signal=AlphaTrendSignal(atr_multiple=1.5, period=10),
@@ -54,7 +56,8 @@ def test_defaults_describe_a_single_timer_alpha_strategy():
     assert payload.signal_type is StrategySignalType.ALPHA_TREND
     assert payload.position_side is PositionSide.LONG
     assert payload.master_side is OrderSide.BUY
-    assert payload.per_order_qty == pytest.approx(0.02)
+    assert payload.per_order_amount == pytest.approx(0.02)
+    assert payload.per_order_unit is OrderSizeUnit.BASE
     assert payload.trend_spacing_rate is None
     assert payload.place_order_behavior is PlaceOrderBehavior.CHASER_OPEN
 
@@ -81,7 +84,8 @@ def test_to_strategy_config_materializes_alpha_trend_signal():
         period=12,
         position_side=PositionSide.SHORT,
         master_side=OrderSide.SELL,
-        per_order_qty=123,
+        per_order_amount=123,
+        per_order_unit=OrderSizeUnit.QUOTE,
     )
 
     config = payload.to_strategy_config("grid_doge_1m")
@@ -94,7 +98,8 @@ def test_to_strategy_config_materializes_alpha_trend_signal():
     assert config.signal.period == 12
     assert config.position_side is PositionSide.SHORT
     assert config.master_side is OrderSide.SELL
-    assert config.per_order_qty == pytest.approx(123)
+    assert config.per_order_amount == pytest.approx(123)
+    assert config.per_order_unit is OrderSizeUnit.QUOTE
 
 
 def test_to_strategy_config_uses_none_signal_when_disabled():
@@ -103,6 +108,25 @@ def test_to_strategy_config_uses_none_signal_when_disabled():
     config = payload.to_strategy_config("plain_grid")
 
     assert config.signal is None, "signal_type=none 必须物化为无信号策略"
+
+
+def test_to_strategy_config_materializes_inverted_alpha_trend_signal():
+    """alpha_trend_inverse 物化为包装后的 AlphaTrendSignal, 指标参数透传"""
+    payload = StrategyConfigPayload(
+        signal_type=StrategySignalType.ALPHA_TREND_INVERSE,
+        atr_multiple=1.7,
+        period=12,
+    )
+
+    config = payload.to_strategy_config("inverse_doge_1m")
+
+    assert isinstance(config.signal, InvertedSignal), (
+        f"应物化为 InvertedSignal, 实际 {type(config.signal).__name__}"
+    )
+    inner = config.signal.inner
+    assert isinstance(inner, AlphaTrendSignal), "内层必须是 AlphaTrendSignal"
+    assert inner.atr_multiple == pytest.approx(1.7), "atr_multiple 必须透传"
+    assert inner.period == 12, "period 必须透传"
 
 
 def test_from_strategy_config_extracts_fields_and_signal_parameters():
@@ -121,7 +145,8 @@ def test_from_strategy_config_extracts_fields_and_signal_parameters():
     assert payload.signal_kind is SignalKind.TRIGGER
     assert payload.position_side is PositionSide.SHORT
     assert payload.master_side is OrderSide.SELL
-    assert payload.per_order_qty == pytest.approx(500)
+    assert payload.per_order_amount == pytest.approx(500)
+    assert payload.per_order_unit is OrderSizeUnit.BASE
     assert payload.enable_order_stop_loss is True
     assert payload.order_stop_loss_rate == pytest.approx(0.05)
 
@@ -140,6 +165,65 @@ def test_from_strategy_config_accepts_none_signal_as_signal_type_none():
 
     assert payload.signal_type is StrategySignalType.NONE
     assert payload.data_source is DataSource.WS
+
+
+def test_from_strategy_config_extracts_inverted_signal_type():
+    """反转信号回写为 alpha_trend_inverse, 指标参数从内层提取"""
+    original = _template_config()
+    original.signal = InvertedSignal(AlphaTrendSignal(atr_multiple=2.0, period=14))
+
+    payload = StrategyConfigPayload.from_strategy_config(
+        original, data_source=DataSource.TIMER
+    )
+
+    assert payload.signal_type is StrategySignalType.ALPHA_TREND_INVERSE, (
+        f"应识别为反转信号, 实际 {payload.signal_type}"
+    )
+    assert payload.atr_multiple == pytest.approx(2.0), "内层 atr_multiple 必须提取"
+    assert payload.period == 14, "内层 period 必须提取"
+
+
+def test_json_roundtrip_preserves_inverted_signal_type():
+    payload = StrategyConfigPayload(
+        signal_type=StrategySignalType.ALPHA_TREND_INVERSE
+    )
+
+    restored = StrategyConfigPayload.from_json(payload.to_json())
+
+    assert restored.signal_type is StrategySignalType.ALPHA_TREND_INVERSE, (
+        "JSON 往返后反转信号类型不得丢失"
+    )
+
+
+def test_json_roundtrip_preserves_quote_size_unit():
+    payload = StrategyConfigPayload(
+        per_order_amount=100.0, per_order_unit=OrderSizeUnit.QUOTE
+    )
+
+    restored = StrategyConfigPayload.from_json(payload.to_json())
+
+    assert restored.per_order_amount == pytest.approx(100.0)
+    assert restored.per_order_unit is OrderSizeUnit.QUOTE, "金额单位不得在往返中丢失"
+
+
+def test_negative_per_order_amount_is_rejected():
+    with pytest.raises(ValueError):
+        StrategyConfigPayload(per_order_amount=-1.0)
+
+
+def test_from_strategy_config_rejects_inverted_unknown_signal():
+    """包装器内层不是 AlphaTrendSignal 时同样拒绝"""
+    config = SignalGridStrategyConfig(
+        symbol=Symbol(base="doge", quote="usdt"),
+        timeframe="1m",
+        strategy_key="custom_signal",
+        signal=InvertedSignal(_OtherSignal()),
+    )
+
+    with pytest.raises(TypeError, match="不支持的信号实现"):
+        StrategyConfigPayload.from_strategy_config(
+            config, data_source=DataSource.WS
+        )
 
 
 def test_from_strategy_config_rejects_unknown_signal_implementation():

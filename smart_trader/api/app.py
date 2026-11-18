@@ -19,7 +19,10 @@ from smart_trader.api import (
     position_ack_service,
     service,
 )
-from smart_trader.api.config_service import ConfigInUseError
+from smart_trader.api.config_service import (
+    ConfigFieldImmutableError,
+    ConfigInUseError,
+)
 from smart_trader.api.market_provider import MarketDataProvider
 from smart_trader.api.market_service import build_market_chart
 from smart_trader.api.position_ack_service import (
@@ -234,7 +237,11 @@ def update_config(
         )
     except ConfigNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (ConfigVersionConflictError, ConfigInUseError) as exc:
+    except (
+        ConfigVersionConflictError,
+        ConfigInUseError,
+        ConfigFieldImmutableError,
+    ) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

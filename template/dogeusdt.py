@@ -27,7 +27,7 @@ def grid_config() -> SignalGridStrategyConfig:
         timeframe=timeframe_,
         position_side=position_side,
         master_side=master_side,
-        per_order_qty=500,
+        per_order_amount=500,
         grid_spacing_rate=0.0001,
         max_order=50,
         enable_signal_take_profit=True,

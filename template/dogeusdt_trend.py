@@ -24,7 +24,7 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         timeframe=timeframe_,
         position_side=position_side,
         master_side=master_side,
-        per_order_qty=100,
+        per_order_amount=100,
         # 顺势加仓间距: 越过最外层 0.01% 或回踩不破最外层两层开仓价时加一层（顺势阶梯, 替代网格间距口径）
         trend_spacing_rate=0.0001,
         max_order=50,
@@ -61,7 +61,7 @@ def trend_short(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         timeframe=timeframe_,
         position_side=position_side,
         master_side=master_side,
-        per_order_qty=100,
+        per_order_amount=100,
         # 顺势加仓间距: 越过最外层 0.01% 或回踩不破最外层两层开仓价时加一层（顺势阶梯, 替代网格间距口径）
         trend_spacing_rate=0.0001,
         max_order=50,

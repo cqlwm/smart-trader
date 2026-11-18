@@ -21,6 +21,7 @@ class ErrorCode(Enum):
     CONFIG_VERSION_CONFLICT = "config_version_conflict"
     CONFIG_KEY_EXISTS = "config_key_exists"
     CONFIG_IN_USE = "config_in_use"
+    CONFIG_FIELD_IMMUTABLE = "config_field_immutable"
     POSITION_ACK_NOT_FOUND = "position_ack_not_found"
     POSITION_ACK_TARGET_UNAVAILABLE = "position_ack_target_unavailable"
     POSITION_ACK_INVALID = "position_ack_invalid"

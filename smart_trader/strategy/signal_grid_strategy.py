@@ -12,6 +12,7 @@
 
 from collections.abc import Callable
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from smart_trader import log
 from smart_trader.exceptions import ErrorCode, SmartTraderError
@@ -20,6 +21,7 @@ from smart_trader.execution.order_reconciler import OrderReconciler
 from smart_trader.model import (
     MarketSignal,
     OrderSide,
+    OrderSizeUnit,
     PositionCloseReason,
     PositionLimit,
     SignalKind,
@@ -29,6 +31,9 @@ from smart_trader.model import (
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import GridPositionRow
 from smart_trader.strategy import SingleTimeframeStrategy
+from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import (
+    AlphaTrendSignal,
+)
 from smart_trader.strategy.control import ControllableStrategy
 from smart_trader.strategy.entry_gate import (
     DirectionalSignalGate,
@@ -55,8 +60,10 @@ from smart_trader.strategy.exit_policy import (
 )
 from smart_trader.strategy.grid_order_gateway import GridOrderGateway
 from smart_trader.strategy.grid_position import GridPosition, load_positions
+from smart_trader.strategy.inverted_signal import InvertedSignal
 from smart_trader.strategy.position_lifecycle import PositionLifecycle
 from smart_trader.strategy.position_reconciler import PositionReconciler
+from smart_trader.strategy.signal import Signal
 from smart_trader.strategy.signal_grid_config import (
     CloseOutcome,
     SignalGridStrategyConfig,
@@ -70,6 +77,27 @@ __all__ = [
 ]
 
 logger = log.getLogger(__name__)
+
+# 热更新允许改参数, 但不允许改身份: 这些字段与账本归属 / 交易所订阅 / 持仓方向绑定
+_HOT_UPDATE_IDENTITY_FIELDS = (
+    "strategy_key",
+    "symbol",
+    "timeframe",
+    "position_side",
+    "master_side",
+)
+
+
+def _signal_signature(signal: Signal | None) -> tuple[object, ...]:
+    """信号的可比较指纹: 参数不变时保留原实例, 避免重置去重状态"""
+    if signal is None:
+        return (None,)
+    if isinstance(signal, InvertedSignal):
+        return ("inverted", _signal_signature(signal.inner))
+    if isinstance(signal, AlphaTrendSignal):
+        return ("alpha_trend", signal.atr_multiple, signal.period)
+    return ("custom", type(signal).__name__, id(signal))
+
 
 # 孤儿回收阈值取 max(600, 周期时长)
 _ORPHAN_MIN_AGE_SECONDS = 600
@@ -222,6 +250,51 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
             )
         return ExitPolicyChain(policies)
 
+    def apply_config(self, config: SignalGridStrategyConfig) -> None:
+        """热更新调参: 保留仓位、订单与信号状态, 只重建受配置影响的规则链
+
+        @raise ValueError: 身份字段（strategy_key / symbol / timeframe /
+            position_side / master_side）发生变化, 必须重启策略进程
+        """
+        with self._callback_lock:
+            changed = [
+                field
+                for field in _HOT_UPDATE_IDENTITY_FIELDS
+                if getattr(config, field) != getattr(self.config, field)
+            ]
+            if changed:
+                raise ValueError(
+                    f"热更新不允许修改身份字段: {', '.join(changed)}; "
+                    "请重启策略进程"
+                )
+
+            old_signal = self.config.signal
+            for name in type(self.config).model_fields:
+                if name == "signal":
+                    continue
+                setattr(self.config, name, getattr(config, name))
+            if _signal_signature(config.signal) != _signal_signature(old_signal):
+                self.config.signal = config.signal
+                # 信号实现或参数变化: 旧缓存不再可信
+                self._signal_kline = None
+                self._signal_cache = None
+
+            self._limit = PositionLimit(
+                max_order=self.config.max_order,
+                enable_stop_loss=self.config.enable_max_order_stop_loss,
+            )
+            self._entry_gates = self._build_entry_gates()
+            self._exit_policies = self._build_exit_policies()
+            self._resting_take_profit = (
+                RestingTakeProfitPolicy(self.config.master_side)
+                if self.config.fixed_rate_take_profit
+                and self.config.take_profit_use_limit_order
+                else None
+            )
+            logger.info(
+                "策略配置已热更新: %s", self.config.strategy_key
+            )
+
     # ---- 逻辑仓位登记表 ----
 
     @property
@@ -363,6 +436,7 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
 
     def _open_position(self, close_price: float) -> bool:
         """按当前收盘价建仓（闸门已放行）"""
+        quantity = self._entry_quantity(close_price)
         stop_loss_rate = (
             self.config.order_stop_loss_rate
             if self.config.enable_order_stop_loss
@@ -392,7 +466,7 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
             symbol=self.config.symbol.ccxt(),
             position_side=self.config.position_side,
             main_order_side=self.config.master_side,
-            # 开仓参考价: 无成交（如 per_order_qty=0 的空仓位或首单未成交）时
+            # 开仓参考价: 无成交（如 per_order_amount=0 的空仓位或首单未成交）时
             # 作为网格间隔 / 止盈判定的基准; created_at 用于孤儿超时回收计时
             opening_price=close_price,
             created_at=datetime.now(UTC).isoformat(),
@@ -407,8 +481,8 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
             trailing_stop_price=trailing_stop_price,
         )
 
-        if self.config.per_order_qty == 0:
-            # 零数量: 只登记一个空仓位（无首单）
+        if quantity == 0:
+            # 零规模: 只登记一个空仓位（无首单）
             self.journal.upsert_position(template)
             self.add_position(GridPosition.from_row(template, []))
             return True
@@ -417,13 +491,44 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
         self._gateway.place_and_append(
             position,
             self.config.master_side,
-            self.config.per_order_qty,
+            quantity,
             close_price,
             first_price=close_price,
             template=template,
         )
         self.add_position(position)
         return True
+
+    def _entry_quantity(self, close_price: float) -> float:
+        """解析本次入场的下单数量
+
+        - `BASE`: 直接使用配置数量, 与价格无关;
+        - `QUOTE`: 金额 / 收盘价, 按 `step_size` 向下取整, 并在发单前校验
+          最小数量与最小名义价值（失败抛 `SmartTraderError`, 此时尚未建仓/写订单行）。
+
+        使用 `Decimal` 做金额除法, 避免浮点噪声把恰好落在整步上的数量向下取整掉。
+        """
+        amount = self.config.per_order_amount
+        if amount == 0:
+            return 0.0
+        if self.config.per_order_unit is OrderSizeUnit.BASE:
+            return amount
+
+        symbol_info = self.market.symbol_info(self.config.symbol)
+        raw_quantity = Decimal(str(amount)) / Decimal(str(close_price))
+        quantity = symbol_info.format_qty(str(raw_quantity))
+        symbol_info.check_qty(quantity)
+        symbol_info.check_notional(symbol_info.format_price(close_price), quantity)
+        logger.info(
+            "单层规模换算: %s %s / 价格 %s -> 数量 %s (step=%s, 最小名义=%s)",
+            amount,
+            self.config.per_order_unit.value,
+            close_price,
+            quantity,
+            symbol_info.step_size,
+            symbol_info.min_notional,
+        )
+        return quantity
 
     def check_close_position(self) -> CloseOutcome:
         """

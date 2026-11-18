@@ -1,9 +1,10 @@
 """信号网格策略的配置与平仓结果契约"""
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from smart_trader.model import (
     OrderSide,
+    OrderSizeUnit,
     PlaceOrderBehavior,
     PositionSide,
     SignalKind,
@@ -20,7 +21,9 @@ class SignalGridStrategyConfig(BaseModel):
     timeframe: str
     position_side: PositionSide = PositionSide.LONG
     master_side: OrderSide = OrderSide.BUY
-    per_order_qty: float = 0.02
+    # 单层规模: amount + unit 是唯一来源; quote 单位在开仓时按收盘价折算数量
+    per_order_amount: float = Field(default=0.02, ge=0)
+    per_order_unit: OrderSizeUnit = OrderSizeUnit.BASE
     # 加仓间距阈值, 正负号决定语义(见 GridSpacingGate):
     #   正数: 单向 —— 仅亏损方向走出间距后加仓
     #   负数: 双向距离限制 —— 距基准仓位不超过 |值| 即加仓(盈利方向也放行)

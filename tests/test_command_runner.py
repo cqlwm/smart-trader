@@ -157,6 +157,23 @@ def test_run_once_cancel_entries_reports_counts(store: CommandStore):
     assert "3" in loaded.result and "1" in loaded.result
 
 
+def test_add_strategy_receives_commands_and_kill_switch(store: CommandStore):
+    """热新增策略必须立即进入命令分发与 kill switch 范围"""
+    runner = _runner(store)
+    strategy = FakeControllableStrategy(KEY)
+    runner.add_strategy(strategy)
+    pause = store.submit(action=CommandAction.PAUSE, strategy_key=KEY)
+    kill = store.submit(action=CommandAction.KILL_SWITCH, strategy_key=None)
+
+    assert runner.run_once() is True
+    assert strategy.paused is True
+    assert _command(store, pause.id).status is CommandStatus.SUCCEEDED
+
+    assert runner.run_once() is True
+    assert strategy.close_requests == 1, "kill switch 必须覆盖热新增策略"
+    assert _command(store, kill.id).status is CommandStatus.SUCCEEDED
+
+
 def test_run_once_unknown_strategy_marks_failed(store: CommandStore):
     runner = _runner(store)
     command = store.submit(action=CommandAction.PAUSE, strategy_key=KEY)

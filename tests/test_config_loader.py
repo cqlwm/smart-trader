@@ -12,6 +12,7 @@ from smart_trader.model import (
     OrderRequest,
     OrderResult,
     Position,
+    StrategySignalType,
     Symbol,
     SymbolInfo,
 )
@@ -19,6 +20,7 @@ from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import StrategyConfigRecord
 from smart_trader.strategy.config_loader import build_strategy_tasks
 from smart_trader.strategy.config_payload import StrategyConfigPayload
+from smart_trader.strategy.inverted_signal import InvertedSignal
 from smart_trader.strategy.signal_grid_strategy import SignalGridStrategy
 from smart_trader.task.strategy_task import StrategyTask
 
@@ -59,12 +61,14 @@ def _record(
     *,
     enabled: bool = True,
     max_order: int = 5,
+    signal_type: StrategySignalType = StrategySignalType.ALPHA_TREND,
 ) -> StrategyConfigRecord:
     payload = StrategyConfigPayload(
         symbol="doge/usdt",
         timeframe="1m",
         data_source=data_source,
         max_order=max_order,
+        signal_type=signal_type,
     )
     return StrategyConfigRecord(
         strategy_key=strategy_key,
@@ -143,6 +147,27 @@ def test_task_order_follows_input_order(journal: OrderJournal, exchange: Exchang
         "b_strategy",
         "a_strategy",
     ], "加载顺序必须与输入一致, 便于复现"
+
+
+def test_loads_inverted_alpha_trend_signal(
+    journal: OrderJournal, exchange: Exchange
+):
+    records = [
+        _record(
+            "inverse_strategy",
+            DataSource.TIMER,
+            signal_type=StrategySignalType.ALPHA_TREND_INVERSE,
+        )
+    ]
+
+    tasks = build_strategy_tasks(
+        records, data_source=DataSource.TIMER, exchange=exchange, journal=journal
+    )
+
+    config = _strategy_of(tasks[0]).config
+    assert isinstance(config.signal, InvertedSignal), (
+        f"应装配 InvertedSignal, 实际 {type(config.signal).__name__}"
+    )
 
 
 def test_empty_selection_returns_empty_list(

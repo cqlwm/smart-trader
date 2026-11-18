@@ -111,6 +111,7 @@ uv run python scripts/migrations/001_add_grid_positions_closed_reason.py "$DB"
 uv run python scripts/migrations/002_add_commands.py "$DB"
 uv run python scripts/migrations/003_add_strategy_configs.py "$DB"
 uv run python scripts/migrations/005_add_position_acks.py "$DB"
+uv run python scripts/migrations/006_convert_per_order_amount.py "$DB"
 ```
 
 如需从 `template/` 导入初始策略配置，再执行 `004_seed_template_configs.py`（不覆盖已编辑的配置）。
@@ -123,7 +124,7 @@ uv run python run.py       # 控制台 + 策略运行时, 默认 http://127.0.0.
 
 - 同一进程内启动控制台 API 与策略运行时；启用的配置按各自的 `data_source` 进入 WS 或 Timer 循环，两种循环可并存。
 - 没有任何启用的配置，或策略运行时装配失败（如凭据缺失）时，只记录日志，控制台仍可用。
-- **代价**：API 与策略同进程，重启进程会同时中断交易；配置修改同样需要重启才生效。
+- **代价**：API 与策略同进程，重启进程会同时中断交易；结构性配置变更与启停仍需重启，调参与新增策略可热加载。
 
 ### 6. 打开控制台
 
@@ -134,10 +135,11 @@ uv run python run.py       # 控制台 + 策略运行时, 默认 http://127.0.0.
 
 策略配置持久化在 sqlite 的 `strategy_configs` 表中，可在控制台「策略配置」页新建/修改，也可用种子脚本从 `template/` 初始化。
 
-- **生效时机**：策略运行时在进程启动时读取一次配置，修改后需**重启 `run.py`** 才生效（不做运行中热替换，避免孤立在途订单与开放仓位）。
-- **数据源选择**：每个配置的 `data_source` 决定进入 WebSocket 还是 REST 定时拉取循环；两种循环可在同一进程内并存。
-- **`strategy_key` 不可变**，且不提供删除，只允许 `enabled=false`，避免与历史账本失联。
-- 该 `strategy_key` 存在活跃仓位时，禁止禁用配置或修改 `symbol` / `timeframe` / `position_side` / `master_side`。
+- **生效时机**：运行时每 2 秒轮询配置表。**新增策略与调参自动热更新**；交易对 / 周期 / 数据源 / 持仓方向 / 入场方向**创建后不可修改**；**停用**仍需**重启 `run.py`**（不替换运行中的策略实例，避免孤立在途订单与开放仓位）。启用一个当前未运行的配置会走热新增。
+- **热新增**：新增启用配置会挂到对应 WS / Timer 循环；WS 新 symbol 或周期会触发一次重连并按新订阅列表重放。
+- **数据源选择**：每个配置的 `data_source` 决定进入 WebSocket 还是 REST 定时拉取循环；两种循环可在同一进程内并存，创建后不可切换。
+- **`strategy_key` 与身份字段不可变**，且不提供删除，只允许 `enabled=false`，避免与历史账本失联；需要换交易对 / 周期 / 方向时请新建配置。
+- 该 `strategy_key` 存在活跃仓位时，禁止停用配置。
 
 主要参数：
 
@@ -145,10 +147,10 @@ uv run python run.py       # 控制台 + 策略运行时, 默认 http://127.0.0.
 | --- | --- | --- |
 | `symbol` / `timeframe` | `DOGE/USDT` / `1m` | 交易对与 K 线周期 |
 | `data_source` | `timer` | 行情驱动方式：`ws`（WebSocket 推送）或 `timer`（REST 定时拉取） |
-| `signal_type` / `signal_kind` | `alpha_trend` / `directional` | 信号实现；`directional` 有方向倾向，`trigger` 任何非中性信号都触发 |
+| `signal_type` / `signal_kind` | `alpha_trend` / `directional` | 信号实现：`alpha_trend`（原始方向）/ `alpha_trend_inverse`（反向解读）/ `none`；`directional` 有方向倾向，`trigger` 任何非中性信号都触发 |
 | `atr_multiple` / `period` | `1.0` / `8` | AlphaTrend 参数 |
 | `position_side` / `master_side` | `long` / `buy` | 持仓方向与网格主攻方向 |
-| `per_order_qty` | `0.02` | 每层下单数量 |
+| `per_order_amount` / `per_order_unit` | `0.02` / `base` | 每层规模；`base` 为币数量，`quote` 为 USDT 名义价值（开仓时按信号收盘价折算并向下取整到 `step_size`） |
 | `max_order` | `10000` | 最大逻辑仓位数（上限闸门与上限止损的唯一来源） |
 | `grid_spacing_rate` | `0.01` | 网格间距。正数：仅亏损方向走出间距才加仓；负数：距基准不超过 \|值\| 即加仓（盈利方向也放行） |
 | `trend_spacing_rate` | 空 | 非空时启用顺势阶梯加仓，与 `grid_spacing_rate` 语义互斥 |
@@ -160,6 +162,10 @@ uv run python run.py       # 控制台 + 策略运行时, 默认 http://127.0.0.
 | `enable_order_stop_loss` / `order_stop_loss_rate` | `false` / `0.05` | 单层价格维度止损，按仓位均价实时计算 |
 | `enable_trailing_stop` / `trailing_stop_rate` / `trailing_stop_activation_profit_rate` | `false` / `0.02` / `0.01` | 跟踪止损（激活后按高点回撤 ratchet） |
 | `enable_max_order_stop_loss` / `paused_after_stop_loss` | `false` / `true` | 达到仓位上限时全平，并可暂停策略 |
+
+`alpha_trend_inverse` 在**信号层**反转方向：配置为 `position_side=long` 时，AlphaTrend 的看跌突破触发做多，看涨突破触发信号离场；因入场闸门与离场策略共享同一信号实例，两侧同时反向。单个配置仍只持一个方向，多空双向反手需 long / short 两个配置（交易所为双向持仓模式）。
+
+`per_order_unit=quote` 时每层规模按名义价值设置（如 `100` USDT）：开仓时数量 = 金额 / 信号收盘价，再按交易所 `stepSize` 向下取整；折算后低于最小数量或最小名义价值时拒绝开仓并记录日志。该金额是订单名义价值（价格 × 数量），不是保证金；实际成交名义价值会因取整与追单价格漂移略有偏差。
 
 ## 控制台与 API
 

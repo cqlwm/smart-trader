@@ -178,9 +178,16 @@ Gate 内统一 `if ctx.market_signal is None → 放行`。
 随后的同向去重把它吞掉 —— 进程重启后必丢一个突破信号。
 v2 的累积计数不存在此问题，`first_run` 已删除。
 
-注意 `alpha_trend_indicator` 会**就地往 DataFrame 追加指标列**（`alpha_value` /
-`trend` / `is_breakout` / `ema200` / `*_entry` / `*_exit`），传入的是策略的活对象
-`klines_df`，该副作用保留。
+`alpha_trend_indicator` 在**入参副本**上追加指标列（`alpha_value` / `trend` /
+`is_breakout` / `ema200` / `*_entry` / `*_exit`），**不得修改策略共享的
+`klines_df`**（Step 23 起的回归测试锁定；曾因就地加列污染共享 DataFrame）。
+
+**反向信号用组合而非继承（Step 34）**：`InvertedSignal` 包装任意 `Signal`，
+只对 `MarketSignal.direction` 调 `opposite()`，`NEUTRAL` 保持中性。
+反转必须发生在信号层而不是入场闸门或策略层 —— 入场闸门与离场策略消费同一个
+信号实例，信号层反转才能保证"多头信号 → 开空 / 空头信号 → 开多"两侧同时生效；
+只反转入场闸门会造成"入场反向、出场未反向"的半吊子语义。
+反向包装不改变内层状态与去重语义（非翻转根反转后仍是 `NEUTRAL`）。
 
 信号状态（去重方向）**留内存不落库**。本轮明确不引入 `signals` 表。
 
@@ -436,6 +443,66 @@ error 日志刷屏。对账缺口只靠 `OrderReconciler`（订单行级）无�
 净持仓 = 簿内 BUY 成交 − SELL 成交 − `external_close()` 脚本扣减，与真实交易所
 "订单成交产生持仓"的因果关系一致，`external_close` 即"用户手动平仓"的脚本入口。
 
+### 17. 单层规模：金额 / 数量换算（Step 35）
+
+**单一来源**：配置用 `per_order_amount` + `per_order_unit`（`OrderSizeUnit.BASE` /
+`QUOTE`）表达每层规模，而不是再加一个 `per_order_notional` 与 `per_order_qty`
+并存 —— 双字段会产生"同时有值、以哪个为准"的双重真相与默认值互斥校验，
+与本项目"消除 dual-truth 开关"的既有教训冲突。
+
+**换算位置**：`SignalGridStrategy._entry_quantity`，在创建仓位行与订单行之前完成：
+
+- `BASE`：数量 = `per_order_amount`，与价格无关，行为与旧 `per_order_qty` 完全一致；
+- `QUOTE`：数量 = `per_order_amount / close_price`，用 `Decimal` 做除法避免浮点噪声
+  把恰好落在整步上的数量向下取整掉；再经 `SymbolInfo.format_qty` 按 `step_size`
+  向下取整，并调用 `check_qty` / `check_notional` 校验最小数量与最小名义价值。
+
+**为什么在策略层而不是适配器**：适配器也会格式化数量并校验，但它在
+`JournaledTradingPort` 预写订单行之后才执行；策略层提前换算并校验，
+失败时抛 `SmartTraderError`，不会留下仓位行或"数量与最终下单不一致"的订单行。
+账本记录的数量就是实际发单数量。
+
+**语义边界**：`QUOTE` 是订单名义价值（价格 × 数量），不是保证金；配置 `100`
+不代表 100U 保证金。向下取整与追单成交价漂移会让实际名义价值略低于目标。
+`amount=0` 仍表示只登记空仓位（网格参考），不发单。
+
+### 18. 配置监督：热新增与调参热更新（Step 36）
+
+**为什么由运行时轮询配置表**：控制台 API 只写 `strategy_configs`，不直接调用策略
+（保持"只读侧不碰执行、运行时不碰控制面写入"的职责边界）。`StrategyRuntime` 接受
+`configs_provider`（通常是 `ConfigStore.list`），监督线程每 2 秒比对一次，
+以 `version` 判定变更，不依赖 API 通知。
+
+**热新增**：按 `data_source` 构造 `StrategyTask`，挂到既有循环；同一循环内新 symbol /
+timeframe 通过动态订阅加入：
+
+- WS：`BinanceDataEventLoop.add_kline_stream` 更新订阅列表并关闭当前会话，
+  `start()` 重连时按新列表重新订阅（重连间隔内该循环所有策略短暂收不到 K 线）；
+- Timer：`TimerDataEventLoop.add_timer_subscription` 追加订阅、更新周期表并 `wakeup`；
+- `DataEventLoop` 的任务列表读写加锁 / 快照迭代，避免监督线程与分发线程竞态；
+- 新策略同步注册到 `CommandRunner`，kill switch 与命令立即覆盖。
+
+**调参热更新**：`SignalGridStrategy.apply_config` 在 `_callback_lock` 内：
+
+- 校验身份字段（`strategy_key` / `symbol` / `timeframe` / `position_side` /
+  `master_side`）不变，否则抛 `ValueError`，由运行时记录"需要重启"；
+- **原地更新** `self.config` 字段（`GridOrderGateway` / `PositionLifecycle` /
+  `PositionReconciler` 持有同一对象引用，替换对象会让它们继续读旧值）；
+- 重建 `PositionLimit`、入场闸门链、离场策略链与休息止盈策略；
+- 信号实现 / 参数未变时保留原信号实例（避免重置翻转去重状态），变化时替换并清空
+  当前 K 线 memo；
+- 仓位、订单、跟踪止损字段与在途出场单全部保留。
+
+**不可变与重启**：`symbol` / `timeframe` / `position_side` / `master_side` /
+`data_source` 在 API 层创建后即拒绝修改（409），前端编辑态直接禁用输入；
+运行时的身份校验保留为直接改库场景的防御。停用仍需重启（运行中替换策略对象会
+孤立开放仓位与在途出场单）；启用一个当前未运行的配置等价于热新增。
+
+**失败隔离与去重**：单条配置解析 / 装配失败只记录日志并记住失败版本，不阻塞其它
+策略；需要重启的变更按 `(strategy_key, version)` 只告警一次，避免 2 秒轮询刷屏。
+`RuntimeRegistry.heartbeat` 增加写锁：命令轮询线程与配置监督线程会并发写同一临时
+文件，串行化后避免 `os.replace` 竞争。
+
 ## 四、数据事件循环设计（data_event_loop / task）
 
 ### 1. 载荷统一为 Kline
@@ -633,11 +700,13 @@ API 派生 `ReconcileView` 与告警。这里刻意**不做**自动收编 / 自�
 
 ## 八、P3 配置设计
 
-### 1. 为什么不做热替换
+### 1. 为什么不做"实例替换"
 
 `SignalGridStrategy` 实例持有 `_callback_lock`、已加载的活跃仓位、在途出场单与信号状态。
-运行中换成新配置对象会丢失这些内存状态并把开放仓位变成孤儿；因此配置只在进程启动时读取，
-保存后由前端明确提示"重启策略进程生效"。这是有意的运维语义，不是功能缺口。
+运行中换成新实例会丢失这些内存状态并把开放仓位变成孤儿；因此**始终不替换策略对象**。
+Step 36 的热更新走"原地更新配置 + 重建规则链"（见三.18），不是替换实例；
+身份字段（symbol / timeframe / position_side / master_side）与停用仍要求重启；
+启用未运行配置走热新增。
 
 ### 2. payload 与 `Signal` 的序列化边界
 

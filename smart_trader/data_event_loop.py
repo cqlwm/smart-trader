@@ -101,15 +101,28 @@ class DataEventLoop:
         self.tasks: list[Task] = []
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
         self.running: bool = False
+        self._tasks_lock = threading.Lock()
 
     def add_task(self, task: Task):
-        self.tasks.append(task)
+        with self._tasks_lock:
+            self.tasks.append(task)
 
     def loop(self, kline: Kline):
         if not self.running:
             return
-        for task in self.tasks:
+        # 快照迭代: 热新增任务可能来自配置监督线程
+        with self._tasks_lock:
+            tasks = list(self.tasks)
+        for task in tasks:
             self.executor.submit(task.safe_run, kline)
+
+    def add_kline_stream(self, stream: str) -> bool:
+        """动态增加 WebSocket K 线流; 非 WS 循环不支持, 返回 False"""
+        return False
+
+    def add_timer_subscription(self, symbol: Symbol, timeframe: str) -> bool:
+        """动态增加定时拉取订阅; 非 Timer 循环不支持, 返回 False"""
+        return False
 
     def start(self):
         self.running = True
@@ -163,6 +176,7 @@ class BinanceDataEventLoop(DataEventLoop):
         self.retry_interval = retry_interval
         self.max_connections = max_connections
         self._session: Any = None
+        self._subscription_lock = threading.Lock()
 
     def start(self):
         """建立连接, 断开后自动重连, 直到 stop() 或达到 max_connections"""
@@ -206,13 +220,34 @@ class BinanceDataEventLoop(DataEventLoop):
             logger.exception("关闭 WebSocket 会话失败")
 
     def _subscribe(self, ws: websocket.WebSocketApp):
+        with self._subscription_lock:
+            subscribes = list(self.kline_subscribes)
         params: dict[str, Any] = {
             "method": "SUBSCRIBE",
-            "params": self.kline_subscribes,
+            "params": subscribes,
             "id": self.SUBSCRIBE_KLINE_ID,
         }
         ws.send(json.dumps(params))
-        logger.info("### BinanceDataEventLoop Subscribed ### %s", self.kline_subscribes)
+        logger.info("### BinanceDataEventLoop Subscribed ### %s", subscribes)
+
+    def add_kline_stream(self, stream: str) -> bool:
+        """动态增加 K 线流
+
+        已存在返回 False; 新增后若连接仍在, 主动断开当前会话, 由 `start()`
+        在重连时按新列表重新订阅（重连间隔由 `retry_interval` 决定）。
+        """
+        with self._subscription_lock:
+            if stream in self.kline_subscribes:
+                return False
+            self.kline_subscribes.append(stream)
+            session = self._session
+        logger.info("新增行情订阅: %s", stream)
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                logger.exception("关闭 WebSocket 会话失败(等待重连)")
+        return True
 
     def on_message(self, ws: websocket.WebSocketApp, message: str):
         kline = parse_ws_message(message)
@@ -292,9 +327,20 @@ class TimerDataEventLoop(DataEventLoop):
         self.fetch_delay = fetch_delay
         self.poll_interval = poll_interval
         self._wakeup = threading.Event()
+        self._subscription_lock = threading.Lock()
         self._tf_seconds: dict[str, int] = self._validate_timeframes()
         # 最近一次分发的已完成K线时间戳, 按 (symbol, timeframe) 隔离
         self._dispatched_finished: dict[tuple[str, str], int] = {}
+
+    def _validate_timeframe(self, timeframe: str) -> int:
+        """解析单个周期并校验 fetch_delay 约束"""
+        seconds = timeframe_seconds(timeframe)
+        if 2 * self.fetch_delay >= seconds:
+            raise ValueError(
+                f"fetch_delay({self.fetch_delay}s) 必须小于周期 "
+                f"{timeframe} 的一半({seconds / 2}s), 否则边界事件会迟到越过中点"
+            )
+        return seconds
 
     def _validate_timeframes(self) -> dict[str, int]:
         """解析并缓存每个唯一 timeframe 的秒数; 构造期失败快速报错"""
@@ -302,22 +348,37 @@ class TimerDataEventLoop(DataEventLoop):
         for _, timeframe in self.subscriptions:
             if timeframe in tf_seconds:
                 continue
-            seconds = timeframe_seconds(timeframe)
-            if 2 * self.fetch_delay >= seconds:
-                raise ValueError(
-                    f"fetch_delay({self.fetch_delay}s) 必须小于周期 "
-                    f"{timeframe} 的一半({seconds / 2}s), 否则边界事件会迟到越过中点"
-                )
-            tf_seconds[timeframe] = seconds
+            tf_seconds[timeframe] = self._validate_timeframe(timeframe)
         return tf_seconds
+
+    def add_timer_subscription(self, symbol: Symbol, timeframe: str) -> bool:
+        """动态增加 (symbol, timeframe) 订阅
+
+        已存在返回 False; 新周期会立即参与调度并唤醒等待中的循环。
+        @raise ValueError: 新周期不满足 fetch_delay 约束
+        """
+        pair = (symbol, timeframe)
+        with self._subscription_lock:
+            if pair in self.subscriptions:
+                return False
+            seconds = self._validate_timeframe(timeframe)
+            self.subscriptions.append(pair)
+            self._tf_seconds[timeframe] = seconds
+        self._wakeup.set()
+        logger.info("新增定时订阅: %s %s", symbol.ccxt(), timeframe)
+        return True
 
     def start(self) -> None:
         """阻塞调度: 到点拉取K线并分发, 直到 stop()(与 BinanceDataEventLoop.start 同语义)"""
         super().start()
         while self.running:
             fire_at, events = self._next_events(self.clock())
-            if not self._wait_until(fire_at):
+            outcome = self._wait_until(fire_at)
+            if outcome is False:
                 break
+            if outcome is None:
+                # 订阅变化: 不触发旧事件, 重新计算最早到期时刻
+                continue
             for timeframe, kind in events:
                 self._fire(timeframe, kind, fire_at)
 
@@ -335,7 +396,8 @@ class TimerDataEventLoop(DataEventLoop):
         已错过, 不补发。并列同刻的事件(如 1m 与 5m 边界重合)一齐返回。
         """
         candidates: list[tuple[float, str, KlineScheduleKind]] = []
-        for timeframe in self._tf_seconds:
+        # 快照: 热新增周期可能来自配置监督线程
+        for timeframe in list(self._tf_seconds):
             tf = self._tf_seconds[timeframe]
             current_boundary = math.floor(now / tf) * tf
             next_boundary = current_boundary + tf
@@ -365,19 +427,27 @@ class TimerDataEventLoop(DataEventLoop):
         ]
         return fire_at, events
 
-    def _wait_until(self, target: float) -> bool:
-        """分片等待至 clock() 到达 target; stop() 立即唤醒并返回 False"""
+    def _wait_until(self, target: float) -> bool | None:
+        """分片等待至 clock() 到达 target
+
+        @return True=到期; False=已停止; None=订阅变化, 调用方应重算调度
+        @note stop() 与 add_timer_subscription() 都会置位 `_wakeup`, 以 running
+            区分"停止"与"刷新", 避免热新增订阅被误判为停机。
+        """
         while self.running:
             if self.clock() >= target:
                 return True
             if self._wakeup.wait(self.poll_interval):
-                return False
+                if not self.running:
+                    return False
+                self._wakeup.clear()
+                return None
         return False
 
     def _fire(self, timeframe: str, kind: KlineScheduleKind, fire_at: float) -> None:
         """为该周期的每个订阅拉取K线并分发; 单次拉取失败只跳过本周期"""
         tf_seconds = self._tf_seconds[timeframe]
-        for symbol, subscription_tf in self.subscriptions:
+        for symbol, subscription_tf in list(self.subscriptions):
             if subscription_tf != timeframe:
                 continue
             if kind is KlineScheduleKind.BOUNDARY:

@@ -4,11 +4,16 @@
 - `DataSource.TIMER` → `TimerDataEventLoop`（REST 定时拉取）;
 - 两种循环可同时存在, 各自在守护线程中阻塞运行;
 - 没有启用配置或装配失败时只记录日志, 控制台仍然可用;
-- 停止顺序: 先停命令轮询（不再接受新命令）, 再叫停事件循环并 join 线程。
+- 传入 `configs_provider` 后启动配置监督线程: 运行中热新增策略、
+  热更新调参; symbol / timeframe / position_side / master_side 等
+  身份字段与停用仍要求重启（见 `.memory/01` 第十五节）;
+- 停止顺序: 先停配置监督与命令轮询（不再接受新配置 / 命令）,
+  再叫停事件循环并 join 线程。
 """
 
 import threading
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 
 from smart_trader import log
 from smart_trader.data_event_loop import (
@@ -23,6 +28,8 @@ from smart_trader.storage.command_store import CommandStore
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import StrategyConfigRecord
 from smart_trader.strategy.config_loader import build_strategy_tasks
+from smart_trader.strategy.config_payload import StrategyConfigPayload
+from smart_trader.strategy.signal_grid_strategy import SignalGridStrategy
 from smart_trader.task.command_runner import CommandRunner, controllable_strategies
 from smart_trader.task.strategy_task import StrategyTask
 
@@ -30,6 +37,7 @@ logger = log.getLogger(__name__)
 
 WsLoopFactory = Callable[[list[str]], DataEventLoop]
 TimerLoopFactory = Callable[[list[tuple[Symbol, str]], MarketDataPort], DataEventLoop]
+ConfigsProvider = Callable[[], list[StrategyConfigRecord]]
 
 _LOOP_JOIN_TIMEOUT = 5.0
 
@@ -44,6 +52,17 @@ def _create_timer_loop(
     return TimerDataEventLoop(subscriptions=subscriptions, market=market)
 
 
+@dataclass
+class _RunningStrategy:
+    """运行中的策略任务快照（热更新按 version 判断是否变化）"""
+
+    task: StrategyTask
+    loop: DataEventLoop
+    data_source: DataSource
+    version: int
+    payload: str
+
+
 class StrategyRuntime:
     """按配置装配策略任务与事件循环, 并管理其生命周期
 
@@ -52,6 +71,9 @@ class StrategyRuntime:
     @param journal 账本（策略恢复活跃仓位）
     @param command_store 控制命令仓储
     @param registry 运行态心跳
+    @param configs_provider 配置读取入口（通常是 `ConfigStore.list`）;
+        提供后启用配置热新增 / 调参热更新
+    @param config_poll_interval 配置轮询间隔（秒）
     """
 
     def __init__(
@@ -63,6 +85,8 @@ class StrategyRuntime:
         command_store: CommandStore,
         registry: RuntimeRegistry,
         poll_interval: float = 2.0,
+        configs_provider: ConfigsProvider | None = None,
+        config_poll_interval: float = 2.0,
         ws_loop_factory: WsLoopFactory = _create_ws_loop,
         timer_loop_factory: TimerLoopFactory = _create_timer_loop,
     ) -> None:
@@ -72,6 +96,8 @@ class StrategyRuntime:
         self._command_store = command_store
         self._registry = registry
         self._poll_interval = poll_interval
+        self._configs_provider = configs_provider
+        self._config_poll_interval = config_poll_interval
         self._ws_loop_factory = ws_loop_factory
         self._timer_loop_factory = timer_loop_factory
 
@@ -79,12 +105,33 @@ class StrategyRuntime:
         self._loops: list[DataEventLoop] = []
         self._threads: list[threading.Thread] = []
         self._command_runner: CommandRunner | None = None
+        self._loops_by_source: dict[DataSource, DataEventLoop] = {}
+        self._running: dict[str, _RunningStrategy] = {}
+        self._supervisor_thread: threading.Thread | None = None
+        self._supervisor_stop = threading.Event()
+        self._sync_lock = threading.Lock()
+        self._exchange: Exchange | None = None
+        self._exchange_failure_signature: tuple[tuple[str, int], ...] | None = None
+        # 构造失败 / 需要重启的配置版本: 避免轮询线程每轮重复日志与重试
+        self._failed_versions: dict[str, int] = {}
+        self._restart_notified: dict[str, int] = {}
 
     def start(self) -> None:
         """启动策略运行时; 幂等, 装配失败只记录日志并保持控制台可用"""
         if self._started:
             return
         self._started = True
+        self._supervisor_stop.clear()
+        self._failed_versions.clear()
+        self._restart_notified.clear()
+
+        if self._configs_provider is not None:
+            try:
+                self._start_supervisor()
+            except Exception:
+                logger.exception("策略运行时启动失败, 控制台继续运行")
+                self.stop()
+            return
 
         enabled = [record for record in self._records if record.enabled]
         if not enabled:
@@ -93,6 +140,7 @@ class StrategyRuntime:
 
         try:
             exchange = self._exchange_factory()
+            self._exchange = exchange
             ws_tasks = build_strategy_tasks(
                 enabled,
                 data_source=DataSource.WS,
@@ -120,19 +168,15 @@ class StrategyRuntime:
             self._command_runner = runner
 
             if ws_tasks:
-                self._start_loop(
-                    "ws-event-loop",
-                    self._ws_loop_factory(_ws_subscriptions(ws_tasks)),
-                    ws_tasks,
-                )
+                ws_loop = self._ws_loop_factory(_ws_subscriptions(ws_tasks))
+                self._start_loop("ws-event-loop", ws_loop, ws_tasks)
+                self._loops_by_source[DataSource.WS] = ws_loop
             if timer_tasks:
-                self._start_loop(
-                    "timer-event-loop",
-                    self._timer_loop_factory(
-                        _timer_subscriptions(timer_tasks), exchange
-                    ),
-                    timer_tasks,
+                timer_loop = self._timer_loop_factory(
+                    _timer_subscriptions(timer_tasks), exchange
                 )
+                self._start_loop("timer-event-loop", timer_loop, timer_tasks)
+                self._loops_by_source[DataSource.TIMER] = timer_loop
             logger.info(
                 "策略运行时启动: ws=%s timer=%s",
                 len(ws_tasks),
@@ -142,10 +186,251 @@ class StrategyRuntime:
             logger.exception("策略运行时启动失败, 控制台继续运行")
             self.stop()
 
+    def _start_supervisor(self) -> None:
+        """启动命令执行器与配置监督线程（控制台 + 运行时同进程）"""
+        runner = CommandRunner(
+            self._command_store,
+            {},
+            poll_interval=self._poll_interval,
+            registry=self._registry,
+        )
+        runner.start()
+        self._command_runner = runner
+        self._supervisor_thread = threading.Thread(
+            target=self._supervisor_loop, name="ConfigSupervisor", daemon=True
+        )
+        self._supervisor_thread.start()
+        try:
+            self.sync_configs_once()
+        except Exception:
+            logger.exception("初始策略配置热加载失败, 控制台继续运行")
+
+    def _supervisor_loop(self) -> None:
+        while not self._supervisor_stop.is_set():
+            try:
+                self.sync_configs_once()
+            except Exception:
+                logger.exception("策略配置热同步失败")
+            self._supervisor_stop.wait(self._config_poll_interval)
+
+    def sync_configs_once(self) -> None:
+        """同步一次数据库配置: 热新增 / 调参热更新（供轮询线程与测试调用）"""
+        if not self._started or self._configs_provider is None:
+            return
+        with self._sync_lock:
+            records = list(self._configs_provider())
+            current = {record.strategy_key: record for record in records}
+            enabled = [record for record in records if record.enabled]
+            pending = [
+                record
+                for record in enabled
+                if record.strategy_key not in self._running
+                and self._failed_versions.get(record.strategy_key) != record.version
+            ]
+            if pending:
+                exchange = self._exchange_for(enabled)
+                if exchange is not None:
+                    for record in pending:
+                        self._add_strategy(record, exchange)
+            for key, running in list(self._running.items()):
+                record = current.get(key)
+                if record is None:
+                    self._notify_restart(key, -1, "配置已删除")
+                    continue
+                if record.version == running.version:
+                    continue
+                self._update_strategy(key, running, record)
+
+    def _exchange_for(
+        self, enabled: list[StrategyConfigRecord]
+    ) -> Exchange | None:
+        """按需构造交易所; 同一配置集合构造失败只告警一次"""
+        signature = tuple(
+            sorted((record.strategy_key, record.version) for record in enabled)
+        )
+        if self._exchange_failure_signature == signature:
+            return None
+        try:
+            if self._exchange is None:
+                self._exchange = self._exchange_factory()
+        except Exception:
+            logger.exception("交易所构造失败, 热加载暂停; 配置变化后重试")
+            self._exchange_failure_signature = signature
+            return None
+        self._exchange_failure_signature = None
+        return self._exchange
+
+    def _add_strategy(
+        self, record: StrategyConfigRecord, exchange: Exchange
+    ) -> None:
+        key = record.strategy_key
+        try:
+            payload = StrategyConfigPayload.from_json(record.payload)
+            tasks = build_strategy_tasks(
+                [record],
+                data_source=payload.data_source,
+                exchange=exchange,
+                journal=self._journal,
+            )
+            if not tasks:
+                self._failed_versions[key] = record.version
+                return
+            task = tasks[0]
+        except Exception:
+            logger.exception("策略热加载失败: %s (v%s)", key, record.version)
+            self._failed_versions[key] = record.version
+            return
+
+        try:
+            loop = self._loops_by_source.get(payload.data_source)
+            if loop is None:
+                loop = self._create_loop(payload.data_source, task, exchange)
+                self._loops_by_source[payload.data_source] = loop
+            else:
+                self._register_subscription(loop, task, payload.data_source)
+                loop.add_task(task)
+        except Exception:
+            logger.exception("策略热新增挂载失败: %s (v%s)", key, record.version)
+            self._failed_versions[key] = record.version
+            return
+
+        self._running[key] = _RunningStrategy(
+            task=task,
+            loop=loop,
+            data_source=payload.data_source,
+            version=record.version,
+            payload=record.payload,
+        )
+        self._register_command(task)
+        logger.info(
+            "策略热新增: %s (v%s, %s)",
+            key,
+            record.version,
+            payload.data_source.value,
+        )
+
+    def _create_loop(
+        self, data_source: DataSource, task: StrategyTask, exchange: Exchange
+    ) -> DataEventLoop:
+        """为新的 data_source 创建事件循环并启动守护线程"""
+        if data_source is DataSource.WS:
+            loop = self._ws_loop_factory(_ws_subscriptions([task]))
+            name = "ws-event-loop"
+        else:
+            loop = self._timer_loop_factory(_timer_subscriptions([task]), exchange)
+            name = "timer-event-loop"
+        self._start_loop(name, loop, [task])
+        return loop
+
+    @staticmethod
+    def _register_subscription(
+        loop: DataEventLoop, task: StrategyTask, data_source: DataSource
+    ) -> None:
+        """把新任务的 symbol/timeframe 加入已有循环的订阅"""
+        for timeframe in task.timeframes:
+            if data_source is DataSource.WS:
+                stream = task.symbol.binance_ws_sub_kline(timeframe)
+                if loop.add_kline_stream(stream):
+                    logger.info("热新增行情订阅: %s", stream)
+            else:
+                if loop.add_timer_subscription(task.symbol, timeframe):
+                    logger.info(
+                        "热新增定时订阅: %s %s", task.symbol.ccxt(), timeframe
+                    )
+
+    def _register_command(self, task: StrategyTask) -> None:
+        runner = self._command_runner
+        if runner is None:
+            return
+        for strategy in controllable_strategies([task]).values():
+            runner.add_strategy(strategy)
+
+    def _update_strategy(
+        self, key: str, running: _RunningStrategy, record: StrategyConfigRecord
+    ) -> None:
+        if self._failed_versions.get(key) == record.version:
+            return
+        if not record.enabled:
+            self._notify_restart(key, record.version, "停用")
+            running.version = record.version
+            return
+        if record.payload == running.payload:
+            running.version = record.version
+            return
+        try:
+            payload = StrategyConfigPayload.from_json(record.payload)
+            new_config = payload.to_strategy_config(key)
+        except Exception:
+            logger.exception(
+                "策略热更新配置解析失败: %s (v%s)", key, record.version
+            )
+            self._failed_versions[key] = record.version
+            return
+        if payload.data_source is not running.data_source:
+            self._notify_restart(key, record.version, "data_source 变更")
+            running.version = record.version
+            return
+
+        strategy = running.task.strategy
+        if not isinstance(strategy, SignalGridStrategy):
+            self._notify_restart(
+                key,
+                record.version,
+                f"策略类型 {type(strategy).__name__} 不支持热更新",
+            )
+            running.version = record.version
+            return
+        changed = [
+            field
+            for field in ("symbol", "timeframe", "position_side", "master_side")
+            if getattr(strategy.config, field) != getattr(new_config, field)
+        ]
+        if changed:
+            self._notify_restart(key, record.version, f"{', '.join(changed)} 变更")
+            running.version = record.version
+            return
+        try:
+            strategy.apply_config(new_config)
+        except ValueError as exc:
+            self._notify_restart(key, record.version, str(exc))
+            running.version = record.version
+            return
+        except Exception:
+            logger.exception(
+                "策略热更新失败, 保留旧配置: %s (v%s)", key, record.version
+            )
+            running.version = record.version
+            return
+
+        running.version = record.version
+        running.payload = record.payload
+        if self._command_runner is not None:
+            self._command_runner.heartbeat()
+        logger.info("策略热更新完成: %s (v%s)", key, record.version)
+
+    def _notify_restart(self, key: str, version: int, reason: str) -> None:
+        if self._restart_notified.get(key) == version:
+            return
+        self._restart_notified[key] = version
+        logger.warning(
+            "策略配置变更需重启 run.py 才生效: %s (v%s, %s)",
+            key,
+            version,
+            reason,
+        )
+
     def stop(self) -> None:
         """停止策略运行时; 幂等, 停止前未启动时为空操作"""
+        supervisor = self._supervisor_thread
+        if supervisor is not None:
+            self._supervisor_stop.set()
+            supervisor.join(timeout=_LOOP_JOIN_TIMEOUT)
+            self._supervisor_thread = None
+
         if not self._loops and self._command_runner is None:
             self._started = False
+            self._running.clear()
+            self._loops_by_source.clear()
             return
 
         runner = self._command_runner
@@ -166,6 +451,10 @@ class StrategyRuntime:
 
         self._loops.clear()
         self._threads.clear()
+        self._running.clear()
+        self._loops_by_source.clear()
+        self._exchange = None
+        self._exchange_failure_signature = None
         self._started = False
 
     def _start_loop(

@@ -53,6 +53,8 @@ def main() -> None:
         journal=journal,
         command_store=commands,
         registry=registry,
+        # 运行中轮询配置: 新增策略与调参无需重启进程
+        configs_provider=config_store.list,
     )
 
     app = create_app(

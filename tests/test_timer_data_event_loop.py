@@ -241,7 +241,7 @@ class TestWaitUntil:
     def test_stop_interrupts_wait_and_returns_false(self):
         loop, _, _ = build_loop()  # 时钟停在 BASE, 永远到不了 target
         loop.running = True
-        result: list[bool] = []
+        result: list[bool | None] = []
 
         def waiting() -> None:
             result.append(loop._wait_until(BASE + 60))
@@ -260,6 +260,23 @@ class TestWaitUntil:
         loop.stop()
 
         assert loop._wait_until(BASE + 60) is False
+
+    def test_subscription_change_wakes_wait_and_requests_recompute(self):
+        """热新增订阅必须唤醒等待并返回 None, 而不是误判停机"""
+        loop, _, _ = build_loop()
+        loop.running = True
+        result: list[bool | None] = []
+
+        thread = threading.Thread(
+            target=lambda: result.append(loop._wait_until(BASE + 60))
+        )
+        thread.start()
+        time.sleep(0.05)
+        loop.add_timer_subscription(BTC_SYMBOL, "5m")
+        thread.join(timeout=1.0)
+
+        assert not thread.is_alive(), "新增订阅必须唤醒等待线程"
+        assert result == [None], "订阅变化应返回 None 以触发重新调度"
 
 
 class TestFetchFinishedKline:
@@ -549,3 +566,21 @@ class TestStartStop:
         assert strategy.received, "3 秒内必须至少分发一根K线"
         assert not thread.is_alive(), "stop() 必须立即结束调度线程"
         assert loop.running is False
+
+
+def test_add_timer_subscription_registers_new_symbol_and_timeframe():
+    """热新增订阅: 新 symbol / 新周期立即参与调度并唤醒等待循环"""
+    loop = TimerDataEventLoop(
+        subscriptions=[(SYMBOL, "1m")],
+        market=ScriptedKlineMarket(),
+        clock=FakeClock(),
+    )
+
+    assert loop.add_timer_subscription(SYMBOL, "1m") is False, "重复订阅返回 False"
+    assert loop.add_timer_subscription(BTC_SYMBOL, "5m") is True
+    assert (BTC_SYMBOL, "5m") in loop.subscriptions
+    assert "5m" in loop._tf_seconds, "新周期必须进入调度表"
+    assert loop._wakeup.is_set(), "新增订阅必须唤醒等待中的调度循环"
+
+    with pytest.raises(ValueError):
+        loop.add_timer_subscription(BTC_SYMBOL, "1s")

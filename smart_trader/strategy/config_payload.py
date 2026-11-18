@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from smart_trader.model import (
     DataSource,
     OrderSide,
+    OrderSizeUnit,
     PlaceOrderBehavior,
     PositionSide,
     SignalKind,
@@ -23,6 +24,7 @@ from smart_trader.model import (
     Symbol,
 )
 from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
+from smart_trader.strategy.inverted_signal import InvertedSignal
 from smart_trader.strategy.signal import Signal
 from smart_trader.strategy.signal_grid_config import SignalGridStrategyConfig
 
@@ -48,7 +50,8 @@ class StrategyConfigPayload(BaseModel):
     master_side: OrderSide = OrderSide.BUY
 
     # 网格 / 仓位
-    per_order_qty: float = 0.02
+    per_order_amount: float = Field(default=0.02, ge=0)
+    per_order_unit: OrderSizeUnit = OrderSizeUnit.BASE
     grid_spacing_rate: float = 0.01
     trend_spacing_rate: float | None = None
     max_order: int = 10000
@@ -94,12 +97,17 @@ class StrategyConfigPayload(BaseModel):
             signal = AlphaTrendSignal(
                 atr_multiple=self.atr_multiple, period=self.period
             )
+        elif self.signal_type is StrategySignalType.ALPHA_TREND_INVERSE:
+            signal = InvertedSignal(
+                AlphaTrendSignal(atr_multiple=self.atr_multiple, period=self.period)
+            )
         return SignalGridStrategyConfig(
             symbol=Symbol.from_ccxt(self.symbol),
             timeframe=self.timeframe,
             position_side=self.position_side,
             master_side=self.master_side,
-            per_order_qty=self.per_order_qty,
+            per_order_amount=self.per_order_amount,
+            per_order_unit=self.per_order_unit,
             grid_spacing_rate=self.grid_spacing_rate,
             trend_spacing_rate=self.trend_spacing_rate,
             max_order=self.max_order,
@@ -132,9 +140,20 @@ class StrategyConfigPayload(BaseModel):
         *,
         data_source: DataSource,
     ) -> "StrategyConfigPayload":
-        """模板配置 → 载荷; 仅支持 AlphaTrendSignal / None 两种信号"""
+        """模板配置 → 载荷; 仅支持 AlphaTrendSignal / 其反向包装 / None"""
         signal = config.signal
-        if isinstance(signal, AlphaTrendSignal):
+        if isinstance(signal, InvertedSignal):
+            inner = signal.inner
+            if not isinstance(inner, AlphaTrendSignal):
+                raise TypeError(
+                    f"不支持的信号实现: InvertedSignal({type(inner).__name__}); "
+                    "配置只能序列化 AlphaTrendSignal / "
+                    "InvertedSignal(AlphaTrendSignal) 或 None"
+                )
+            signal_type = StrategySignalType.ALPHA_TREND_INVERSE
+            atr_multiple = inner.atr_multiple
+            period = inner.period
+        elif isinstance(signal, AlphaTrendSignal):
             signal_type = StrategySignalType.ALPHA_TREND
             atr_multiple = signal.atr_multiple
             period = signal.period
@@ -145,7 +164,8 @@ class StrategyConfigPayload(BaseModel):
         else:
             raise ValueError(
                 f"不支持的信号实现: {type(signal).__name__}; "
-                "配置只能序列化 AlphaTrendSignal 或 None"
+                "配置只能序列化 AlphaTrendSignal / "
+                "InvertedSignal(AlphaTrendSignal) 或 None"
             )
         return cls(
             symbol=config.symbol.ccxt(),
@@ -157,7 +177,8 @@ class StrategyConfigPayload(BaseModel):
             signal_kind=config.signal_kind,
             position_side=config.position_side,
             master_side=config.master_side,
-            per_order_qty=config.per_order_qty,
+            per_order_amount=config.per_order_amount,
+            per_order_unit=config.per_order_unit,
             grid_spacing_rate=config.grid_spacing_rate,
             trend_spacing_rate=config.trend_spacing_rate,
             max_order=config.max_order,

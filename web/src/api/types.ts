@@ -212,8 +212,12 @@ export interface MarketChartView {
 }
 
 export type DataSource = "ws" | "timer";
-export type StrategySignalType = "alpha_trend" | "none";
+export type StrategySignalType =
+  | "alpha_trend"
+  | "alpha_trend_inverse"
+  | "none";
 export type SignalKind = "trigger" | "directional";
+export type OrderSizeUnit = "base" | "quote";
 export type PlaceOrderBehavior = "chaser" | "chaser_open" | "normal";
 
 export interface StrategyConfigPayload {
@@ -226,7 +230,8 @@ export interface StrategyConfigPayload {
   signal_kind: SignalKind;
   position_side: PositionSide;
   master_side: OrderSide;
-  per_order_qty: number;
+  per_order_amount: number;
+  per_order_unit: OrderSizeUnit;
   grid_spacing_rate: number;
   trend_spacing_rate: number | null;
   max_order: number;

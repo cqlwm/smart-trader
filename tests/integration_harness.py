@@ -38,7 +38,7 @@ def make_config(**overrides: object) -> SignalGridStrategyConfig:
         "symbol": DEFAULT_SYMBOL,
         "timeframe": TIMEFRAME,
         "strategy_key": DEFAULT_STRATEGY_KEY,
-        "per_order_qty": 100.0,
+        "per_order_amount": 100.0,
         "grid_spacing_rate": 0.01,
         "fixed_rate_take_profit": True,
         "fixed_take_profit_rate": 0.01,

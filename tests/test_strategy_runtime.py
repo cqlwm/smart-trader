@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from smart_trader.data_event_loop import DataEventLoop
+from smart_trader.data_event_loop import DataEventLoop, Task
 from smart_trader.exchange.ports import Exchange, MarketDataPort
 from smart_trader.model import (
     DataSource,
@@ -29,7 +29,9 @@ from smart_trader.storage.command_store import CommandStore
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import StrategyConfigRecord
 from smart_trader.strategy.config_payload import StrategyConfigPayload
+from smart_trader.strategy.signal_grid_strategy import SignalGridStrategy
 from smart_trader.strategy_runtime import StrategyRuntime
+from smart_trader.task.strategy_task import StrategyTask
 
 
 class _UnusedExchange(Exchange):
@@ -85,6 +87,14 @@ class RecordingWsLoop(_RecordingLoop):
     def __init__(self, subscribes: list[str]) -> None:
         super().__init__()
         self.subscribes = subscribes
+        self.added_streams: list[str] = []
+
+    def add_kline_stream(self, stream: str) -> bool:
+        self.added_streams.append(stream)
+        if stream in self.subscribes:
+            return False
+        self.subscribes.append(stream)
+        return True
 
 
 class RecordingTimerLoop(_RecordingLoop):
@@ -94,6 +104,15 @@ class RecordingTimerLoop(_RecordingLoop):
         super().__init__()
         self.subscriptions = subscriptions
         self.market = market
+        self.added_subscriptions: list[tuple[Symbol, str]] = []
+
+    def add_timer_subscription(self, symbol: Symbol, timeframe: str) -> bool:
+        pair = (symbol, timeframe)
+        self.added_subscriptions.append(pair)
+        if pair in self.subscriptions:
+            return False
+        self.subscriptions.append(pair)
+        return True
 
 
 class RuntimeFactory:
@@ -114,6 +133,7 @@ class RuntimeFactory:
         exchange_factory: Callable[[], Exchange],
         ws_loops: list[RecordingWsLoop] | None = None,
         timer_loops: list[RecordingTimerLoop] | None = None,
+        configs_provider: Callable[[], list[StrategyConfigRecord]] | None = None,
     ) -> StrategyRuntime:
         ws_created: list[RecordingWsLoop] = [] if ws_loops is None else ws_loops
         timer_created: list[RecordingTimerLoop] = (
@@ -138,6 +158,9 @@ class RuntimeFactory:
             journal=self._journal,
             command_store=self._commands,
             registry=self.registry,
+            configs_provider=configs_provider,
+            # 测试手动调用 sync_configs_once, 监督线程不参与竞态
+            config_poll_interval=3600.0,
             ws_loop_factory=ws_loop_factory,
             timer_loop_factory=timer_loop_factory,
         )
@@ -163,16 +186,27 @@ def runtime_factory(tmp_path: Path) -> Iterator[RuntimeFactory]:
 
 
 def _record(
-    strategy_key: str, data_source: DataSource, *, enabled: bool = True
+    strategy_key: str,
+    data_source: DataSource,
+    *,
+    enabled: bool = True,
+    symbol: str = "doge/usdt",
+    timeframe: str = "1m",
+    version: int = 1,
+    grid_spacing_rate: float = 0.01,
 ) -> StrategyConfigRecord:
     payload = StrategyConfigPayload(
-        symbol="doge/usdt",
-        timeframe="1m",
+        symbol=symbol,
+        timeframe=timeframe,
         data_source=data_source,
         max_order=3,
+        grid_spacing_rate=grid_spacing_rate,
     )
     return StrategyConfigRecord(
-        strategy_key=strategy_key, payload=payload.to_json(), enabled=enabled
+        strategy_key=strategy_key,
+        payload=payload.to_json(),
+        enabled=enabled,
+        version=version,
     )
 
 
@@ -337,3 +371,259 @@ def test_invalid_payload_keeps_console_alive(
 
     assert "策略运行时启动失败" in caplog.text
     assert _heartbeat(runtime_factory) is None
+
+
+# ------------------------------------------------------------- 配置热新增 / 热更新
+
+
+def _strategy_of(task: Task) -> SignalGridStrategy:
+    assert isinstance(task, StrategyTask), (
+        f"应装配 StrategyTask, 实际 {type(task).__name__}"
+    )
+    strategy = task.strategy
+    assert isinstance(strategy, SignalGridStrategy), (
+        f"应装配 SignalGridStrategy, 实际 {type(strategy).__name__}"
+    )
+    return strategy
+
+
+def test_hot_add_timer_strategy_builds_loop_and_registers_command(
+    runtime_factory: RuntimeFactory,
+) -> None:
+    state: list[StrategyConfigRecord] = []
+    exchange_calls: list[bool] = []
+    timer_loops: list[RecordingTimerLoop] = []
+
+    def exchange_factory() -> Exchange:
+        exchange_calls.append(True)
+        return _UnusedExchange()
+
+    runtime = runtime_factory(
+        [],
+        exchange_factory=exchange_factory,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+    assert exchange_calls == [], "启动时无启用配置, 不得构造交易所"
+
+    state.append(_record("hot_timer", DataSource.TIMER))
+    runtime.sync_configs_once()
+
+    assert exchange_calls == [True], "热新增首个策略时才构造交易所"
+    assert len(timer_loops) == 1, "应创建 timer 事件循环"
+    assert [task.name for task in timer_loops[0].tasks] == [
+        "StrategyTask(DOGE/USDT|1m)"
+    ]
+    snapshot = _heartbeat(runtime_factory)
+    assert snapshot is not None
+    assert [item.strategy_key for item in snapshot.strategies] == ["hot_timer"], (
+        "热新增策略必须进入命令执行器与运行态心跳"
+    )
+
+
+def test_hot_add_to_existing_timer_loop_adds_task_and_subscription(
+    runtime_factory: RuntimeFactory,
+) -> None:
+    state = [_record("first", DataSource.TIMER)]
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+    assert len(timer_loops) == 1
+
+    state.append(_record("second", DataSource.TIMER, symbol="btc/usdt"))
+    runtime.sync_configs_once()
+
+    assert len(timer_loops) == 1, "同 data_source 不得重复创建事件循环"
+    loop = timer_loops[0]
+    assert len(loop.tasks) == 2, "新策略任务必须挂到既有循环"
+    assert (Symbol(base="BTC", quote="USDT"), "1m") in loop.added_subscriptions
+
+
+def test_hot_add_ws_new_symbol_adds_stream_and_task(
+    runtime_factory: RuntimeFactory,
+) -> None:
+    state = [_record("ws_one", DataSource.WS)]
+    ws_loops: list[RecordingWsLoop] = []
+    runtime = runtime_factory(
+        [],
+        exchange_factory=_UnusedExchange,
+        ws_loops=ws_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+
+    state.append(_record("ws_two", DataSource.WS, symbol="btc/usdt"))
+    runtime.sync_configs_once()
+
+    assert len(ws_loops) == 1
+    loop = ws_loops[0]
+    assert len(loop.tasks) == 2
+    assert loop.added_streams == ["btcusdt@kline_1m"], (
+        "新 symbol 必须加入 WS 订阅并触发重连"
+    )
+
+
+def test_hot_update_applies_tuning_parameters(
+    runtime_factory: RuntimeFactory,
+) -> None:
+    state = [_record("hot_update", DataSource.TIMER, grid_spacing_rate=0.01)]
+    exchange_calls: list[bool] = []
+    timer_loops: list[RecordingTimerLoop] = []
+
+    def exchange_factory() -> Exchange:
+        exchange_calls.append(True)
+        return _UnusedExchange()
+
+    runtime = runtime_factory(
+        [],
+        exchange_factory=exchange_factory,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+    loop = timer_loops[0]
+    strategy = _strategy_of(loop.tasks[0])
+    assert strategy.config.grid_spacing_rate == pytest.approx(0.01)
+
+    state[0] = _record(
+        "hot_update", DataSource.TIMER, grid_spacing_rate=0.05, version=2
+    )
+    runtime.sync_configs_once()
+
+    assert strategy.config.grid_spacing_rate == pytest.approx(0.05), (
+        "调参变更必须热应用到运行中的策略"
+    )
+    assert len(loop.tasks) == 1, "调参热更新不得重建任务"
+    assert len(exchange_calls) == 1, "调参热更新不得重新构造交易所"
+
+
+def test_hot_update_identity_change_requires_restart(
+    runtime_factory: RuntimeFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    state = [_record("identity", DataSource.TIMER)]
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+    strategy = _strategy_of(timer_loops[0].tasks[0])
+
+    state[0] = _record("identity", DataSource.TIMER, symbol="btc/usdt", version=2)
+    with caplog.at_level(logging.WARNING):
+        runtime.sync_configs_once()
+
+    assert strategy.config.symbol == Symbol(base="DOGE", quote="USDT"), (
+        "身份字段变更不得热应用"
+    )
+    assert "需重启" in caplog.text
+    assert len(timer_loops) == 1
+    assert len(timer_loops[0].tasks) == 1
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        runtime.sync_configs_once()
+    assert "需重启" not in caplog.text, "同一版本不得重复告警"
+
+
+def test_hot_enable_previously_disabled_config_starts_it(
+    runtime_factory: RuntimeFactory,
+) -> None:
+    """启用未运行的配置等价于热新增, 不需要重启"""
+    state = [_record("wake_me", DataSource.TIMER, enabled=False)]
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+    assert timer_loops == [], "停用配置启动时不得装配任务"
+
+    state[0] = _record("wake_me", DataSource.TIMER, enabled=True, version=2)
+    runtime.sync_configs_once()
+
+    assert len(timer_loops) == 1, "启用未运行配置应自动热加载"
+    assert [task.name for task in timer_loops[0].tasks] == [
+        "StrategyTask(DOGE/USDT|1m)"
+    ]
+
+
+def test_hot_disable_requires_restart_and_keeps_strategy_running(
+    runtime_factory: RuntimeFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    state = [_record("disable_me", DataSource.TIMER)]
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+
+    state[0] = _record("disable_me", DataSource.TIMER, enabled=False, version=2)
+    with caplog.at_level(logging.WARNING):
+        runtime.sync_configs_once()
+
+    assert "停用" in caplog.text
+    assert len(timer_loops[0].tasks) == 1, (
+        "停用不热摘除任务; 需要重启进程, 避免孤立在途订单"
+    )
+
+
+def test_hot_add_invalid_payload_does_not_stop_runtime(
+    runtime_factory: RuntimeFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    state = [
+        StrategyConfigRecord(
+            strategy_key="broken", payload="{not json", enabled=True
+        )
+    ]
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    with caplog.at_level(logging.ERROR):
+        runtime.start()
+
+    assert timer_loops == []
+    assert "策略热加载失败" in caplog.text
+    assert _heartbeat(runtime_factory) is not None, (
+        "单条配置失败不得中断运行时, 仍应等待后续配置"
+    )
+
+
+def test_hot_add_disabled_config_is_ignored(
+    runtime_factory: RuntimeFactory,
+) -> None:
+    state = [_record("disabled", DataSource.TIMER, enabled=False)]
+    exchange_calls: list[bool] = []
+    timer_loops: list[RecordingTimerLoop] = []
+
+    def exchange_factory() -> Exchange:
+        exchange_calls.append(True)
+        return _UnusedExchange()
+
+    runtime = runtime_factory(
+        [],
+        exchange_factory=exchange_factory,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+
+    assert exchange_calls == []
+    assert timer_loops == []

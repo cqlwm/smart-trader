@@ -108,6 +108,20 @@ def test_reconnects_after_connection_drops():
     assert len(sessions) == 3, "每次断开都应建立新连接"
 
 
+def test_add_kline_stream_updates_subscriptions_and_closes_live_session():
+    """热新增流: 更新订阅列表并断开现有连接, 由重连重新订阅"""
+    loop = BinanceDataEventLoop(kline_subscribes=["dogeusdt@kline_1m"])
+    live = FakeWebSocketSession(on_open=loop.on_open, outcomes=[])
+    loop._session = live
+
+    assert loop.add_kline_stream("dogeusdt@kline_1m") is False, "重复流不触发重连"
+    assert live.closed is False, "重复订阅不得断开现有连接"
+
+    assert loop.add_kline_stream("btcusdt@kline_1m") is True
+    assert loop.kline_subscribes == ["dogeusdt@kline_1m", "btcusdt@kline_1m"]
+    assert live.closed is True, "新增流后应断开连接, 重连时按新列表订阅"
+
+
 def test_resubscribes_on_every_reconnect():
     loop, sessions = build_loop([False, False])
 

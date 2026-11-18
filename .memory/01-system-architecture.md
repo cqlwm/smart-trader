@@ -108,7 +108,7 @@ storage (queries.py / reader.py)           只读仓储: 只发 SELECT, 不建�
 | `smart_trader/execution/limit_order_chaser.py` | 追单执行策略 |
 | `smart_trader/execution/journaled_trading.py` | 记账下单包装（TradingPort 装饰器）：预写仓位/订单 → 下单 → 回写结果 |
 | `smart_trader/execution/order_reconciler.py` | 启动对账：扫 `status IS NULL` 的订单 → 查交易所 → 回写 |
-| `smart_trader/strategy/` | 策略基类与网格策略。**四层职责边界**：`signal`（`Signal` ABC，只回答"行情现在是什么状态"）/ `entry_gate`（`EntryGate` 可组合入场闸门链）/ `exit_policy`（`ExitPolicy` 可组合离场策略链）/ `signal_grid_strategy`（**只做装配 + 仓位与订单管理**，不做任何入场/离场判定）。网格策略其余模块：`grid_position`（仓位对象 + `load_positions` 批量还原）/ `signal_grid_config`（配置 + `CloseOutcome`）/ `grid_order_gateway`（记账下单入口）/ `position_lifecycle`（订单结算：入场单成交结算[盘中] / 撤剩余入场单[出场流程] / 出场单跟踪[每根完成K线]）/ `position_reconciler`（持仓对账：每根完成K线以交易所实际持仓为准收敛本地缺口，外部平仓场景的归档与可平量修正）/ `alpha_trend_signal`（`AlphaTrendSignal` 实现，`alpha_trend_grids_signal.py` 已删除，语义由 `SignalKind.TRIGGER` 承载） |
+| `smart_trader/strategy/` | 策略基类与网格策略。**四层职责边界**：`signal`（`Signal` ABC，只回答"行情现在是什么状态"）/ `entry_gate`（`EntryGate` 可组合入场闸门链）/ `exit_policy`（`ExitPolicy` 可组合离场策略链）/ `signal_grid_strategy`（**只做装配 + 仓位与订单管理**，不做任何入场/离场判定）。网格策略其余模块：`grid_position`（仓位对象 + `load_positions` 批量还原）/ `signal_grid_config`（配置 + `CloseOutcome`）/ `grid_order_gateway`（记账下单入口）/ `position_lifecycle`（订单结算：入场单成交结算[盘中] / 撤剩余入场单[出场流程] / 出场单跟踪[每根完成K线]）/ `position_reconciler`（持仓对账：每根完成K线以交易所实际持仓为准收敛本地缺口，外部平仓场景的归档与可平量修正）/ `alpha_trend_signal`（`AlphaTrendSignal` 实现，`alpha_trend_grids_signal.py` 已删除，语义由 `SignalKind.TRIGGER` 承载）/ `inverted_signal`（`InvertedSignal` 组合包装器：只反转非中性方向，供 `alpha_trend_inverse` 配置物化） |
 | `smart_trader/data_event_loop.py` / `task/` | 数据事件循环与任务分发。两种数据源模式：`BinanceDataEventLoop`（WebSocket 推送，解析一次为 Kline 后分发）与 `TimerDataEventLoop`（按 timeframe 定时经 REST 拉取，见第九节）；事件载荷统一为 `Kline` 领域对象 |
 
 ## 七、演进状态
@@ -149,6 +149,9 @@ storage (queries.py / reader.py)           只读仓储: 只发 SELECT, 不建�
 | Step 31 | **P1 控制面（命令表 + 策略内执行）**：新增 `commands` 表（`CommandAction` / `CommandStatus`，`strategy_key=NULL` 表示全局）与 `CommandStore`（提交 / 原子认领 / 完成，幂等键去重）；`ControllableStrategy` ABC + `SignalGridStrategy` 的暂停 / 恢复 / 全平请求 / 撤销入场挂单（持 `_callback_lock`，复用 `PositionLifecycle.settle_pending_entries`）；`CommandRunner` 在策略进程内每 2s 轮询认领，异常记录并标记 failed；新增 `.data/runtime.json` 运行态心跳（`RuntimeRegistry`），解决"运行中但尚未写账本"的策略在只读策略列表中不可见的问题；API 合并心跳与账本摘要，前端总览页接入暂停/恢复/全平/撤入场单、全局 kill switch、运行态与命令历史 | 已完成 |
 | Step 32 | **P2 行情与指标**：适配器抽出 `_MarketDataMixin`，新增 `BinanceMarketData` / `create_public_market_data`（零凭据、行情-only，显式实现 `MarketDataPort`）；API 新增 `GET /api/market/chart`（惰性 `MarketDataProvider`，初始化失败 503 不影响控制台其它页面），复用策略层 `alpha_trend_indicator` 输出 K 线 + AlphaTrend 点；前端新增"行情"页（lightweight-charts v5 蜡烛图 + AlphaTrend 线 + 订单 IN/OUT 标记 + 活跃仓位入场/止损/止盈价格线），10s 刷新 | 已完成 |
 | Step 33 | **入口合并（单进程）**：删除 `run_timer.py` / `run_api.py`，`run.py` 成为唯一入口（控制台 API + 策略运行时同进程）。新增 `StrategyRuntime`：按每个配置行的 `data_source` 分别装配 WS / Timer 任务与循环，两循环可同时运行（守护线程）；启停由 FastAPI lifespan 钩子统一管理；无启用配置或装配失败只记日志，控制台继续可用。`build_strategy_tasks` 空集合改为返回空列表；`BinanceDataEventLoop.stop()` 关闭当前连接以支持线程化优雅停机。**代价**：进程重启会同时中断交易（第十二节部署形态已改写） | 已完成 |
+| Step 34 | **AlphaTrend 反向信号**：新增组合式 `InvertedSignal`（`strategy/inverted_signal.py`），只反转非中性方向（`SignalDirection.opposite()`），入场闸门与离场策略共享同一 `MarketSignal`，因此两侧同时反向；`StrategySignalType` 新增 `ALPHA_TREND_INVERSE = "alpha_trend_inverse"`，配置载荷物化/回写与控制台选项同步。单配置仍只持一个方向（多空双向反手需 long / short 两个配置） | 已完成 |
+| Step 35 | **单层规模支持名义价值**：`per_order_qty` 替换为 `per_order_amount` + `per_order_unit`（`OrderSizeUnit.BASE` / `QUOTE`），单一来源避免双字段真相；`quote` 在开仓时按信号收盘价折算数量（`Decimal` 除法），经 `SymbolInfo.format_qty` 按 `step_size` 向下取整并校验最小数量 / 最小名义价值，校验发生在创建仓位行之前；`amount=0` 仍表示空仓位。存量 payload 由 `006_convert_per_order_amount.py` 按 `base` 迁移 | 已完成 |
+| Step 36 | **配置热新增 + 调参热更新**：`StrategyRuntime` 接受 `configs_provider` 并每 2 秒轮询 `strategy_configs`；新增策略按 data_source 挂入既有循环（WS `add_kline_stream` 断开重连后重订阅，Timer `add_timer_subscription` 动态加入调度），并注册到 `CommandRunner`；版本变化且身份字段不变时调用 `SignalGridStrategy.apply_config`（原地更新 config 对象、重建闸门/离场链、保留仓位与信号去重状态）；身份字段与 data_source 创建后不可变（API 拒绝）；停用仍要求重启（启用未运行配置走热新增）。单条配置失败只记录日志；`RuntimeRegistry.heartbeat` 加锁串行化临时文件写入 | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -158,7 +161,7 @@ storage (queries.py / reader.py)           只读仓储: 只发 SELECT, 不建�
    `enable_max_order_stop_loss` + `paused_after_stop_loss` 见
    `tests/test_signal_grid_strategy.py`（达到上限全平并暂停 / 不暂停仍不开新仓）与
    `tests/test_stop_loss.py`（暂停后仍无条件跟踪出场单）；
-   `per_order_qty == 0` 见 `tests/test_signal_grid_strategy.py`（零数量只登记空仓位不发单、
+   `per_order_amount == 0` 见 `tests/test_signal_grid_strategy.py`（零规模只登记空仓位不发单、
    账本有仓位行无订单行、间距闸门照常生效）；
    `grid_spacing_rate` 加仓间隔见闸门级 `tests/test_entry_gate.py`（正负间距语义、
    含等号边界、极值基准）与策略级 `tests/test_signal_grid_strategy.py`（间距内拦截 /
@@ -526,9 +529,18 @@ API 不复制公式；`limit` 20–1000，默认 300。非法交易对 / 周期 
 **边界**：策略参数从 `template/*.py` 迁移到 sqlite `strategy_configs`；控制台路由只写该表，
 不写 `grid_positions` / `orders`、不调交易所。同进程内的策略运行时仍是账本唯一写者。
 
-**生效模型**：配置在进程**启动时**读取一次，按每行的 `data_source` 分别装配为
-WS / Timer 的 `StrategyTask`。保存修改后必须重启 `run.py` 才生效；**不做运行中热替换**
-—— 运行中的策略对象持有开放仓位与在途出场单，替换会孤立这些状态。
+**生效模型（Step 36）**：统一入口启动时读取一次配置并装配；传入 `configs_provider` 后，
+`StrategyRuntime` 每 2 秒轮询 `strategy_configs`：
+
+- **热新增**：新增启用配置按 `data_source` 构造 `StrategyTask`，挂到既有循环
+  （WS 新流通过断开重连重新订阅，Timer 动态加入订阅），并注册到 `CommandRunner`；
+- **调参热更新**：现有配置 `version` 变化且身份字段不变时，调用
+  `SignalGridStrategy.apply_config` 更新参数并重建闸门 / 离场策略链，
+  保留仓位、订单与信号去重状态；
+- **不可变与重启**：`symbol` / `timeframe` / `position_side` / `master_side` /
+  `data_source` 创建后不可修改（API 409，前端编辑态禁用）；停用仍需重启
+  （不做运行中替换，避免孤立开放仓位与在途出场单）；启用未运行配置走热新增；
+- 单条配置解析或装配失败只记录日志，不影响其它策略与后续轮询。
 
 **端点**：
 
@@ -542,9 +554,9 @@ WS / Timer 的 `StrategyTask`。保存修改后必须重启 `run.py` 才生效�
 
 `strategy_key` 不可变，不提供删除接口（只允许 `enabled=false`），避免与历史账本失联。
 
-**护栏**：账本中该 key 存在活跃仓位时，禁止禁用配置或修改
-`symbol` / `timeframe` / `position_side` / `master_side`（409）；其余参数允许修改，
-但仍需重启生效。
+**护栏**：`symbol` / `timeframe` / `data_source` / `position_side` / `master_side`
+**创建后不可修改**（409，需新建配置）；账本中该 key 存在活跃仓位时禁止停用（409）；
+其余参数允许修改，保存后自动热更新。
 
 **加载器**：`strategy/config_loader.py::build_strategy_tasks` 过滤 `enabled=1` 且
 `data_source` 匹配的行，经 `StrategyConfigPayload.to_strategy_config()` 物化信号实例；

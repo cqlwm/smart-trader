@@ -130,6 +130,13 @@ class PlaceOrderBehavior(Enum):
     NORMAL = "normal"  # 常规
 
 
+class OrderSizeUnit(Enum):
+    """单层规模单位"""
+
+    BASE = "base"  # 基础币数量（如 0.02 ETH）
+    QUOTE = "quote"  # 计价币金额（如 100 USDT），下单时按价格折算数量
+
+
 class CommandAction(Enum):
     """控制面动作（commands.action）"""
 
@@ -148,9 +155,10 @@ class DataSource(Enum):
 
 
 class StrategySignalType(Enum):
-    """策略配置可物化的信号实现（只允许可序列化的两种）"""
+    """策略配置可物化的信号实现（只允许可序列化的三种）"""
 
     ALPHA_TREND = "alpha_trend"
+    ALPHA_TREND_INVERSE = "alpha_trend_inverse"  # 反向解读 AlphaTrend
     NONE = "none"
 
 

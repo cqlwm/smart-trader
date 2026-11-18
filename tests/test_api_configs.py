@@ -133,6 +133,8 @@ def test_defaults_return_form_baseline(client: TestClient):
     assert body["timeframe"] == "1m"
     assert body["data_source"] == "timer"
     assert body["signal_type"] == "alpha_trend"
+    assert body["per_order_amount"] == pytest.approx(0.02)
+    assert body["per_order_unit"] == "base"
 
 
 def test_get_unknown_config_returns_404(client: TestClient):
@@ -148,6 +150,23 @@ def test_post_creates_version_one(client: TestClient):
     assert body["version"] == 1
     assert body["enabled"] is True
     assert body["payload"]["max_order"] == 7
+
+
+def test_post_accepts_inverted_alpha_trend_signal(client: TestClient):
+    response = _create(client, signal_type="alpha_trend_inverse")
+
+    assert response.status_code == 201
+    body = cast(dict[str, Any], response.json())
+    assert body["payload"]["signal_type"] == "alpha_trend_inverse"
+
+
+def test_post_accepts_quote_notional_size(client: TestClient):
+    response = _create(client, per_order_amount=100, per_order_unit="quote")
+
+    assert response.status_code == 201
+    body = cast(dict[str, Any], response.json())
+    assert body["payload"]["per_order_amount"] == pytest.approx(100)
+    assert body["payload"]["per_order_unit"] == "quote"
 
 
 def test_post_duplicate_key_returns_409(client: TestClient):
@@ -215,6 +234,7 @@ def test_disable_with_active_positions_returns_409(
     [
         ("symbol", "ZEC/USDT"),
         ("timeframe", "5m"),
+        ("data_source", "ws"),
         ("position_side", "short"),
         ("master_side", "sell"),
     ],
@@ -230,6 +250,33 @@ def test_identity_change_with_active_positions_returns_409(
     assert response.status_code == 409, f"活跃仓位下禁止修改 {field}"
     detail = cast(dict[str, Any], response.json())["detail"]
     assert field in detail
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("symbol", "ZEC/USDT"),
+        ("timeframe", "5m"),
+        ("data_source", "ws"),
+        ("position_side", "short"),
+        ("master_side", "sell"),
+    ],
+)
+def test_immutable_field_change_without_active_positions_returns_409(
+    client: TestClient, field: str, value: str
+):
+    """身份字段创建后始终不可变, 不依赖是否存在活跃仓位"""
+    _create(client)
+
+    response = _put(client, payload={field: value})
+
+    assert response.status_code == 409, f"身份字段 {field} 创建后不可修改"
+    detail = cast(dict[str, Any], response.json())["detail"]
+    assert field in detail
+
+    current = cast(dict[str, Any], client.get(f"/api/configs/{KEY}").json())
+    assert current["version"] == 1, "拒绝后不得递增版本"
+    assert current["payload"][field] != value, "拒绝后不得写入新值"
 
 
 def test_tuning_parameter_change_with_active_positions_is_allowed(

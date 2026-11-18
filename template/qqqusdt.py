@@ -27,7 +27,7 @@ def long_buy(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         timeframe=timeframe_,
         position_side=PositionSide.LONG,
         master_side=OrderSide.BUY,
-        per_order_qty=1,
+        per_order_amount=1,
         grid_spacing_rate=-0.1,
         max_order=3,
         enable_signal_take_profit=True,

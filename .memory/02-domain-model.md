@@ -241,6 +241,17 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 `signal: Signal | None` 时 **不做任何方向许可**（放行）。注意这不是"中性信号" ——
 空信号放行，中性信号拦截，两者语义相反，因此**不能**用 `NoSignal` 空对象替代可空引用。
 
+### 2.1 信号实现
+
+| 实现 | 输出 | 说明 |
+| --- | --- | --- |
+| `AlphaTrendSignal` | 翻转根的原始方向 | 事件型：只在方向翻转根产出 `LONG` / `SHORT`，其余 `NEUTRAL` |
+| `InvertedSignal(inner)` | 内层方向反转 | 组合包装器；`NEUTRAL` 保持中性；入场与离场共享同一 `MarketSignal`，因此同步反向 |
+| `None` | —— | 不做方向许可（见上） |
+
+反向信号只反转方向，不改变内层状态与去重语义；单配置仍只持一个方向
+（多空双向反手需 long / short 两个配置）。
+
 ### 3. 入场闸门（`EntryGate`）
 
 装配顺序与既有判定顺序一致：
@@ -487,10 +498,10 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 
 - 身份 / 数据源：`symbol`（ccxt 形式，规范化为 `BASE/QUOTE`）、`timeframe`、
   `data_source`（`ws` / `timer`）；
-- 信号：`signal_type`（`alpha_trend` / `none`）、`atr_multiple`、`period`、`signal_kind`；
+- 信号：`signal_type`（`alpha_trend` / `alpha_trend_inverse` / `none`）、`atr_multiple`、`period`、`signal_kind`；
 - 方向：`position_side`、`master_side`；
-- 网格：`per_order_qty`、`grid_spacing_rate`、`trend_spacing_rate`、`max_order`、
-  `highest_price`、`lowest_price`；
+- 网格：`per_order_amount`、`per_order_unit`、`grid_spacing_rate`、
+  `trend_spacing_rate`、`max_order`、`highest_price`、`lowest_price`；
 - 止盈止损：`enable_signal_take_profit`、`enable_signal_stop_loss`、
   `fixed_rate_take_profit`、`fixed_take_profit_rate`、`take_profit_use_limit_order`、
   `enable_order_stop_loss`、`order_stop_loss_rate`、`enable_max_order_stop_loss`、
@@ -499,8 +510,23 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 - 执行：`place_order_behavior`。
 
 转换：`to_strategy_config(strategy_key)` 物化 `Symbol` 与
-`AlphaTrendSignal` / `None`；`from_strategy_config(config, data_source)` 供模板播种。
-不可序列化的 `Signal` 实现只允许上述两种，其它实现直接报错。
+`AlphaTrendSignal` / `InvertedSignal(AlphaTrendSignal)` / `None`；
+`from_strategy_config(config, data_source)` 供模板播种。
+不可序列化的 `Signal` 实现只允许上述三种，其它实现直接报错。
 
-护栏：活跃仓位存在时禁止禁用或修改 `symbol` / `timeframe` / `position_side` /
-`master_side`；其余字段可改，重启统一入口后生效。
+**单层规模（Step 35）**：`per_order_amount` + `per_order_unit` 是唯一来源。
+`base` 直接作为币数量（与价格无关）；`quote` 在开仓时按信号收盘价折算
+（`amount / close`），经 `SymbolInfo.format_qty` 按 `step_size` 向下取整，
+并校验最小数量 / 最小名义价值。折算发生在策略层、创建仓位行之前：
+校验失败抛 `SmartTraderError`，不写仓位 / 订单行。`amount=0` 仍表示空仓位。
+`quote` 表达的是订单名义价值（价格 × 数量），不是保证金。
+
+护栏：`symbol` / `timeframe` / `data_source` / `position_side` / `master_side`
+创建后不可修改（API 409）；活跃仓位存在时禁止停用；其余字段可改，
+保存后由运行时轮询热更新。
+
+**热更新边界（Step 36）**：运行时每 2 秒读取配置表。新增启用配置热加载；
+现有配置版本变化且身份字段不变时，`SignalGridStrategy.apply_config` 原地更新参数、
+重建闸门 / 离场链，保留仓位、订单与信号状态。`symbol` / `timeframe` /
+`position_side` / `master_side` / `data_source` **创建后不可修改**（API 409）；
+停用仍需重启，启用未运行配置走热新增。
