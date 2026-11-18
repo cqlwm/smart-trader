@@ -24,3 +24,5 @@ web/node_modules
 web/dist
 web/.vite
 /.coverage
+
+.DS_Store
