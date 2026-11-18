@@ -14,6 +14,7 @@ from smart_trader.model import Kline
 from smart_trader.storage.command_store import CommandStore
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.reader import OrderJournalReader
+from tests.api_harness import AUTH_HEADERS, TEST_TOKEN
 from tests.fakes import DEFAULT_SYMBOL, FakeMarketDataPort
 
 
@@ -70,7 +71,10 @@ def client(
     market = FakeMarketDataPort(klines=_klines())
     provider = MarketDataProvider(lambda: market)
     with TestClient(
-        create_app(reader, commands, market_provider=provider)
+        create_app(
+            reader, commands, token=TEST_TOKEN, market_provider=provider
+        ),
+        headers=AUTH_HEADERS,
     ) as instance:
         yield instance
 
@@ -93,7 +97,9 @@ def test_chart_returns_candles_and_direction(client: TestClient):
 def test_missing_market_provider_returns_503(
     reader: OrderJournalReader, commands: CommandStore
 ):
-    with TestClient(create_app(reader, commands)) as client:
+    with TestClient(
+        create_app(reader, commands, token=TEST_TOKEN), headers=AUTH_HEADERS
+    ) as client:
         response = client.get(
             "/api/market/chart", params={"symbol": "DOGE/USDT"}
         )
@@ -109,8 +115,12 @@ def test_market_provider_failure_returns_503(
 
     with TestClient(
         create_app(
-            reader, commands, market_provider=MarketDataProvider(fail)
-        )
+            reader,
+            commands,
+            token=TEST_TOKEN,
+            market_provider=MarketDataProvider(fail),
+        ),
+        headers=AUTH_HEADERS,
     ) as client:
         response = client.get(
             "/api/market/chart", params={"symbol": "DOGE/USDT"}

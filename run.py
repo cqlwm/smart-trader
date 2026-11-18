@@ -32,6 +32,14 @@ log.init_logging()
 
 logger = log.getLogger(__name__)
 
+DEFAULT_CORS_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
+
+
+def _cors_origins() -> list[str]:
+    """允许的浏览器来源（逗号分隔, 默认本地 Vite 开发服务器）"""
+    raw = os.environ.get("SMART_TRADER_CORS_ORIGINS", DEFAULT_CORS_ORIGINS)
+    return [item.strip().rstrip("/") for item in raw.split(",") if item.strip()]
+
 
 def main() -> None:
     from smart_trader.config import DB_PATH
@@ -61,6 +69,7 @@ def main() -> None:
         reader,
         commands,
         token=os.environ.get("SMART_TRADER_API_TOKEN"),
+        cors_origins=_cors_origins(),
         static_dir=static_dir if (static_dir / "index.html").is_file() else None,
         runtime_path=registry.path,
         market_provider=MarketDataProvider(create_public_market_data),

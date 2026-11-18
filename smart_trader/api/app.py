@@ -3,13 +3,15 @@
 路由只做参数解析、404 映射与依赖取用; 派生与聚合全部在 `service.py`。
 """
 
-from collections.abc import AsyncGenerator, Callable
+import secrets
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from smart_trader import log
@@ -74,12 +76,21 @@ router = APIRouter(prefix="/api")
 
 
 def _require_token(request: Request) -> None:
-    """配置了 token 时校验 Authorization: Bearer"""
-    token = cast(str | None, request.app.state.token)
-    if token is None:
-        return
-    if request.headers.get("authorization") != f"Bearer {token}":
+    """所有 /api 请求强制校验 Authorization: Bearer"""
+    token = cast(str, request.app.state.token)
+    provided = request.headers.get("authorization", "").encode()
+    expected = f"Bearer {token}".encode()
+    if not secrets.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="unauthorized")
+
+
+def _validate_token(token: str | None) -> str:
+    """空 token 表示配置缺失, 必须拒绝启动"""
+    if token is None or not token.strip():
+        raise ValueError(
+            "SMART_TRADER_API_TOKEN 未配置: 控制台 API 拒绝以无鉴权状态启动"
+        )
+    return token.strip()
 
 
 def _reader(request: Request) -> OrderJournalReader:
@@ -407,7 +418,8 @@ def create_app(
     reader: OrderJournalReader,
     command_store: CommandStore,
     *,
-    token: str | None = None,
+    token: str | None,
+    cors_origins: Sequence[str] = (),
     static_dir: Path | None = None,
     runtime_path: Path | None = None,
     market_provider: MarketDataProvider | None = None,
@@ -418,9 +430,12 @@ def create_app(
 ) -> FastAPI:
     """装配控制台 API; 依赖注入 app.state 便于测试
 
+    @param token API Key, 空值直接拒绝启动（所有 /api 请求强制 Bearer 校验）
+    @param cors_origins 允许跨域的浏览器来源; 空序列不启用 CORS
     @param on_startup 应用启动钩子（统一入口用它启动策略运行时）
     @param on_shutdown 应用停止钩子（统一入口用它停止策略运行时）
     """
+    token_value = _validate_token(token)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
@@ -437,11 +452,19 @@ def create_app(
     )
     app.state.reader = reader
     app.state.commands = command_store
-    app.state.token = token
+    app.state.token = token_value
     app.state.runtime_path = runtime_path
     app.state.market_provider = market_provider
     app.state.configs = config_store
     app.state.acks = ack_store
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(cors_origins),
+            allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type", "Accept"],
+            allow_credentials=False,
+        )
     app.include_router(
         router,
         dependencies=[Depends(_require_token)],

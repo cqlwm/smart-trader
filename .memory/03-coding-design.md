@@ -739,3 +739,34 @@ Step 36 的热更新走"原地更新配置 + 重建规则链"（见三.18），�
 - API：只写 `strategy_configs`（写面断言更新为 GET/POST/PUT），404 / 409 / 422 映射，
   活跃仓位护栏（禁用与身份字段），token 鉴权；
 - 前端构建通过，浏览器验收列表 / 编辑 / 停用冲突提示。
+
+## 九、远程访问与多后端设计
+
+### 1. 鉴权单一入口
+
+`create_app(token=...)` 是 API 鉴权的唯一装配点：空 token 直接 `ValueError`，
+router 级依赖 `_require_token` 统一校验所有 `/api` 路由，路由函数不再各自判断。
+比较用 `secrets.compare_digest` 且双方先编码为 bytes，避免非 ASCII 头导致 500。
+静态资源不经过该依赖，因为它们不包含秘密。
+
+### 2. CORS 与预检
+
+`cors_origins` 由环境变量解析后传入 `create_app`，空序列不挂中间件；
+预检由 `CORSMiddleware` 在路由前直接响应，因此不会被 401 拦截。
+不使用 cookie credentials：浏览器只带显式 `Authorization` 头。
+
+### 3. 前端连接配置与请求层
+
+- `BackendProfile` 是唯一连接模型，`baseUrl=""` 表示同源；`backends.ts` 负责
+  读取 / 播种 / 校验 / 持久化，`client.ts` 每次请求时读取当前 profile，
+  不在模块加载时缓存，保证切换立即生效。
+- 切换或修改当前 profile 后 `queryClient.cancelQueries()` + `clear()`，
+  避免旧后端数据在新连接下短暂可见；401 在 Shell 与切换器中显示为 UNAUTHORIZED。
+- 测试连接复用 `/api/health` 并显式传入待测 profile，不激活、不落库。
+
+### 4. 测试策略
+
+- 后端：空 token 拒绝装配；逐路由 401 矩阵（无 Key / 错误 Key）；
+  配置来源预检通过、未知来源预检拒绝；实际响应带 `access-control-allow-origin`；
+  未配置来源时不输出 CORS 头。
+- 前端：`tsc --noEmit` + `vite build`；浏览器验收切换、管理弹窗、401 提示。

@@ -16,6 +16,10 @@ OTHER_STRATEGY_KEY = "zecusdt_short_sell_1m"
 DEFAULT_SYMBOL = "DOGE/USDT:USDT"
 OTHER_SYMBOL = "ZEC/USDT:USDT"
 
+# API 强制鉴权后, 所有测试客户端默认携带该 token
+TEST_TOKEN = "test-token"
+AUTH_HEADERS: dict[str, str] = {"Authorization": f"Bearer {TEST_TOKEN}"}
+
 
 def make_position(
     position_id: str = "POS1",

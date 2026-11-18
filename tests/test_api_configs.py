@@ -13,7 +13,13 @@ from smart_trader.storage.command_store import CommandStore
 from smart_trader.storage.config_store import ConfigStore
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.reader import OrderJournalReader
-from tests.api_harness import make_order, make_position, seed_position
+from tests.api_harness import (
+    AUTH_HEADERS,
+    TEST_TOKEN,
+    make_order,
+    make_position,
+    seed_position,
+)
 
 KEY = "timer_grid_doge_1m"
 
@@ -58,7 +64,8 @@ def client(
     configs: ConfigStore,
 ) -> Iterator[TestClient]:
     with TestClient(
-        create_app(reader, commands, config_store=configs)
+        create_app(reader, commands, token=TEST_TOKEN, config_store=configs),
+        headers=AUTH_HEADERS,
     ) as instance:
         yield instance
 
@@ -325,5 +332,7 @@ def test_configs_require_token(
 def test_configs_return_503_without_store(
     reader: OrderJournalReader, commands: CommandStore
 ):
-    with TestClient(create_app(reader, commands)) as bare:
+    with TestClient(
+        create_app(reader, commands, token=TEST_TOKEN), headers=AUTH_HEADERS
+    ) as bare:
         assert bare.get("/api/configs").status_code == 503

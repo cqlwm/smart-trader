@@ -15,6 +15,7 @@ from smart_trader.storage.command_store import CommandStore
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.position_ack_store import PositionAckStore
 from smart_trader.storage.reader import OrderJournalReader
+from tests.api_harness import AUTH_HEADERS, TEST_TOKEN
 from tests.test_command_runner import KEY, FakeControllableStrategy
 
 
@@ -83,9 +84,11 @@ def client(
         create_app(
             reader,
             commands,
+            token=TEST_TOKEN,
             runtime_path=runtime_path,
             ack_store=ack_store,
-        )
+        ),
+        headers=AUTH_HEADERS,
     ) as instance:
         yield instance
 
@@ -123,9 +126,11 @@ def test_create_requires_live_strategy(
         create_app(
             reader,
             commands,
+            token=TEST_TOKEN,
             runtime_path=missing_runtime,
             ack_store=ack_store,
-        )
+        ),
+        headers=AUTH_HEADERS,
     ) as bare:
         response = _create(bare)
 
@@ -269,7 +274,8 @@ def test_ack_routes_return_503_without_store(
     runtime_path: Path,
 ):
     with TestClient(
-        create_app(reader, commands, runtime_path=runtime_path)
+        create_app(reader, commands, token=TEST_TOKEN, runtime_path=runtime_path),
+        headers=AUTH_HEADERS,
     ) as bare:
         assert bare.get("/api/position-acks").status_code == 503
         assert _create(bare).status_code == 503

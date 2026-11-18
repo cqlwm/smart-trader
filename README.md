@@ -96,7 +96,13 @@ LOG_LEVEL=INFO              # 日志级别，默认 INFO
 LOG_DIR=.data/logs          # 日志目录，默认 .data/logs
 SMART_TRADER_API_HOST=127.0.0.1
 SMART_TRADER_API_PORT=8000
-SMART_TRADER_API_TOKEN=     # 设置后 API 要求 Authorization: Bearer <token>
+
+# 必填：控制台 API Key（所有 /api 请求强制 Bearer 校验，为空时 run.py 拒绝启动）
+# 生成示例：openssl rand -hex 32
+SMART_TRADER_API_TOKEN=
+
+# 可选：允许跨域访问 API 的浏览器来源（逗号分隔，默认本地 Vite 开发服务器）
+SMART_TRADER_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
 ### 4. 初始化数据库
@@ -130,6 +136,26 @@ uv run python run.py       # 控制台 + 策略运行时, 默认 http://127.0.0.
 
 - 若已执行 `cd web && npm run build`，API 会一并托管 `web/dist`，直接访问 `http://127.0.0.1:8000`。
 - 开发前端时使用 `cd web && npm run dev`，Vite 将 `/api` 代理到 `127.0.0.1:8000`。
+
+### 7. 连接远程后端（多后端切换）
+
+本地启动前端、连接服务器后端时：
+
+1. 服务器 `.env` 设置 `SMART_TRADER_API_HOST=0.0.0.0` 与强随机 `SMART_TRADER_API_TOKEN`，
+   并在 `SMART_TRADER_CORS_ORIGINS` 中加入本地前端来源（默认已包含 `http://localhost:5173`）。
+2. 本地 `web/.env.local`（仅开发期，可选）：
+
+   ```bash
+   VITE_API_BASE_URL=              # 留空表示同源（开发态走 Vite 代理）
+   VITE_API_TOKEN=<与服务器一致的 Key>
+   ```
+
+3. 打开控制台后在顶栏「后端」下拉中新增服务器地址与 Key，即可随时切换；
+   配置与 Key 仅保存在当前浏览器的 localStorage，本地条目不可删除。
+
+安全提示：公网部署必须经 HTTPS 反向代理，否则 API Key 会以明文传输；
+`VITE_API_TOKEN` 会被打进构建产物，服务器托管的 `dist` 不要注入真实 Key，
+应在页面内手动输入并保存。
 
 ## 策略配置
 
@@ -187,6 +213,8 @@ uv run python run.py       # 控制台 + 策略运行时, 默认 http://127.0.0.
 | GET / POST | `/api/position-acks` 系列 | 人工仓位声明与撤销（仅影响告警，不改变账本与交易） |
 
 控制台路由对账本只发 SELECT，写操作仅限 `commands` / `strategy_configs` / `position_acks`，绝不写仓位与订单、不调交易所；同进程内的策略运行时是账本唯一写者（进程合并，职责不合并）。
+
+所有 `/api` 请求必须携带 `Authorization: Bearer <SMART_TRADER_API_TOKEN>`，`/api/health` 也不例外；前端静态资源不鉴权。
 
 ## 账本与一致性
 

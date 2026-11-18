@@ -3,7 +3,9 @@ import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
 import { useHealth } from "../api/hooks";
+import { ApiError } from "../api/client";
 import { formatClock } from "../utils/format";
+import { BackendSwitcher } from "./BackendSwitcher";
 
 const PAGES = [
   {
@@ -60,7 +62,16 @@ export function Shell({ children }: { children: ReactNode }) {
 
   const dbName = health.data?.database.split("/").pop() ?? "ledger.db";
   const online = health.isSuccess;
-  const statusLabel = online ? "API ONLINE" : health.isError ? "API OFFLINE" : "CONNECTING";
+  const unauthorized =
+    health.error instanceof ApiError && health.error.status === 401;
+  const statusLabel = online
+    ? "API ONLINE"
+    : unauthorized
+      ? "API UNAUTHORIZED"
+      : health.isError
+        ? "API OFFLINE"
+        : "CONNECTING";
+  const miniLabel = online ? "LIVE" : unauthorized ? "AUTH" : "DOWN";
 
   return (
     <div className="shell">
@@ -112,10 +123,11 @@ export function Shell({ children }: { children: ReactNode }) {
             <span className="crumb-desc">{current.desc}</span>
           </div>
           <div className="topbar-right">
+            <BackendSwitcher />
             <span className="clock mono">UTC {formatClock(now)}</span>
             <span className={`mini-status ${online ? "is-online" : "is-offline"}`}>
               <span className="status-dot" />
-              {online ? "LIVE" : "DOWN"}
+              {miniLabel}
             </span>
           </div>
         </div>

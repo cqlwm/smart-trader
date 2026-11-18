@@ -445,7 +445,7 @@ WS / Timer 事件循环（守护线程），没有启用配置或装配失败时
 - 响应模型定义在 `api/schemas.py`，`extra="forbid"`，与存储记录解耦；
 - 账本端点全部只读（GET）；P1 的写面仅限 `commands` 提交（见第十三节），API 仍不写仓位 / 订单；
 - 前端 `web/` 使用 HashRouter，`npm run build` 产物可挂到 API 根路径，避免 SPA history fallback；
-- 默认只监听 `127.0.0.1`；设置 `SMART_TRADER_API_TOKEN` 时校验 `Authorization: Bearer`。
+- 默认只监听 `127.0.0.1`；API 鉴权与跨域约定见第十六节（所有 `/api` 请求强制 `Authorization: Bearer`）。
 
 ## 十三、P1 控制面（命令表 + 策略内执行）
 
@@ -565,3 +565,36 @@ API 不复制公式；`limit` 20–1000，默认 300。非法交易对 / 周期 
 **迁移与种子**：`scripts/migrations/003_add_strategy_configs.py` 幂等建表；
 `004_seed_template_configs.py` 从模板配置构造函数播种（`INSERT OR IGNORE`，不覆盖已编辑行）。
 `ConfigStore` 打开缺表库时响亮报错并指向 003，不在业务代码里自动迁移。
+
+## 十六、远程部署、API Key 与多后端访问
+
+**部署形态**：后端部署到服务器（监听 `0.0.0.0`），本地保留前端 Vite 开发服务器，
+通过浏览器跨域访问远程 API；服务器的 `web/dist` 仍可由同一进程托管为同源控制台。
+
+**鉴权（强制）**：
+
+- 所有 `/api/*` 请求必须携带 `Authorization: Bearer <SMART_TRADER_API_TOKEN>`，
+  比较使用 `secrets.compare_digest`；`/api/health` 同样在鉴权内，作为连通性探测端点。
+- `SMART_TRADER_API_TOKEN` 是必填项：`run.py` 读取到空值时拒绝启动，
+  `create_app()` 收到空 token 同样抛 `ValueError`，避免服务以无鉴权状态运行。
+- 前端静态资源（`web/dist`）不鉴权，其中不包含任何秘密；生产构建禁止注入真实 Key。
+
+**CORS**：
+
+- 通过 `SMART_TRADER_CORS_ORIGINS`（逗号分隔）配置允许的浏览器来源，
+  默认 `http://localhost:5173,http://127.0.0.1:5173`；
+- 仅允许 `Authorization` / `Content-Type` / `Accept` 请求头与 GET/POST/PUT/OPTIONS 方法，
+  不启用 cookie credentials；预检请求由 CORS 中间件直接响应，不进入鉴权依赖。
+
+**前端多后端**：
+
+- `web/src/api/backends.ts` 维护 `BackendProfile { id, name, baseUrl, apiKey }` 列表，
+  持久化在 `localStorage`（`smart-trader.backends.v1` / `smart-trader.active-backend.v1`）；
+- 首次打开以环境变量播种“本地”条目：`baseUrl` 为空表示同源（开发态走 Vite `/api` 代理），
+  `apiKey` 取 `VITE_API_TOKEN`；此后可在界面修改并保存，本地条目不可删除；
+- 请求层在每次请求时读取当前激活 profile；切换后端后取消并清空 React Query 缓存，
+  重新拉取全部页面数据；401 明确提示检查 API Key；
+- 管理弹窗支持新增 / 编辑 / 删除 / 测试连接（`GET /api/health` 携带待测 Key）。
+
+**安全边界**：浏览器中的 Key（环境变量注入或 localStorage）对使用者始终可见，
+其作用是阻止公网任意访问；公网部署必须经 HTTPS 反向代理，避免 Key 明文传输。

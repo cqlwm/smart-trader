@@ -12,7 +12,13 @@ from smart_trader.model import OrderStatus
 from smart_trader.storage.command_store import CommandStore
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.reader import OrderJournalReader
-from tests.api_harness import make_order, make_position, seed_position
+from tests.api_harness import (
+    AUTH_HEADERS,
+    TEST_TOKEN,
+    make_order,
+    make_position,
+    seed_position,
+)
 
 
 @pytest.fixture
@@ -43,7 +49,9 @@ def commands(db_path: Path, journal: OrderJournal) -> Iterator[CommandStore]:
 
 @pytest.fixture
 def client(reader: OrderJournalReader, commands: CommandStore) -> Iterator[TestClient]:
-    with TestClient(create_app(reader, commands)) as instance:
+    with TestClient(
+        create_app(reader, commands, token=TEST_TOKEN), headers=AUTH_HEADERS
+    ) as instance:
         yield instance
 
 
@@ -56,6 +64,7 @@ def test_lifespan_runs_startup_and_shutdown_hooks(
     app = create_app(
         reader,
         commands,
+        token=TEST_TOKEN,
         on_startup=lambda: events.append("start"),
         on_shutdown=lambda: events.append("stop"),
     )
@@ -177,7 +186,7 @@ def test_write_methods_are_rejected(client: TestClient):
     assert client.delete("/api/positions/POS1").status_code == 405
 
 
-def test_requires_bearer_token_when_configured(
+def test_requires_bearer_token(
     reader: OrderJournalReader, commands: CommandStore
 ):
     with TestClient(create_app(reader, commands, token="secret")) as guarded:
@@ -201,7 +210,9 @@ def test_static_directory_serves_index(
     static_dir.mkdir()
     (static_dir / "index.html").write_text("<html>console</html>", encoding="utf-8")
 
-    with TestClient(create_app(reader, commands, static_dir=static_dir)) as client:
+    with TestClient(
+        create_app(reader, commands, token=TEST_TOKEN, static_dir=static_dir)
+    ) as client:
         response = client.get("/")
 
     assert response.status_code == 200

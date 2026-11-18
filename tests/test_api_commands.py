@@ -14,6 +14,7 @@ from smart_trader.storage.command_store import CommandStore
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.reader import OrderJournalReader
 from smart_trader.task.command_runner import CommandRunner
+from tests.api_harness import AUTH_HEADERS, TEST_TOKEN
 from tests.test_command_runner import KEY, FakeControllableStrategy
 
 
@@ -45,7 +46,9 @@ def commands(db_path: Path, journal: OrderJournal) -> Iterator[CommandStore]:
 
 @pytest.fixture
 def client(reader: OrderJournalReader, commands: CommandStore) -> Iterator[TestClient]:
-    with TestClient(create_app(reader, commands)) as instance:
+    with TestClient(
+        create_app(reader, commands, token=TEST_TOKEN), headers=AUTH_HEADERS
+    ) as instance:
         yield instance
 
 
@@ -151,7 +154,8 @@ def test_runtime_only_strategy_is_listed(
     RuntimeRegistry(runtime_path).heartbeat([FakeControllableStrategy(KEY)])
 
     with TestClient(
-        create_app(reader, commands, runtime_path=runtime_path)
+        create_app(reader, commands, token=TEST_TOKEN, runtime_path=runtime_path),
+        headers=AUTH_HEADERS,
     ) as runtime_client:
         response = runtime_client.get("/api/strategies")
 
