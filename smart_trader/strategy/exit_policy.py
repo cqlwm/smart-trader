@@ -175,25 +175,34 @@ class SignalExitPolicy(ExitPolicy):
 
 
 class LayeredReducePolicy(ExitPolicy):
-    """信号止损（反向信号命中且全仓**至少两层浮亏**时, 全部浮亏层一起离场）
+    """信号止损（反向信号命中且全仓**至少 N 层浮亏**时, 全部浮亏层一起离场）
 
     - `quantity > 0` 且 `profit_and_loss_ratio(close) < 0` 的层计入浮亏层;
-    - **少于两层不触发**: 单层小浮亏在震荡中是噪声, 触发只会制造磨损;
-    - 达到两层时对**全部浮亏层**产出 `should_exit=True` —— 策略逐仓位询问
+    - **默认少于两层不触发**: 单层小浮亏在震荡中是噪声, 触发只会制造磨损;
+      开启单层信号止损开关后门槛降为 1 层（`min_losing_layers=1`）;
+    - 达到门槛时对**全部浮亏层**产出 `should_exit=True` —— 策略逐仓位询问
       策略链, 因此同一根完成 K 线会整批剥掉, 浮盈/持平层不动;
     - 已有未成交出场单的浮亏层仍被选中（`force=True` 撤单重挂）;
     - `force=True`: 逆势减仓必须实际减仓, 每根完成 K 线撤单重挂到最新收盘价。
 
-    由 `enable_signal_stop_loss` 独立开关装配, 与 `SignalExitPolicy` 按盈亏状态
-    天然互斥: 浮盈走止盈, 浮亏走止损（Step 24）。
+    由 `enable_signal_stop_loss` / `enable_single_layer_signal_stop_loss`
+    装配, 与 `SignalExitPolicy` 按盈亏状态天然互斥: 浮盈走止盈, 浮亏走止损
+    （Step 24）。
 
     @param kind TRIGGER: 任何非中性信号即可; DIRECTIONAL: 仅命中出场方向时
     @param exit_side 策略的实际出场方向（多头仓位的出场方向为 SELL）
+    @param min_losing_layers 触发所需的最少浮亏层数（1 或 2）
     """
 
-    def __init__(self, kind: SignalKind, exit_side: OrderSide) -> None:
+    def __init__(
+        self,
+        kind: SignalKind,
+        exit_side: OrderSide,
+        min_losing_layers: int = 2,
+    ) -> None:
         self._kind = kind
         self._exit_side = exit_side
+        self.min_losing_layers = min_losing_layers
 
     def evaluate(self, position: GridPosition, ctx: ExitContext) -> ExitDecision:
         signal = ctx.market_signal
@@ -207,7 +216,7 @@ class LayeredReducePolicy(ExitPolicy):
             return ExitDecision()
 
         losing = self._losing_layers(ctx)
-        if len(losing) < 2:
+        if len(losing) < self.min_losing_layers:
             return ExitDecision()
         if not any(item.id == position.id for item in losing):
             return ExitDecision()

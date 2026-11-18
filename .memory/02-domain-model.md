@@ -356,12 +356,14 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 | 仓位状态 | 开关 | 策略 | 行为 |
 | --- | --- | --- | --- |
 | 浮盈（`close` 在成本价盈利侧，`profit_and_loss_ratio(close) > 0`） | `enable_signal_take_profit`（默认 True） | `SignalExitPolicy` | 止盈离场（非 force，保留原挂单） |
-| 浮亏（`profit_and_loss_ratio(close) < 0`） | `enable_signal_stop_loss`（默认 False） | `LayeredReducePolicy` | 止损离场（**全部浮亏层一次性** force 撤单重挂；浮亏层 **< 2 层不触发**） |
+| 浮亏（`profit_and_loss_ratio(close) < 0`） | `enable_signal_stop_loss`（默认 False）/ `enable_single_layer_signal_stop_loss`（默认 False） | `LayeredReducePolicy` | 止损离场（**全部浮亏层一次性** force 撤单重挂；默认 **< 2 层不触发**，单层开关开启后门槛降为 1 层） |
 | 持平（`ratio == 0`，含均价不可用） | —— | 均不触发 | 保持持仓 |
 
 - 两分支按盈亏符号**天然互斥**，同层永不冲突，`force` 合并规则退化为兜底；
 - 止盈无盈利门槛（`exit_signal_take_profit_min_rate` 已删除）—— 有浮盈即为止盈；
-- 止损要求**至少两层浮亏**才触发（单层小浮亏在震荡中是噪声，触发会制造磨损）；
+- 止损默认要求**至少两层浮亏**才触发（单层小浮亏在震荡中是噪声，触发会制造磨损）；
+  开启 `enable_single_layer_signal_stop_loss` 后门槛降为 1 层（独立开关，两个
+  止损开关任一开启即装配策略，单层开关优先决定门槛）；
   触发后**所有浮亏层一次性离场**，浮盈/持平层不动（不变量见上文）；
 - 全关 = 无信号驱动离场（只剩固定止盈 / 价格止损 / 上限止损）。
 
@@ -412,8 +414,10 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 - `stop_loss_price`：`enable_stop_loss=False` → `None`；跟踪止损 → `trailing_stop_price`
   （缺失为 `None`）；固定止损 → 均价 `× (1 - stop_loss_rate)`（多头）/
   `× (1 + stop_loss_rate)`（空头）—— 与 `StopLossPolicy` 的实时口径一致，不读死快照；
-- `take_profit_price`：均价 `× (1 + fixed_take_profit_rate)`（多头）/
-  `× (1 - fixed_take_profit_rate)`（空头），仅作展示，不代表开关已启用；
+- `take_profit_price`：仅当该策略配置开启 `fixed_rate_take_profit` 时返回
+  均价 `× (1 + fixed_take_profit_rate)`（多头）/ `× (1 - fixed_take_profit_rate)`
+  （空头），否则为 `None` —— 仓位行持久化了费率但开关在配置行，API 必须按
+  策略键查配置，避免关闭固定止盈时仍画出误导性的止盈线；
 - `entry_pending`：`pending_entry_orders` 的 `quantity - filled_qty` 之和（仅未了结入场单）；
 - 浮动盈亏不在后端计算：后端没有最新价，P0 前端不展示未实现盈亏。
 
@@ -503,6 +507,7 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 - 网格：`per_order_amount`、`per_order_unit`、`grid_spacing_rate`、
   `trend_spacing_rate`、`max_order`、`highest_price`、`lowest_price`；
 - 止盈止损：`enable_signal_take_profit`、`enable_signal_stop_loss`、
+  `enable_single_layer_signal_stop_loss`、
   `fixed_rate_take_profit`、`fixed_take_profit_rate`、`take_profit_use_limit_order`、
   `enable_order_stop_loss`、`order_stop_loss_rate`、`enable_max_order_stop_loss`、
   `paused_after_stop_loss`、`enable_trailing_stop`、`trailing_stop_rate`、

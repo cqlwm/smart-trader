@@ -575,6 +575,41 @@ class TestAccount:
 
         assert exchange.balance("usdt") == 100.0
 
+    def test_positions_translates_ccxt_network_error(self):
+        """回归: 对账查询的网络错误必须翻译为 SmartTraderError
+
+        未翻译时异常会绕过 PositionReconciler 的 SmartTraderError 兜底,
+        一路抛到 safe_run, 导致该根K线的平仓/开仓检查被整体跳过。
+        """
+        exchange, fake = build_exchange()
+        fake.positions_error = ccxt.NetworkError(
+            "Remote end closed connection without response"
+        )
+
+        with pytest.raises(SmartTraderError) as exc:
+            exchange.positions(SYMBOL)
+
+        assert exc.value.error_code is ErrorCode.EXCHANGE_UNAVAILABLE
+        assert exc.value.is_transient is True, "网络错误必须标记为可重试"
+
+    def test_balance_translates_ccxt_network_error(self):
+        exchange, fake = build_exchange()
+        fake.balance_error = ccxt.NetworkError("Connection aborted")
+
+        with pytest.raises(SmartTraderError) as exc:
+            exchange.balance("USDT")
+
+        assert exc.value.error_code is ErrorCode.EXCHANGE_UNAVAILABLE
+
+    def test_cancel_open_orders_translates_ccxt_network_error(self):
+        exchange, fake = build_exchange()
+        fake.open_orders_error = ccxt.NetworkError("Connection aborted")
+
+        with pytest.raises(SmartTraderError) as exc:
+            exchange.cancel_open_orders(SYMBOL)
+
+        assert exc.value.error_code is ErrorCode.EXCHANGE_UNAVAILABLE
+
 
 class TestExchangeRouting:
     """双实例路由契约: 行情走公共实例, 交易/账户走私有实例"""

@@ -5,18 +5,24 @@
   决定使用 WebSocket 推送还是 REST 定时拉取;
 - 没有启用配置或策略运行时装配失败时, 控制台仍然可用 (记录日志并继续)。
 
-运行: uv run python run.py
+运行:
+- 常规: `uv run python run.py`
+- 开发热重载: `uv run python run.py --reload`（或
+  `uv run uvicorn run:create_application --factory --reload --port 8001`）
 """
 
 import os
+import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import dotenv
 import uvicorn
+from fastapi import FastAPI
 
 from bootstrap import create_binance_exchange, create_public_market_data
 from smart_trader import log
-from smart_trader.api.app import create_app
+from smart_trader.api.app import create_app as build_api_app
 from smart_trader.api.market_provider import MarketDataProvider
 from smart_trader.runtime import RuntimeRegistry
 from smart_trader.storage.command_store import CommandStore
@@ -41,7 +47,18 @@ def _cors_origins() -> list[str]:
     return [item.strip().rstrip("/") for item in raw.split(",") if item.strip()]
 
 
-def main() -> None:
+def reload_requested(argv: Sequence[str]) -> bool:
+    """命令行是否请求 uvicorn 开发热重载"""
+    return "--reload" in argv
+
+
+def create_application() -> FastAPI:
+    """构建控制台 + 策略运行时（uvicorn 工厂入口）
+
+    `uvicorn --reload` 以 `run:create_application --factory` 加载: 每个 reload
+    子进程都会重新执行本函数, 账本句柄与策略运行时随进程重建; 旧进程退出时
+    lifespan shutdown 钩子先停策略运行时, 再关闭账本, 保证持仓从账本恢复。
+    """
     from smart_trader.config import DB_PATH
 
     db_path = Path(DB_PATH)
@@ -65,7 +82,18 @@ def main() -> None:
         configs_provider=config_store.list,
     )
 
-    app = create_app(
+    def shutdown() -> None:
+        """先停策略运行时, 再释放账本句柄"""
+        try:
+            runtime.stop()
+        finally:
+            reader.close()
+            ack_store.close()
+            config_store.close()
+            commands.close()
+            journal.close()
+
+    return build_api_app(
         reader,
         commands,
         token=os.environ.get("SMART_TRADER_API_TOKEN"),
@@ -76,21 +104,27 @@ def main() -> None:
         config_store=config_store,
         ack_store=ack_store,
         on_startup=runtime.start,
-        on_shutdown=runtime.stop,
+        on_shutdown=shutdown,
     )
 
+
+def main() -> None:
     host = os.environ.get("SMART_TRADER_API_HOST", "127.0.0.1")
     port = int(os.environ.get("SMART_TRADER_API_PORT", "8000"))
     logger.info("控制台与策略运行时启动: http://%s:%s", host, port)
-    try:
-        uvicorn.run(app, host=host, port=port)
-    finally:
-        runtime.stop()
-        reader.close()
-        ack_store.close()
-        config_store.close()
-        commands.close()
-        journal.close()
+
+    if reload_requested(sys.argv[1:]):
+        logger.info("开发热重载已开启: 修改 .py 文件将自动重启进程")
+        uvicorn.run(
+            "run:create_application",
+            factory=True,
+            host=host,
+            port=port,
+            reload=True,
+        )
+        return
+
+    uvicorn.run(create_application(), host=host, port=port)
 
 
 if __name__ == "__main__":

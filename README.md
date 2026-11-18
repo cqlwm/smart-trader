@@ -126,11 +126,17 @@ uv run python scripts/migrations/006_convert_per_order_amount.py "$DB"
 
 ```bash
 uv run python run.py       # 控制台 + 策略运行时, 默认 http://127.0.0.1:8000
+
+# 开发热重载: 修改 .py 文件后由 uvicorn 自动重启进程
+SMART_TRADER_API_PORT=8001 uv run python run.py --reload
+# 等价写法
+SMART_TRADER_API_PORT=8001 uv run uvicorn run:create_application --factory --reload
 ```
 
 - 同一进程内启动控制台 API 与策略运行时；启用的配置按各自的 `data_source` 进入 WS 或 Timer 循环，两种循环可并存。
 - 没有任何启用的配置，或策略运行时装配失败（如凭据缺失）时，只记录日志，控制台仍可用。
 - **代价**：API 与策略同进程，重启进程会同时中断交易；结构性配置变更与启停仍需重启，调参与新增策略可热加载。
+- `--reload` 面向开发：每次保存 `.py` 都会重启整个子进程（策略运行时、WebSocket 与追单线程全部重建，持仓由账本恢复）。实盘运行请使用不带 `--reload` 的常规启动。
 
 ### 6. 打开控制台
 

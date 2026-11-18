@@ -460,6 +460,9 @@ class FakeCcxtExchange(CcxtExchange):
         self.fetch_order_error: Exception | None = None
         self.cancel_order_error: Exception | None = None
         self.positions_result: list[CcxtPosition] = []
+        self.positions_error: Exception | None = None
+        self.balance_error: Exception | None = None
+        self.open_orders_error: Exception | None = None
         self.exchange_info_response: dict[str, Any] = {"symbols": []}
         self.ohlcv: list[list[float]] = []
         self.ticker_last: float = 0.5
@@ -507,9 +510,13 @@ class FakeCcxtExchange(CcxtExchange):
     def fetch_positions(
         self, symbols: list[str] | None = None
     ) -> list[CcxtPosition]:
+        if self.positions_error is not None:
+            raise self.positions_error
         return self.positions_result
 
     def fetch_balance(self) -> dict[str, CcxtCoinBalance]:
+        if self.balance_error is not None:
+            raise self.balance_error
         return {"USDT": {"free": 100.0}}
 
     def fetch_ohlcv(
@@ -549,4 +556,6 @@ class FakeCcxtExchange(CcxtExchange):
         return {}
 
     def fetch_open_orders(self, symbol: str) -> list[CcxtOpenOrder]:
+        if self.open_orders_error is not None:
+            raise self.open_orders_error
         return []

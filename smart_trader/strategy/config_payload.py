@@ -61,6 +61,7 @@ class StrategyConfigPayload(BaseModel):
     # 信号止盈止损
     enable_signal_take_profit: bool = True
     enable_signal_stop_loss: bool = False
+    enable_single_layer_signal_stop_loss: bool = False
 
     # 固定比例止盈
     fixed_rate_take_profit: bool = False
@@ -117,6 +118,9 @@ class StrategyConfigPayload(BaseModel):
             signal_kind=self.signal_kind,
             enable_signal_take_profit=self.enable_signal_take_profit,
             enable_signal_stop_loss=self.enable_signal_stop_loss,
+            enable_single_layer_signal_stop_loss=(
+                self.enable_single_layer_signal_stop_loss
+            ),
             fixed_rate_take_profit=self.fixed_rate_take_profit,
             take_profit_use_limit_order=self.take_profit_use_limit_order,
             fixed_take_profit_rate=self.fixed_take_profit_rate,
@@ -186,6 +190,9 @@ class StrategyConfigPayload(BaseModel):
             lowest_price=config.lowest_price,
             enable_signal_take_profit=config.enable_signal_take_profit,
             enable_signal_stop_loss=config.enable_signal_stop_loss,
+            enable_single_layer_signal_stop_loss=(
+                config.enable_single_layer_signal_stop_loss
+            ),
             fixed_rate_take_profit=config.fixed_rate_take_profit,
             take_profit_use_limit_order=config.take_profit_use_limit_order,
             fixed_take_profit_rate=config.fixed_take_profit_rate,

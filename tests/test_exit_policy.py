@@ -424,6 +424,24 @@ def test_layered_reduce_requires_at_least_two_losing_layers():
     assert policy.evaluate(profitable, ctx).should_exit is False
 
 
+def test_layered_reduce_with_single_layer_threshold_stops_one_losing_layer():
+    """单层信号止损: min_losing_layers=1 时一层浮亏也离场, 浮盈层不动"""
+    policy = LayeredReducePolicy(
+        SignalKind.DIRECTIONAL, OrderSide.SELL, min_losing_layers=1
+    )
+    lost = _holding("LOST", entry_price=0.6)
+    profitable = _holding("PROFIT", entry_price=0.5)
+    ctx = _exit_ctx([profitable, lost], close=0.58, direction=SignalDirection.SHORT)
+
+    decision = policy.evaluate(lost, ctx)
+    assert decision.should_exit is True, "单层开关开启后一层浮亏应止损"
+    assert decision.force is True, "逆势减仓必须能覆盖休息中的挂单"
+    assert policy.evaluate(profitable, ctx).should_exit is False, (
+        "浮盈层不归止损分支"
+    )
+
+
+
 def test_layered_reduce_stops_all_losing_layers():
     """两层及以上浮亏: 全部浮亏层一次性离场, 浮盈层不动"""
     policy = LayeredReducePolicy(SignalKind.DIRECTIONAL, OrderSide.SELL)

@@ -176,6 +176,34 @@ def test_post_accepts_quote_notional_size(client: TestClient):
     assert body["payload"]["per_order_unit"] == "quote"
 
 
+def test_positions_hide_take_profit_line_when_fixed_take_profit_disabled(
+    client: TestClient, journal: OrderJournal
+):
+    """配置未启用固定止盈时, 仓位页不得出现止盈线"""
+    assert _create(client).status_code == 201
+    _seed_active_position(journal)
+
+    items = cast(list[dict[str, Any]], client.get("/api/positions").json())
+    assert items[0]["take_profit_price"] is None
+
+    detail = cast(dict[str, Any], client.get("/api/positions/POS1").json())
+    assert detail["take_profit_price"] is None
+
+
+def test_positions_show_take_profit_line_when_fixed_take_profit_enabled(
+    client: TestClient, journal: OrderJournal
+):
+    """启用固定止盈时止盈线按仓位费率正常展示"""
+    assert _create(client, fixed_rate_take_profit=True).status_code == 201
+    _seed_active_position(journal)
+
+    items = cast(list[dict[str, Any]], client.get("/api/positions").json())
+
+    assert items[0]["take_profit_price"] == pytest.approx(0.505), (
+        "0.5 均价 × (1 + 0.01) = 0.505"
+    )
+
+
 def test_post_duplicate_key_returns_409(client: TestClient):
     _create(client)
 

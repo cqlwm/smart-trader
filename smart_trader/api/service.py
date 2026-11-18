@@ -3,6 +3,7 @@
 派生量一律复用 `GridPosition` 的计算属性, 不在这里重写数量/均价/盈亏公式。
 """
 
+from collections.abc import Set as AbstractSet
 from datetime import UTC, datetime
 from typing import cast
 
@@ -110,7 +111,7 @@ def _stop_loss_price(position: GridPosition) -> float | None:
 
 
 def _take_profit_price(position: GridPosition) -> float | None:
-    """固定止盈档位线（仅展示, 不代表开关已启用）"""
+    """固定止盈档位线: 仅在策略启用固定比例止盈时由调用方取用"""
     if position.price <= 0:
         return None
     if position.position_side == PositionSide.LONG:
@@ -126,7 +127,9 @@ def _entry_pending(position: GridPosition) -> float:
     )
 
 
-def _position_view(position: GridPosition) -> PositionView:
+def _position_view(
+    position: GridPosition, *, fixed_take_profit_enabled: bool
+) -> PositionView:
     pending_exit = position.pending_exit_order
     return PositionView(
         id=position.id,
@@ -154,7 +157,9 @@ def _position_view(position: GridPosition) -> PositionView:
         trailing_stop_activation_rate=position.trailing_stop_activation_rate,
         trailing_stop_price=position.trailing_stop_price,
         stop_loss_price=_stop_loss_price(position),
-        take_profit_price=_take_profit_price(position),
+        take_profit_price=(
+            _take_profit_price(position) if fixed_take_profit_enabled else None
+        ),
         pending_exit=(
             _order_view(pending_exit, position.position_side)
             if pending_exit is not None
@@ -176,16 +181,32 @@ def list_position_views(
     *,
     strategy_key: str | None = None,
     include_closed: bool = False,
+    fixed_take_profit_keys: AbstractSet[str] = frozenset(),
 ) -> list[PositionView]:
-    """仓位列表（默认只含活跃仓位）"""
+    """仓位列表（默认只含活跃仓位）
+
+    @param fixed_take_profit_keys 启用固定比例止盈的策略键; 未命中的策略
+        不返回止盈线（费率随仓位持久化, 不代表开关已启用）
+    """
     positions = _load_positions(
         reader, strategy_key=strategy_key, include_closed=include_closed
     )
-    return [_position_view(position) for position in positions]
+    return [
+        _position_view(
+            position,
+            fixed_take_profit_enabled=(
+                position.strategy_key in fixed_take_profit_keys
+            ),
+        )
+        for position in positions
+    ]
 
 
 def get_position_detail(
-    reader: OrderJournalReader, position_id: str
+    reader: OrderJournalReader,
+    position_id: str,
+    *,
+    fixed_take_profit_keys: AbstractSet[str] = frozenset(),
 ) -> PositionDetailView | None:
     """仓位详情 + 全部订单; 不存在返回 None"""
     rows = reader.load_positions_by_ids([position_id])
@@ -193,7 +214,10 @@ def get_position_detail(
         return None
     orders = reader.load_orders_for_positions([position_id])
     position = GridPosition.from_row(rows[0], orders)
-    base = _position_view(position)
+    base = _position_view(
+        position,
+        fixed_take_profit_enabled=position.strategy_key in fixed_take_profit_keys,
+    )
     return PositionDetailView(
         **base.model_dump(),
         orders=[

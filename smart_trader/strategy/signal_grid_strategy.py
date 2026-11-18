@@ -242,10 +242,19 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
                     self.config.signal_kind, self.config.master_side.reversal()
                 )
             )
-        if self.config.enable_signal_stop_loss:
+        if (
+            self.config.enable_signal_stop_loss
+            or self.config.enable_single_layer_signal_stop_loss
+        ):
             policies.append(
                 LayeredReducePolicy(
-                    self.config.signal_kind, self.config.master_side.reversal()
+                    self.config.signal_kind,
+                    self.config.master_side.reversal(),
+                    min_losing_layers=(
+                        1
+                        if self.config.enable_single_layer_signal_stop_loss
+                        else 2
+                    ),
                 )
             )
         return ExitPolicyChain(policies)

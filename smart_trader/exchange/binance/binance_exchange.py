@@ -533,15 +533,21 @@ class BinanceExchange(_MarketDataMixin, Exchange):
     # ---- AccountPort ----
 
     def balance(self, coin: str) -> float:
-        balance = self._private_exchange.fetch_balance()
+        try:
+            balance = self._private_exchange.fetch_balance()
+        except Exception as e:
+            raise _translate_error(e, "查询余额") from e
         return float(balance[coin.upper()]["free"])
 
     def positions(self, symbol: Symbol | None = None) -> list[Position]:
-        raw_positions = (
-            self._private_exchange.fetch_positions([symbol.ccxt()])
-            if symbol is not None
-            else self._private_exchange.fetch_positions()
-        )
+        try:
+            raw_positions = (
+                self._private_exchange.fetch_positions([symbol.ccxt()])
+                if symbol is not None
+                else self._private_exchange.fetch_positions()
+            )
+        except Exception as e:
+            raise _translate_error(e, "查询持仓") from e
         positions: list[Position] = []
         for raw in raw_positions:
             side = raw.get("side")
@@ -575,7 +581,10 @@ class BinanceExchange(_MarketDataMixin, Exchange):
 
     def cancel_open_orders(self, symbol: Symbol) -> list[OrderResult]:
         """撤销该交易对所有挂单（非端口能力, 仅 demo 使用）"""
-        raw_orders = self._private_exchange.fetch_open_orders(symbol.ccxt())
+        try:
+            raw_orders = self._private_exchange.fetch_open_orders(symbol.ccxt())
+        except Exception as e:
+            raise _translate_error(e, "查询挂单") from e
         results: list[OrderResult] = []
         for raw in raw_orders:
             custom_id = raw.get("clientOrderId") or raw.get("id")

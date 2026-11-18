@@ -48,6 +48,8 @@ class SignalGridStrategyConfig(BaseModel):
     # 信号止损: 反向信号命中且全仓浮亏层 >= 2 时, 全部浮亏层强制离场
     # （force 撤单重挂; 少于两层浮亏不触发, 避免震荡磨损）
     enable_signal_stop_loss: bool = False
+    # 单层信号止损: 把上述触发门槛从两层降为一层（独立开关, 默认关闭）
+    enable_single_layer_signal_stop_loss: bool = False
 
     # 固定比例止盈
     fixed_rate_take_profit: bool = False

@@ -34,6 +34,7 @@ def _template_config() -> SignalGridStrategyConfig:
         max_order=50,
         signal=AlphaTrendSignal(atr_multiple=1.5, period=10),
         signal_kind=SignalKind.TRIGGER,
+        enable_single_layer_signal_stop_loss=True,
         fixed_rate_take_profit=True,
         fixed_take_profit_rate=0.005,
         strategy_key="signal_grid_short_sell_dogeusdt_1m",
@@ -72,6 +73,9 @@ def test_json_roundtrip_preserves_every_field():
     assert restored == payload, "JSON 往返必须无损"
     assert restored.signal_kind is SignalKind.TRIGGER
     assert restored.enable_order_stop_loss is True
+    assert restored.enable_single_layer_signal_stop_loss is True, (
+        "单层信号止损开关必须随配置往返"
+    )
 
 
 def test_to_strategy_config_materializes_alpha_trend_signal():

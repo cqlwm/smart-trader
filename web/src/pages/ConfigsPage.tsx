@@ -49,6 +49,7 @@ interface Draft {
   lowest_price: string;
   enable_signal_take_profit: boolean;
   enable_signal_stop_loss: boolean;
+  enable_single_layer_signal_stop_loss: boolean;
   fixed_rate_take_profit: boolean;
   take_profit_use_limit_order: boolean;
   fixed_take_profit_rate: string;
@@ -138,6 +139,8 @@ function draftFromPayload(
     lowest_price: String(payload.lowest_price),
     enable_signal_take_profit: payload.enable_signal_take_profit,
     enable_signal_stop_loss: payload.enable_signal_stop_loss,
+    enable_single_layer_signal_stop_loss:
+      payload.enable_single_layer_signal_stop_loss,
     fixed_rate_take_profit: payload.fixed_rate_take_profit,
     take_profit_use_limit_order: payload.take_profit_use_limit_order,
     fixed_take_profit_rate: String(payload.fixed_take_profit_rate),
@@ -197,6 +200,8 @@ function payloadFromDraft(draft: Draft): StrategyConfigPayload {
     lowest_price: parseNumber("价格下限", draft.lowest_price),
     enable_signal_take_profit: draft.enable_signal_take_profit,
     enable_signal_stop_loss: draft.enable_signal_stop_loss,
+    enable_single_layer_signal_stop_loss:
+      draft.enable_single_layer_signal_stop_loss,
     fixed_rate_take_profit: draft.fixed_rate_take_profit,
     take_profit_use_limit_order: draft.take_profit_use_limit_order,
     fixed_take_profit_rate: parseNumber(
@@ -744,6 +749,13 @@ function ConfigEditor({
             label="信号止损"
             checked={draft.enable_signal_stop_loss}
             onChange={(checked) => onPatch("enable_signal_stop_loss", checked)}
+          />
+          <Toggle
+            label="单层信号止损（一层浮亏即离场）"
+            checked={draft.enable_single_layer_signal_stop_loss}
+            onChange={(checked) =>
+              onPatch("enable_single_layer_signal_stop_loss", checked)
+            }
           />
         </ConfigSection>
 

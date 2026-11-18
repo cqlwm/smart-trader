@@ -239,6 +239,7 @@ export interface StrategyConfigPayload {
   lowest_price: number;
   enable_signal_take_profit: boolean;
   enable_signal_stop_loss: boolean;
+  enable_single_layer_signal_stop_loss: boolean;
   fixed_rate_take_profit: boolean;
   take_profit_use_limit_order: boolean;
   fixed_take_profit_rate: number;

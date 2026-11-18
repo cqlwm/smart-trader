@@ -122,6 +122,18 @@ def _config_store(request: Request) -> ConfigStore:
     return store
 
 
+def _fixed_take_profit_keys(request: Request) -> set[str]:
+    """启用固定比例止盈的策略键; 未注入配置存储时视为全部未启用"""
+    store = cast(ConfigStore | None, request.app.state.configs)
+    if store is None:
+        return set()
+    return {
+        record.strategy_key
+        for record in store.list()
+        if StrategyConfigPayload.from_json(record.payload).fixed_rate_take_profit
+    }
+
+
 def _ack_store(request: Request) -> PositionAckStore | None:
     return cast(PositionAckStore | None, request.app.state.acks)
 
@@ -267,13 +279,18 @@ def get_positions(
         _reader(request),
         strategy_key=strategy_key,
         include_closed=include_closed,
+        fixed_take_profit_keys=_fixed_take_profit_keys(request),
     )
 
 
 @router.get("/positions/{position_id}", response_model=PositionDetailView)
 def get_position_detail(request: Request, position_id: str) -> PositionDetailView:
     """仓位详情 + 全部订单"""
-    detail = service.get_position_detail(_reader(request), position_id)
+    detail = service.get_position_detail(
+        _reader(request),
+        position_id,
+        fixed_take_profit_keys=_fixed_take_profit_keys(request),
+    )
     if detail is None:
         raise HTTPException(status_code=404, detail="position not found")
     return detail

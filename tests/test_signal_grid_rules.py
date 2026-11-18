@@ -170,18 +170,35 @@ def test_default_config_assembles_signal_exit_policy():
 
 
 def test_signal_stop_loss_assembles_layered_reduce():
-    """enable_signal_stop_loss=True 装配 LayeredReducePolicy"""
+    """enable_signal_stop_loss=True 装配 LayeredReducePolicy（默认两层门槛）"""
     strategy, _, _, _ = build_strategy(
         enable_signal_take_profit=False, enable_signal_stop_loss=True
     )
 
     policies = strategy.exit_policies.policies
-    assert any(isinstance(policy, LayeredReducePolicy) for policy in policies), (
-        "enable_signal_stop_loss=True 应装配 LayeredReducePolicy"
+    policy = next(
+        item for item in policies if isinstance(item, LayeredReducePolicy)
     )
-    assert not any(isinstance(policy, SignalExitPolicy) for policy in policies), (
-        "enable_signal_take_profit=False 时不装配信号止盈"
+    assert policy.min_losing_layers == 2, "默认仍要求至少两层浮亏"
+    assert not any(
+        isinstance(item, SignalExitPolicy) for item in policies
+    ), "enable_signal_take_profit=False 时不装配信号止盈"
+
+
+def test_single_layer_signal_stop_loss_lowers_threshold():
+    """单层信号止损开关: 装配同一策略但门槛降为一层"""
+    strategy, _, _, _ = build_strategy(
+        enable_signal_take_profit=False,
+        enable_signal_stop_loss=False,
+        enable_single_layer_signal_stop_loss=True,
     )
+
+    policy = next(
+        item
+        for item in strategy.exit_policies.policies
+        if isinstance(item, LayeredReducePolicy)
+    )
+    assert policy.min_losing_layers == 1, "单层开关开启后一层浮亏即触发"
 
 
 def test_both_signal_policies_assemble_together():

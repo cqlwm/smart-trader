@@ -319,10 +319,42 @@ def test_take_profit_price_reflects_position_side(
         ],
     )
 
-    views = {view.id: view for view in list_position_views(reader)}
+    views = {
+        view.id: view
+        for view in list_position_views(
+            reader,
+            fixed_take_profit_keys={DEFAULT_STRATEGY_KEY, OTHER_STRATEGY_KEY},
+        )
+    }
 
     assert views["POS1"].take_profit_price == pytest.approx(0.55)
     assert views["POS2"].take_profit_price == pytest.approx(0.45)
+
+
+def test_take_profit_price_is_none_when_strategy_disables_fixed_take_profit(
+    journal: OrderJournal, reader: OrderJournalReader
+):
+    """固定止盈关闭时不得展示止盈线（阈值仅由仓位费率派生, 不代表已启用）"""
+    seed_position(
+        journal,
+        make_position("POS1", fixed_take_profit_rate=0.1),
+        [
+            make_order(
+                "buy1",
+                "POS1",
+                status=OrderStatus.CLOSED,
+                quantity=1.0,
+                filled_qty=1.0,
+                avg_price=0.5,
+            )
+        ],
+    )
+
+    assert list_position_views(reader)[0].take_profit_price is None
+    detail = get_position_detail(reader, "POS1")
+    assert detail is not None, "仓位详情本身仍应可读"
+    assert detail.take_profit_price is None
+
 
 
 def test_position_entry_pending_sums_unsettled_entry_orders(

@@ -226,18 +226,20 @@ v2 的累积计数不存在此问题，`first_run` 已删除。
 - **为什么 `ExitContext` 需要仓位列表**：批量止损要统计"当前有多少层浮亏"并逐层产出
   决策，这是跨仓位判定；`EntryContext.positions` 早有先例（`MaxPositionsGate` /
   `GridSpacingGate` / `TrendSpacingGate` 都是跨仓位判定），两个上下文保持对称，同为纯数据。
-- **至少两层浮亏才触发、一次剥完全部浮亏层怎么保证**：`evaluate` 每次按全仓统计
-  `quantity > 0 且 ratio < 0` 的层；`len(losing) < 2` 直接不产出决策，否则对
-  `losing` 中的每一层返回 `should_exit`。策略逐仓位询问策略链，因此同一根完成 K 线
-  会一次性为所有浮亏层挂出（或 force 重挂）出场单，不需要额外的节流状态或计数器。
-  单层浮亏不触发 —— 震荡中的单层小亏是噪声，触发只会制造磨损（Step 29）。
+- **浮亏门槛可配（默认两层）**：`evaluate` 每次按全仓统计
+  `quantity > 0 且 ratio < 0` 的层；`len(losing) < min_losing_layers` 直接不产出
+  决策，否则对 `losing` 中的每一层返回 `should_exit`。策略逐仓位询问策略链，
+  因此同一根完成 K 线会一次性为所有浮亏层挂出（或 force 重挂）出场单，不需要
+  额外的节流状态或计数器。`min_losing_layers` 默认 2（单层小亏是噪声，Step 29）；
+  `enable_single_layer_signal_stop_loss=True` 时降为 1 —— 该开关独立装配同一
+  策略，只改变门槛，不新增第二套止损机制。
 - **为什么 `force=True`**：逆势减仓必须实际减仓。普通止盈可以"挂价等回撤"，但下跌
   趋势中挂着不成交会让逐层推进停滞；force 让每根完成 K 线撤单重挂到最新收盘价
   （与 `StopLossPolicy` 同属"必须执行"类）。
 - **为什么按盈亏状态分派（Step 24）**：信号止盈与信号止损是同一次"反向信号
   离场"的两个分支，区分维度是**该层当前的盈亏状态**而非两套独立策略 ——
   浮盈（`ratio > 0`）走止盈（非 force，保留原挂单），浮亏（`ratio < 0`）走止损
-  （至少两层浮亏才触发，全部浮亏层 force 撤单重挂）。两分支按盈亏符号天然互斥，同层永不冲突；
+  （默认至少两层浮亏才触发，全部浮亏层 force 撤单重挂）。两分支按盈亏符号天然互斥，同层永不冲突；
   持平（`ratio == 0`，含均价不可用）不触发。这取代了 Step 23 的"两个独立策略
   可并存"形态 —— 那会让盈利的最外层被 force 立即剥掉，违背"止盈/止损"的
   字面语义（止盈 = 有浮盈才走，止损 = 有浮亏才走）。
@@ -247,7 +249,8 @@ v2 的累积计数不存在此问题，`first_run` 已删除。
   列保留（schema 兼容，`profit_level` 档位 1 不再被任何策略消费）。
 - **不要求盈利 → 要求浮亏**：`LayeredReducePolicy` 只处理 `ratio < 0` 的层 ——
   止损的字面语义；盈利层由止盈分支（或固定止盈）处理，不再被止损 force 剥掉。
-  在此基础上再加"至少两层"门槛，把单层噪声挡在止损之外（Step 29）。
+  在此基础上再加"默认两层"门槛，把单层噪声挡在止损之外（Step 29）；
+  需要单层保护时开启 `enable_single_layer_signal_stop_loss`，门槛降为 1 层。
 
 ### 12. `PositionLifecycle` 入场单结算的职责拆分（Step 21）
 
@@ -442,6 +445,13 @@ error 日志刷屏。对账缺口只靠 `OrderReconciler`（订单行级）无�
 测试显式传 `FakeAccountPort`。集成档 `StatefulFakeExchange` 同时实现 `AccountPort`：
 净持仓 = 簿内 BUY 成交 − SELL 成交 − `external_close()` 脚本扣减，与真实交易所
 "订单成交产生持仓"的因果关系一致，`external_close` 即"用户手动平仓"的脚本入口。
+
+**账户读路径同样必须翻译异常**：`positions` / `balance` / `cancel_open_orders`
+的 ccxt 调用若让 `ccxt.NetworkError` 直接抛出，会绕过对账器的
+`except SmartTraderError`，穿透到 `Task.safe_run` —— 日志表现为"处理K线失败"，
+且该根 K 线的 `check_close_position` / `check_open_position` 被整体跳过。因此
+`AccountPort` 与其余读方法一律经 `_translate_error` 包装，网络类错误统一为
+`EXCHANGE_UNAVAILABLE`（`is_transient=True`），对账器按"跳过本轮"降级。
 
 ### 17. 单层规模：金额 / 数量换算（Step 35）
 

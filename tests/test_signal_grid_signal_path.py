@@ -157,6 +157,31 @@ def test_no_signal_exit_when_position_at_loss():
     assert trading.placed == [], "浮亏层不应触发信号止盈"
 
 
+def test_single_layer_signal_stop_loss_closes_lone_losing_layer():
+    """单层信号止损开启后, 只有一层浮亏也离场（门槛由两层降为一层）"""
+    strategy, trading, _, _ = _layered_reduce(
+        enable_single_layer_signal_stop_loss=True
+    )
+    seed_position(strategy, entry_price=0.5, quantity=100.0)
+
+    push_kline(strategy, 0.4999)
+
+    assert [request.side for request in trading.placed] == [OrderSide.SELL], (
+        "单层开关开启时反向信号应平掉唯一浮亏层"
+    )
+
+
+def test_single_losing_layer_kept_without_single_layer_switch():
+    """未开单层开关时, 一层浮亏仍不触发信号止损（保持两层门槛）"""
+    strategy, trading, _, _ = _layered_reduce()
+    seed_position(strategy, entry_price=0.5, quantity=100.0)
+
+    push_kline(strategy, 0.4999)
+
+    assert trading.placed == [], "默认两层门槛下单层浮亏不应离场"
+
+
+
 def test_no_signal_exit_when_signal_is_neutral():
     """中性信号不触发离场"""
     strategy, trading, _, _ = _long(
