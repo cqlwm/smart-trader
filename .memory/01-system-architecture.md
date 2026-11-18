@@ -245,6 +245,11 @@ storage (queries.py / reader.py)           只读仓储: 只发 SELECT, 不建�
   重试，仓位永远平不掉、偏差永不收敛。修复：新增 `PositionReconciler`
   持仓对账（每根完成 K 线 + 启动时，交易所实际持仓为唯一收敛权威，
   设计见 `03-coding-design.md` 三.16、不变量见第十节 12）。
+- **停机期间的反向离场信号丢失**：进程停机时没有内存状态记住信号，重启只从
+  新 K 线开始决策，这次离场信号永久丢失。修复：每根完成 K 线落库水位
+  `strategy_kline_state`；重启首根完成 K 线回放停机缺口，取最早一次会触发
+  离场的反向信号，按该 K 线收盘价补挂普通限价单（只覆盖信号止盈 / 信号止损，
+  设计见 `03-coding-design.md` 十）。
 - **`Signal` 不是真 ABC**（Step 13 修复）：`@abstractmethod` 修饰 `run()` 但类未继承 `ABC`，
   抽象方法完全失效，任何子类都可实例化并返回 `None`。
 - **`AlphaTrendSignal.first_run` 反推吞掉本次突破**（Step 13 修复）：反推取

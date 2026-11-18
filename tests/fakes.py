@@ -418,7 +418,8 @@ class FakeMarketDataPort(MarketDataPort):
         self, symbol: Symbol, timeframe: str, limit: int = 100
     ) -> list[Kline]:
         self.ohlcv_calls += 1
-        return self._klines
+        # 与 ccxt 一致: 未指定 since 时返回最近 limit 根
+        return self._klines[-limit:] if limit > 0 else []
 
 
 class FakeCcxtExchange(CcxtExchange):

@@ -27,7 +27,6 @@ from tests.test_storage_schema import create_pre_reason_database
 STRATEGY_KEY = "dogeusdt_long_buy_1m"
 OTHER_KEY = "qqqusdt_long_buy_1m"
 
-
 @pytest.fixture
 def journal() -> Iterator[OrderJournal]:
     instance = OrderJournal(":memory:")
@@ -471,3 +470,28 @@ class TestModels:
         assert row.main_order_side is OrderSide.BUY
         assert row.active is True
         assert row.trailing_stop_price is None
+
+
+class TestKlineWatermark:
+    """完成K线水位: 停机信号补偿的回放起点"""
+
+    def test_missing_returns_none(self, journal: OrderJournal):
+        assert journal.get_kline_watermark(STRATEGY_KEY) is None
+
+    def test_roundtrip_and_upsert(self, journal: OrderJournal):
+        journal.save_kline_watermark(STRATEGY_KEY, 1_700_000_000_000)
+
+        assert journal.get_kline_watermark(STRATEGY_KEY) == 1_700_000_000_000
+
+        journal.save_kline_watermark(STRATEGY_KEY, 1_700_000_060_000)
+
+        assert journal.get_kline_watermark(STRATEGY_KEY) == 1_700_000_060_000, (
+            "同一策略应覆盖旧水位而不是插入多行"
+        )
+
+    def test_strategies_are_isolated(self, journal: OrderJournal):
+        journal.save_kline_watermark(STRATEGY_KEY, 1_700_000_000_000)
+        journal.save_kline_watermark(OTHER_KEY, 1_700_000_120_000)
+
+        assert journal.get_kline_watermark(STRATEGY_KEY) == 1_700_000_000_000
+        assert journal.get_kline_watermark(OTHER_KEY) == 1_700_000_120_000

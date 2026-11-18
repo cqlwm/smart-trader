@@ -22,6 +22,7 @@ from smart_trader.model import (
     MarketSignal,
     OrderSide,
     OrderSizeUnit,
+    PlaceOrderBehavior,
     PositionCloseReason,
     PositionLimit,
     SignalKind,
@@ -49,6 +50,7 @@ from smart_trader.strategy.entry_gate import (
 )
 from smart_trader.strategy.exit_policy import (
     ExitContext,
+    ExitDecision,
     ExitPolicy,
     ExitPolicyChain,
     FixedTakeProfitPolicy,
@@ -61,6 +63,7 @@ from smart_trader.strategy.exit_policy import (
 from smart_trader.strategy.grid_order_gateway import GridOrderGateway
 from smart_trader.strategy.grid_position import GridPosition, load_positions
 from smart_trader.strategy.inverted_signal import InvertedSignal
+from smart_trader.strategy.missed_exit_compensation import MissedExitCompensator
 from smart_trader.strategy.position_lifecycle import PositionLifecycle
 from smart_trader.strategy.position_reconciler import PositionReconciler
 from smart_trader.strategy.signal import Signal
@@ -166,7 +169,7 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
                 config.max_order,
             )
         self._entry_gates = self._build_entry_gates()
-        self._exit_policies = self._build_exit_policies()
+        self._rebuild_policies()
         self._resting_take_profit: RestingTakeProfitPolicy | None = (
             RestingTakeProfitPolicy(config.master_side)
             if config.fixed_rate_take_profit and config.take_profit_use_limit_order
@@ -174,6 +177,8 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
         )
         self._signal_kline: str | None = None
         self._signal_cache: MarketSignal | None = None
+        # 停机信号补偿只在每进程首根完成K线尝试一次; 失败保留重试机会
+        self._compensation_attempted = False
 
         # 上限止损回调: 策略内部确定时机同步调用（见 check_close_position 末尾）,
         # 故用回调形态; 默认空实现, 未挂回调时不报错
@@ -221,21 +226,9 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
             )
         return GridSpacingGate(self.config.grid_spacing_rate, self.config.master_side)
 
-    def _build_exit_policies(self) -> ExitPolicyChain:
-        """装配离场策略链（顺序不影响合并结果）"""
-        policies: list[ExitPolicy] = [
-            # 上限止损与手动全平共用同一个 force 触发源。
-            # 手动全平必须走 force: 仓位若已有休息止盈挂单, 非 force 决策会保留
-            # 原挂单不重挂（check_close_position 中 continue）, 全平意图落空;
-            # force 才会撤单结算后按最新收盘价重挂
-            ForceExitPolicy(
-                lambda: self._limit.stop_loss_triggered(len(self.positions))
-                or self.close_position
-            ),
-            StopLossPolicy(),
-        ]
-        if self.config.fixed_rate_take_profit:
-            policies.append(FixedTakeProfitPolicy())
+    def _build_signal_exit_policies(self) -> list[ExitPolicy]:
+        """信号类离场策略（信号止盈 + 信号止损）, 停机补偿复用同一集合"""
+        policies: list[ExitPolicy] = []
         if self.config.enable_signal_take_profit:
             policies.append(
                 SignalExitPolicy(
@@ -257,7 +250,27 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
                     ),
                 )
             )
-        return ExitPolicyChain(policies)
+        return policies
+
+    def _rebuild_policies(self) -> None:
+        """按当前配置重建离场策略链; 信号子链单独保留给停机补偿"""
+        signal_policies = self._build_signal_exit_policies()
+        self._signal_exit_policies = ExitPolicyChain(signal_policies)
+        policies: list[ExitPolicy] = [
+            # 上限止损与手动全平共用同一个 force 触发源。
+            # 手动全平必须走 force: 仓位若已有休息止盈挂单, 非 force 决策会保留
+            # 原挂单不重挂（check_close_position 中 continue）, 全平意图落空;
+            # force 才会撤单结算后按最新收盘价重挂
+            ForceExitPolicy(
+                lambda: self._limit.stop_loss_triggered(len(self.positions))
+                or self.close_position
+            ),
+            StopLossPolicy(),
+        ]
+        if self.config.fixed_rate_take_profit:
+            policies.append(FixedTakeProfitPolicy())
+        policies.extend(signal_policies)
+        self._exit_policies = ExitPolicyChain(policies)
 
     def apply_config(self, config: SignalGridStrategyConfig) -> None:
         """热更新调参: 保留仓位、订单与信号状态, 只重建受配置影响的规则链
@@ -293,7 +306,7 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
                 enable_stop_loss=self.config.enable_max_order_stop_loss,
             )
             self._entry_gates = self._build_entry_gates()
-            self._exit_policies = self._build_exit_policies()
+            self._rebuild_policies()
             self._resting_take_profit = (
                 RestingTakeProfitPolicy(self.config.master_side)
                 if self.config.fixed_rate_take_profit
@@ -558,38 +571,12 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
 
         outcome = CloseOutcome()
         for position in self.positions:
-            decision = self._exit_policies.decide(position, ctx)
-
-            # 已有未成交的出场单: 非强制决策保留原挂单, 强制才撤单结算后重挂
-            if position.has_pending_exit:
-                if not decision.force:
-                    continue
-                outcome.acted = True
-                if not self._lifecycle.force_settle_exit(position):
-                    outcome.exit_settled.append(position)
-                    continue
-
-            if not decision.should_exit:
-                continue
-
-            # 未成交入场单: 先撤剩余挂单防止继续建仓; 撤后仓位归零即入场丢弃归档
-            # (无入场单时不得判 entry_discarded —— 出场结算耗尽的仓位已由
-            #  track_pending_exits 以 EXIT_SETTLED 归档, 这里重复判定会覆盖原因)
-            if position.pending_entry_orders:
-                outcome.acted = True
-                if self._lifecycle.settle_pending_entries(position):
-                    outcome.entry_discarded.append(position)
-                    outcome.acted = True
-                    continue
-
-            exit_qty = self._exit_quantity(position)
-            if exit_qty <= 0:
-                # 可平量被外部平仓耗尽却未被本轮对账归档(浮点边界): 不下单
-                continue
-            self._gateway.place_and_append(
-                position, position.exit_side, exit_qty, ctx.close
+            self._apply_exit_decision(
+                position,
+                self._exit_policies.decide(position, ctx),
+                ctx.close,
+                outcome,
             )
-            outcome.acted = True
 
         if self.close_position:
             # 一次性命令必须消费即清: 不复位则下一根 K 线再次全平, 无限重复挂出场单
@@ -605,6 +592,54 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
                 self.is_running = False
 
         return outcome
+
+    def _apply_exit_decision(
+        self,
+        position: GridPosition,
+        decision: ExitDecision,
+        price: float,
+        outcome: CloseOutcome,
+        *,
+        behavior: PlaceOrderBehavior | None = None,
+    ) -> None:
+        """执行单仓位离场决策（实时路径与停机补偿共用）
+
+        @param price 出场限价; 补偿路径传历史信号价
+        @param behavior 覆盖下单行为; 补偿按信号价直接挂 GTC 限价单
+        """
+        # 已有未成交的出场单: 非强制决策保留原挂单, 强制才撤单结算后重挂
+        if position.has_pending_exit:
+            if not decision.force:
+                return
+            outcome.acted = True
+            if not self._lifecycle.force_settle_exit(position):
+                outcome.exit_settled.append(position)
+                return
+
+        if not decision.should_exit:
+            return
+
+        # 未成交入场单: 先撤剩余挂单防止继续建仓; 撤后仓位归零即入场丢弃归档
+        # (无入场单时不得判 entry_discarded —— 出场结算耗尽的仓位已由
+        #  track_pending_exits 以 EXIT_SETTLED 归档, 这里重复判定会覆盖原因)
+        if position.pending_entry_orders:
+            outcome.acted = True
+            if self._lifecycle.settle_pending_entries(position):
+                outcome.entry_discarded.append(position)
+                return
+
+        exit_qty = self._exit_quantity(position)
+        if exit_qty <= 0:
+            # 可平量被外部平仓耗尽却未被本轮对账归档(浮点边界): 不下单
+            return
+        self._gateway.place_and_append(
+            position,
+            position.exit_side,
+            exit_qty,
+            price,
+            behavior=behavior,
+        )
+        outcome.acted = True
 
     # ---- 每根完成K线的维护 ----
 
@@ -675,6 +710,96 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
         self._external_reductions = result.adjustments
         return result.archived
 
+    def _compensate_missed_exit_signals(self) -> bool:
+        """停机信号补偿: 回放缺口K线, 对最早的反向信号按信号价补挂离场单
+
+        只在每进程首根完成K线尝试一次; 查询或下单失败返回 False,
+        下一根完成K线重试（水位不前进, 保证信号不会永久丢失）。
+
+        @return 是否已完成（含"无需补偿"）
+        """
+        if self._compensation_attempted:
+            return True
+        if not self.is_running or not self.positions:
+            self._compensation_attempted = True
+            return True
+        if not self._signal_exit_policies.policies:
+            # 两个信号离场开关都关闭时没有可补偿的规则, 不必请求行情
+            self._compensation_attempted = True
+            return True
+
+        last_kline_ms = self.journal.get_kline_watermark(
+            self.config.strategy_key
+        )
+        if last_kline_ms is None:
+            logger.info(
+                "策略 %s 无完成K线水位, 跳过停机信号补偿",
+                self.config.strategy_key,
+            )
+            self._compensation_attempted = True
+            return True
+
+        compensator = MissedExitCompensator(
+            config=self.config,
+            market=self.market,
+            positions=lambda: self.positions,
+            policies=self._signal_exit_policies,
+            warmup_klines=self.init_kline_nums,
+        )
+        try:
+            plan = compensator.plan(last_kline_ms)
+            if plan.replayed_until_ms is None:
+                logger.info(
+                    "停机信号补偿: 水位 %s, 无待回放K线", last_kline_ms
+                )
+            else:
+                logger.info(
+                    "停机信号补偿: 回放 %s -> %s, 待补 %s 个仓位",
+                    last_kline_ms,
+                    plan.replayed_until_ms,
+                    len(plan.exits),
+                )
+            outcome = CloseOutcome()
+            if plan.exits and plan.price is not None:
+                logger.warning(
+                    "停机信号补偿: 信号K线 %s, 价格 %s, 补挂 %s 个仓位",
+                    plan.signal_kline_ms,
+                    plan.price,
+                    len(plan.exits),
+                )
+                for item in plan.exits:
+                    position = self._positions.get(item.position_id)
+                    if position is None:
+                        continue
+                    self._apply_exit_decision(
+                        position,
+                        ExitDecision(should_exit=True, force=item.force),
+                        plan.price,
+                        outcome,
+                        # 补偿必须按信号价挂普通限价单, 不交给追单器推离该价格
+                        behavior=PlaceOrderBehavior.NORMAL,
+                    )
+            if outcome.exit_settled:
+                self._archive(
+                    outcome.exit_settled, PositionCloseReason.EXIT_SETTLED
+                )
+            if outcome.entry_discarded:
+                self._archive(
+                    outcome.entry_discarded, PositionCloseReason.ENTRY_DISCARDED
+                )
+        except SmartTraderError as exc:
+            logger.warning(
+                "停机信号补偿失败, 下一根完成K线重试: %s", exc
+            )
+            return False
+
+        if plan.replayed_until_ms is not None:
+            self.journal.save_kline_watermark(
+                self.config.strategy_key, plan.replayed_until_ms
+            )
+        self._compensation_attempted = True
+        return True
+
     def _exit_quantity(self, position: GridPosition) -> float:
         """实际可平量 = 账本派生量 - 被外部平掉的量(未对账到时为 0)"""
         return position.quantity - self._external_reductions.get(position.id, 0.0)
@@ -682,6 +807,10 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
     def _on_kline_finished(self):
         latest_kline = self.latest_kline_obj
         if latest_kline is None:
+            return
+
+        # 停机补偿失败时整根K线跳过（含水位写入）, 下一根重试
+        if not self._compensate_missed_exit_signals():
             return
 
         if self.is_running:
@@ -726,6 +855,11 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
 
         for position, reason in archives:
             self._archive([position], reason)
+
+        # 水位最后写: 本根K线的决策全部完成（或无需动作）后才算已处理
+        self.journal.save_kline_watermark(
+            self.config.strategy_key, latest_kline.timestamp
+        )
 
     def _on_kline(self):
         """盘中路径: 结算入场单成交, 跟踪休息中的出场单, 必要时挂出休息限价止盈单

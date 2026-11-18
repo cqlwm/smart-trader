@@ -137,3 +137,15 @@ Index(
     position_acks.c.strategy_key,
     position_acks.c.status,
 )
+
+# ---- strategy_kline_state: 每策略最后处理的完成K线水位 ----
+# 停机期间可能错过反向离场信号; 重启时用它确定回放起点（毫秒时间戳）。
+# 只由策略进程在每根完成K线处理后写入, 控制台只读。
+
+strategy_kline_state = Table(
+    "strategy_kline_state",
+    metadata,
+    Column("strategy_key", Text, primary_key=True),
+    Column("last_finished_kline_ms", Integer, nullable=False),
+    Column("updated_at", Text, nullable=False),
+)

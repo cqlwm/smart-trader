@@ -27,6 +27,7 @@ _TABLES = (
     "commands",
     "strategy_configs",
     "position_acks",
+    "strategy_kline_state",
 )
 
 
@@ -271,4 +272,10 @@ CREATE TABLE IF NOT EXISTS position_acks (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_position_acks_active ON position_acks(strategy_key, status);
+
+CREATE TABLE IF NOT EXISTS strategy_kline_state (
+    strategy_key TEXT PRIMARY KEY,
+    last_finished_kline_ms INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """

@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import Table, delete, insert, update
+from sqlalchemy import Table, delete, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
@@ -150,7 +150,37 @@ class OrderJournal:
                 .values(active=0, closed_reason=reason.value, updated_at=_now())
             )
 
+    def save_kline_watermark(self, strategy_key: str, kline_ms: int) -> None:
+        """记录策略最后处理的完成K线时间(毫秒), 作为停机补偿的回放起点"""
+        now = _now()
+        with self._engine.begin() as conn:
+            conn.execute(
+                sqlite_insert(schema.strategy_kline_state)
+                .values(
+                    strategy_key=strategy_key,
+                    last_finished_kline_ms=kline_ms,
+                    updated_at=now,
+                )
+                .on_conflict_do_update(
+                    index_elements=[schema.strategy_kline_state.c.strategy_key],
+                    set_={
+                        "last_finished_kline_ms": kline_ms,
+                        "updated_at": now,
+                    },
+                )
+            )
+
     # ---- 读 ----
+
+    def get_kline_watermark(self, strategy_key: str) -> int | None:
+        """最后处理的完成K线时间(毫秒); 从未处理过返回 None"""
+        with self._engine.connect() as conn:
+            value = conn.execute(
+                select(schema.strategy_kline_state.c.last_finished_kline_ms).where(
+                    schema.strategy_kline_state.c.strategy_key == strategy_key
+                )
+            ).scalar_one_or_none()
+        return None if value is None else int(value)
 
     def load_active_positions(self, strategy_key: str) -> list[GridPositionRow]:
         """加载策略当前仓位（active=1, 按写入序）"""

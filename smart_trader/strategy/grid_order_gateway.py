@@ -51,6 +51,7 @@ class GridOrderGateway:
         first_price: float | None = None,
         position: GridPositionRow | None = None,
         grid_position_id: str | None = None,
+        behavior: PlaceOrderBehavior | None = None,
     ) -> OrderResult | None:
         """
         下单入口: 订单号由账本在发送前分发, 记账下单保证交易所与账本最终一致
@@ -60,8 +61,10 @@ class GridOrderGateway:
         @param first_price: 追单第一档价格
         @param position: 新仓位的策略参数模板（首单同事务建仓位）
         @param grid_position_id: 追加订单到已有仓位
+        @param behavior: 覆盖配置的下单行为; None 使用配置
         @return: 交易所返回的订单结果
         """
+        behavior = behavior if behavior is not None else self._config.place_order_behavior
         request = OrderRequest(
             symbol=self._config.symbol,
             side=side,
@@ -78,7 +81,7 @@ class GridOrderGateway:
             grid_position_id=grid_position_id,
         )
 
-        if self._config.place_order_behavior == PlaceOrderBehavior.NORMAL:
+        if behavior is PlaceOrderBehavior.NORMAL:
             return placer.place(request)
 
         chaser = LimitOrderChaser(
@@ -88,7 +91,7 @@ class GridOrderGateway:
             side=side,
             quantity=qty,
             position_side=self._position_side(),
-            behavior=self._config.place_order_behavior,
+            behavior=behavior,
         )
         result = chaser.start(first_price)
         if result is not None:
@@ -111,10 +114,12 @@ class GridOrderGateway:
         price: float,
         first_price: float | None = None,
         template: GridPositionRow | None = None,
+        behavior: PlaceOrderBehavior | None = None,
     ) -> OrderResult | None:
         """下单并把结果按账本预写行追加为仓位内存订单记录
 
         @param template: 新仓位模板（首单同事务建仓位）; 为空则追加到已有仓位
+        @param behavior: 覆盖配置的下单行为; None 使用配置
         """
         result = self.place_order(
             side,
@@ -123,6 +128,7 @@ class GridOrderGateway:
             first_price=first_price,
             position=template,
             grid_position_id=None if template is not None else position.id,
+            behavior=behavior,
         )
         if result is not None:
             position.orders.append(self.order_record(position, qty, price, result))

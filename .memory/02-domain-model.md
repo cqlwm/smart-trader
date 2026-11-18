@@ -470,6 +470,22 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 `external_qty > surplus` 或 `surplus <= 0` 时声明失效（`position_ack_stale`）。
 创建前要求策略心跳新鲜且有成功对账数据；新建声明自动撤销旧 active 声明，撤销幂等。
 
+### 完成K线水位（`strategy_kline_state` 表）
+
+每策略一行，记录**最后处理完成的 K 线毫秒时间戳**，供停机信号补偿确定回放起点：
+
+| 列 | 说明 |
+| --- | --- |
+| `strategy_key` | TEXT PK，策略键 |
+| `last_finished_kline_ms` | 最后处理的完成 K 线毫秒时间戳（UTC epoch ms） |
+| `updated_at` | UTC 时间戳 |
+
+写入口径：`SignalGridStrategy._on_kline_finished` 的全部决策完成后才 upsert；
+中途异常（含停机补偿失败）不前进水位，下一根 K 线重试。水位只由策略进程写，
+控制台不消费。缺失水位 = 该策略尚未按新版本运行过，重启时跳过补偿。
+停机补偿只回放**信号类离场**（信号止盈 / 信号止损），取缺口内最早一次会
+触发离场的反向信号，按该 K 线收盘价补挂普通限价单（非追价）。
+
 ## 十一、行情图表视图（P2）
 
 定义于 `smart_trader/api/schemas.py`，**不落库**：
