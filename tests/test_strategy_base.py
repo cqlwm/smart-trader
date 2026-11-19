@@ -1,3 +1,5 @@
+import threading
+
 import pandas as pd
 
 from smart_trader.model import Symbol
@@ -80,3 +82,41 @@ def test_multi_timeframe_independent_dataframes():
     assert set(strategy.kline_data_dict) == {"1m", "5m"}
     assert isinstance(strategy.klines("1m"), pd.DataFrame)
     assert strategy.klines("1m") is not strategy.klines("5m")
+
+
+def test_unfinished_kline_does_not_advance_frame_during_finished_callback():
+    """回归: 完成K线回调期间, 盘中推送不得改写 DataFrame 最后一根K线
+
+    否则回调按"最新一根"求值时可能读到下一根未完成K线, 该完成K线上的
+    突破信号会永久丢失（长/短两个策略因阻塞时长不同而看到不同快照）。
+    """
+    market = FakeMarketDataPort()
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingStrategy(RecordingStrategy):
+        def _on_kline_finished(self) -> None:
+            super()._on_kline_finished()
+            started.set()
+            release.wait(5)
+
+    strategy = BlockingStrategy(market)
+    finished = make_kline(timestamp=1_700_000_000_000, finished=True)
+    thread = threading.Thread(target=strategy.run, args=(finished,))
+    thread.start()
+    assert started.wait(5), "完成K线回调应已进入"
+
+    strategy.run(
+        make_kline(timestamp=1_700_000_060_000, finished=False, close=1.6)
+    )
+
+    assert strategy.latest_kline_obj is not None
+    assert strategy.latest_kline_obj.timestamp == finished.timestamp, (
+        "盘中K线在完成回调结束前不得推进快照"
+    )
+    assert len(strategy.klines_df) == 1
+
+    release.set()
+    thread.join(5)
+    assert not thread.is_alive()
+

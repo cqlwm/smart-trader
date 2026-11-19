@@ -171,7 +171,7 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 | `enable_stop_loss` / `stop_loss_rate` | 止损参数（**活参数**）：固定止损按 `仓位均价 × (1 ∓ stop_loss_rate)` 实时判定，修改（改库或改配置）后重启即生效，无需改其它字段 |
 | `enable_trailing_stop` / `trailing_stop_rate` / `trailing_stop_activation_rate` / `trailing_stop_price` | 跟踪止损参数与运行时状态（`trailing_stop_price` 只归属跟踪止损：开仓时以 `收盘价 × (1 ∓ stop_loss_rate)` 播种为 ratchet 下限，每根 K 线只向上抬升，不可派生，必须落库；**固定止损不读此字段**） |
 | `active` | 1 = 未到终态；0 = 已归档。**唯一物化的状态标记**，其余相位派生 |
-| `closed_reason` | 归档原因（`PositionCloseReason`，TEXT 可空）：活跃仓位为 `NULL`，归档时与 `active=0` 同语句写入；`NULL` 的归档行 = 历史归档（该列引入前），仅作审计展示、不参与逻辑判定 |
+| `closed_reason` | 归档原因（`PositionCloseReason`，TEXT 可空）：活跃仓位为 `NULL`，归档时与 `active=0` 同语句写入；`NULL` 的归档行 = 历史归档（该列引入前），仅作审计展示、不参与逻辑判定。同一根 K 线多个归档来源命中时**先收集的原因优先**：孤儿回收跳过已被出场结算/对账收集的仓位，避免覆盖真实出场原因 |
 | `created_at` / `updated_at` | 时间戳 |
 
 ### 订单表 `orders`

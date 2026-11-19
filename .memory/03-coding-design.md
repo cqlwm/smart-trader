@@ -557,6 +557,28 @@ timeframe 通过动态订阅加入：
 - 错过的事件跳过（只调度未来）；同一周期至多分发一次；
 - fetch 抛异常 → 记日志跳过本周期，循环不中断（与第五节异常策略一致）。
 
+### 4. 完成K线快照一致性（`MultiTimeframeStrategy.run`）
+
+**约束**：一根完成K线的全部判定（`on_kline` + `on_kline_finished`）必须基于
+**该根K线自己的快照**，处理期间 `data_lock` 不得释放。
+
+**背景缺陷**：原实现只把 `data_lock` 包住 DataFrame 更新，随后释放锁再回调。
+完成K线回调可能被 `positionRisk` 等网络调用阻塞数十秒，这段时间里盘中推送会
+继续 `_update_klines`，把 `latest_kline_obj` 与 DataFrame 最后一行推进到下一根
+未完成K线。回调随后按"最新一根"求值信号，读到的是**下一根**（`is_breakout=False`），
+该完成K线上的突破信号永久丢失。实测同一根 01:00 突破：长仓策略在阻塞较早时
+读到并离场，空仓策略读到的是 01:01 盘中K线，开空信号丢失。
+
+**实现**：
+
+- `kline.finished=True`：`with self.data_lock:` 包住初始化/更新与两个回调；
+- 盘中推送：`data_lock.acquire(blocking=False)` 失败即丢弃本 tick —— 完成K线
+  决策期间本来就有 `on_kline` 跳过语义，宁可少一次盘中结算，不可污染决策快照；
+- `_call_on_kline_finished` 仍然阻塞等待、永不跳过；完成K线之间靠 `data_lock`
+  串行，后一根K线在前一根处理完之前无法推进 DataFrame。
+
+回归测试：`test_unfinished_kline_does_not_advance_frame_during_finished_callback`。
+
 ## 五、只读 API 与 Web 控制台（P0）
 
 ### 1. 读写分离：`OrderJournal` / `OrderJournalReader`

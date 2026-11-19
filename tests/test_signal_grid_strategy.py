@@ -799,6 +799,38 @@ def test_exit_settled_reason_persisted():
     )
 
 
+def test_exit_settled_reason_is_not_overwritten_by_orphan_reaper():
+    """回归: 老仓位正常出场后同时满足孤儿回收条件, 原因必须是 exit_settled
+
+    同一根K线里 track_pending_exits 与 _reap_orphans 都会选中该仓位,
+    后写的 orphan_reaped 曾覆盖真实的出场原因, 审计失真。
+    """
+    strategy, trading, journal, _ = build_strategy(
+        fixed_rate_take_profit=True, fixed_take_profit_rate=0.01
+    )
+    seed_position(
+        strategy, "POS1", created_at="2020-01-01T00:00:00+00:00"
+    )
+
+    push_kline(strategy, 0.52)
+    trading.queue_query(
+        OrderResult(
+            custom_id="o-POS1",
+            symbol=DEFAULT_SYMBOL,
+            side=OrderSide.SELL,
+            status=OrderStatus.CLOSED,
+            quantity=100.0,
+            filled_qty=100.0,
+            avg_price=0.52,
+        )
+    )
+    push_kline(strategy, 0.52, timestamp=TIMESTAMP + 60_000)
+
+    assert _closed_reason(journal, "POS1") == "exit_settled", (
+        f"出场原因不得被孤儿回收覆盖, got {_closed_reason(journal, 'POS1')}"
+    )
+
+
 def test_orphan_reaped_reason_persisted():
     """超时空仓位回收: closed_reason = orphan_reaped"""
     strategy, _, journal, _ = build_strategy(fixed_rate_take_profit=False)

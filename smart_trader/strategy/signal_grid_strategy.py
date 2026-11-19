@@ -847,10 +847,13 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
             if self.is_running and not outcome.acted and not archives:
                 self.check_open_position()
 
-        # 孤儿回收（每根完成K线）
+        # 孤儿回收（每根完成K线）: 同一根K线里已被出场结算/对账收集的仓位
+        # 不得再次以孤儿原因归档, 否则后写的原因会覆盖真实出场原因（审计失真）
+        archived_ids = {position.id for position, _ in archives}
         archives.extend(
             (position, PositionCloseReason.ORPHAN_REAPED)
             for position in self._reap_orphans()
+            if position.id not in archived_ids
         )
 
         for position, reason in archives:

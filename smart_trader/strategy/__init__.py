@@ -118,25 +118,34 @@ class MultiTimeframeStrategy(Strategy):
             self.on_kline_finished(timeframe)
 
     def run(self, kline: Kline):
-        """处理K线数据（多时间框架版本）"""
+        """处理K线数据（多时间框架版本）
+
+        完成K线必须基于它自己的快照做决策: 整段处理（含回调）持有 `data_lock`,
+        期间盘中推送无法改写 DataFrame 最后一根K线。否则回调一旦被网络调用
+        阻塞, 读到的是下一根未完成K线, 该完成K线上的突破信号会永久丢失。
+        """
         timeframe = kline.timeframe
         # 确保时间框架已注册
         if timeframe not in self.kline_data_dict:
             raise ValueError(f"Timeframe {timeframe} not registered in the strategy")
 
-        if self.data_lock.acquire(blocking=kline.finished):
-            try:
+        if kline.finished:
+            with self.data_lock:
                 self._initialize_klines_if_needed(kline)
                 self._update_klines(kline)
-            finally:
-                self.data_lock.release()
-        else:
+                self._call_on_kline(timeframe)
+                self._call_on_kline_finished(timeframe)
             return
 
-        self._call_on_kline(timeframe)
+        if not self.data_lock.acquire(blocking=False):
+            return
+        try:
+            self._initialize_klines_if_needed(kline)
+            self._update_klines(kline)
+        finally:
+            self.data_lock.release()
 
-        if kline.finished:
-            self._call_on_kline_finished(timeframe)
+        self._call_on_kline(timeframe)
 
 
 class SingleTimeframeStrategy(MultiTimeframeStrategy):
