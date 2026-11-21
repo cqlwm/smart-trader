@@ -19,6 +19,7 @@ from smart_trader.exceptions import ErrorCode, SmartTraderError
 from smart_trader.exchange.ports import AccountPort, MarketDataPort, TradingPort
 from smart_trader.execution.order_reconciler import OrderReconciler
 from smart_trader.model import (
+    EntryMode,
     MarketSignal,
     OrderSide,
     OrderSizeUnit,
@@ -216,14 +217,21 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
         )
 
     def _build_spacing_gate(self) -> EntryGate:
-        """间距口径二选一: trend_spacing_rate 非空走顺势阶梯, 否则网格间距
+        """按 entry_mode 装配间距闸门: grid → 网格间距, trend → 顺势阶梯
 
         两个闸门语义互斥（同一链内 AND 组合会拦死绝大多数行情）, 只装配其一。
+        配置校验保证模式与间距字段一致。
         """
-        if self.config.trend_spacing_rate is not None:
+        if self.config.entry_mode is EntryMode.TREND:
+            assert self.config.trend_spacing_rate is not None, (
+                "配置校验保证 trend 模式下 trend_spacing_rate 非空"
+            )
             return TrendSpacingGate(
                 self.config.trend_spacing_rate, self.config.master_side
             )
+        assert self.config.grid_spacing_rate is not None, (
+            "配置校验保证 grid 模式下 grid_spacing_rate 非空"
+        )
         return GridSpacingGate(self.config.grid_spacing_rate, self.config.master_side)
 
     def _build_signal_exit_policies(self) -> list[ExitPolicy]:

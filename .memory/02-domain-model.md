@@ -322,8 +322,13 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 - 与 `GridSpacingGate` 的**方向相反**：后者基准是亏损方向极值层（多头取最低价层），
   只放行"走出亏损间距"的加仓（逆势补仓）；前者只放行"顺盈利方向再加一层"的加仓。
 - 二者**语义互斥**（同一链内 AND 组合会把绝大多数行情拦死），由
-  `SignalGridStrategyConfig.trend_spacing_rate` 二选一装配：非空 → 装配
-  `TrendSpacingGate` 并替换 `GridSpacingGate`；为空 → 保持 `grid_spacing_rate` 语义。
+  `SignalGridStrategyConfig.entry_mode` 显式二选一装配：
+  `EntryMode.GRID` → 装配 `GridSpacingGate`；`EntryMode.TREND` → 装配
+  `TrendSpacingGate`。模式与字段必须一致：`grid` 模式要求 `grid_spacing_rate`
+  必填且 `trend_spacing_rate` 为空；`trend` 模式要求 `trend_spacing_rate`
+  必填且 `grid_spacing_rate` 为空（配置载荷与策略配置由同一校验函数拒绝不一致）。
+- 存量 payload 由 `008_add_entry_mode.py` 回填 `entry_mode`：有
+  `trend_spacing_rate` → `trend` 并清空网格间距；否则 → `grid`。
 - "层"的节奏由编排层保证（每根完成 K 线最多建一层）；加仓的**方向许可**由信号闸门
   决定 —— `AlphaTrendSignal` 是翻转事件信号，若需"趋势延续中每隔 X% 加一层"，
   需配合状态型信号（趋势持续期间恒输出方向）。
@@ -521,8 +526,9 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
   `data_source`（`ws` / `timer`）；
 - 信号：`signal_type`（`alpha_trend` / `alpha_trend_inverse` / `none`）、`atr_multiple`、`period`、`signal_kind`；
 - 方向：`position_side`、`master_side`；
-- 网格：`per_order_amount`、`per_order_unit`、`grid_spacing_rate`、
-  `trend_spacing_rate`、`max_order`、`highest_price`、`lowest_price`；
+- 网格：`per_order_amount`、`per_order_unit`、`entry_mode`（`grid` / `trend`）、
+  `grid_spacing_rate`（`trend` 模式为空）、`trend_spacing_rate`（`grid` 模式为空）、
+  `max_order`、`highest_price`、`lowest_price`；模式与间距字段的一致性见 3.2；
 - 止盈止损：`enable_signal_take_profit`、`enable_signal_stop_loss`、
   `enable_single_layer_signal_stop_loss`、
   `fixed_rate_take_profit`、`fixed_take_profit_rate`、`take_profit_use_limit_order`、

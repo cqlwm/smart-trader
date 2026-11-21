@@ -8,6 +8,7 @@
 """
 
 from smart_trader.model import (
+    EntryMode,
     OrderResult,
     OrderSide,
     OrderStatus,
@@ -236,6 +237,8 @@ def test_directional_signal_exit_requires_opposite_direction():
 def test_adds_inside_outermost_two_entry_prices_instead_of_stopping():
     """103..106 + 105: 只有一层浮亏 → 不止损, 回踩带放行加仓 105"""
     strategy, trading, _, _ = _long(
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
         trend_spacing_rate=0.0001,
         enable_signal_take_profit=False,
         enable_signal_stop_loss=True,
@@ -268,6 +271,8 @@ def test_adds_inside_outermost_two_entry_prices_instead_of_stopping():
 def test_stops_all_losing_layers_when_two_layers_lose():
     """102: 103/106 两层浮亏 → 全部止损, 本根不再加仓"""
     strategy, trading, _, _ = _long(
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
         trend_spacing_rate=0.0001,
         enable_signal_take_profit=False,
         enable_signal_stop_loss=True,

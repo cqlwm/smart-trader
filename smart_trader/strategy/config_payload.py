@@ -11,10 +11,11 @@
 import json
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from smart_trader.model import (
     DataSource,
+    EntryMode,
     OrderSide,
     OrderSizeUnit,
     PlaceOrderBehavior,
@@ -26,7 +27,10 @@ from smart_trader.model import (
 from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from smart_trader.strategy.inverted_signal import InvertedSignal
 from smart_trader.strategy.signal import Signal
-from smart_trader.strategy.signal_grid_config import SignalGridStrategyConfig
+from smart_trader.strategy.signal_grid_config import (
+    SignalGridStrategyConfig,
+    validate_spacing_mode,
+)
 
 
 class StrategyConfigPayload(BaseModel):
@@ -52,7 +56,9 @@ class StrategyConfigPayload(BaseModel):
     # 网格 / 仓位
     per_order_amount: float = Field(default=0.02, ge=0)
     per_order_unit: OrderSizeUnit = OrderSizeUnit.BASE
-    grid_spacing_rate: float = 0.01
+    # 加仓间距口径: 必须与间距字段一致（见 validate_spacing_mode）
+    entry_mode: EntryMode = EntryMode.GRID
+    grid_spacing_rate: float | None = 0.01
     trend_spacing_rate: float | None = None
     max_order: int = 10000
     highest_price: float = 1000000
@@ -89,6 +95,14 @@ class StrategyConfigPayload(BaseModel):
             raise ValueError("symbol 不能为空")
         return Symbol.from_ccxt(text).ccxt()
 
+    @model_validator(mode="after")
+    def _require_consistent_spacing(self) -> "StrategyConfigPayload":
+        """加仓模式必须与间距字段一致"""
+        validate_spacing_mode(
+            self.entry_mode, self.grid_spacing_rate, self.trend_spacing_rate
+        )
+        return self
+
     def to_strategy_config(self, strategy_key: str) -> SignalGridStrategyConfig:
         """物化为策略配置; 键由配置行的主键提供"""
         if not strategy_key:
@@ -109,6 +123,7 @@ class StrategyConfigPayload(BaseModel):
             master_side=self.master_side,
             per_order_amount=self.per_order_amount,
             per_order_unit=self.per_order_unit,
+            entry_mode=self.entry_mode,
             grid_spacing_rate=self.grid_spacing_rate,
             trend_spacing_rate=self.trend_spacing_rate,
             max_order=self.max_order,
@@ -183,6 +198,7 @@ class StrategyConfigPayload(BaseModel):
             master_side=config.master_side,
             per_order_amount=config.per_order_amount,
             per_order_unit=config.per_order_unit,
+            entry_mode=config.entry_mode,
             grid_spacing_rate=config.grid_spacing_rate,
             trend_spacing_rate=config.trend_spacing_rate,
             max_order=config.max_order,

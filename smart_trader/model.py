@@ -162,6 +162,13 @@ class StrategySignalType(Enum):
     NONE = "none"
 
 
+class EntryMode(Enum):
+    """加仓间距口径（决定装配哪个间距闸门）"""
+
+    GRID = "grid"  # 网格间距: 逆势补仓 / 双向距离限制
+    TREND = "trend"  # 顺势阶梯: 顺盈利方向走出间距才加仓
+
+
 class PositionAckStatus(Enum):
     """人工外部仓位声明状态: active 生效中, revoked 已撤销（保留审计）"""
 

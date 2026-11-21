@@ -142,6 +142,7 @@ def test_defaults_return_form_baseline(client: TestClient):
     assert body["signal_type"] == "alpha_trend"
     assert body["per_order_amount"] == pytest.approx(0.02)
     assert body["per_order_unit"] == "base"
+    assert body["entry_mode"] == "grid"
 
 
 def test_get_unknown_config_returns_404(client: TestClient):
@@ -174,6 +175,50 @@ def test_post_accepts_quote_notional_size(client: TestClient):
     body = cast(dict[str, Any], response.json())
     assert body["payload"]["per_order_amount"] == pytest.approx(100)
     assert body["payload"]["per_order_unit"] == "quote"
+
+
+def test_post_accepts_trend_spacing_with_empty_grid_spacing(client: TestClient):
+    """只填顺势间距: 网格间距留空（null）必须可创建"""
+    response = _create(
+        client,
+        entry_mode="trend",
+        grid_spacing_rate=None,
+        trend_spacing_rate=0.0002,
+    )
+
+    assert response.status_code == 201
+    body = cast(dict[str, Any], response.json())
+    assert body["payload"]["entry_mode"] == "trend"
+    assert body["payload"]["grid_spacing_rate"] is None
+    assert body["payload"]["trend_spacing_rate"] == pytest.approx(0.0002)
+
+
+def test_put_accepts_trend_spacing_with_empty_grid_spacing(client: TestClient):
+    """编辑策略: 切换为顺势模式并清空网格间距必须可保存"""
+    _create(client)
+
+    response = _put(
+        client,
+        payload={
+            "entry_mode": "trend",
+            "grid_spacing_rate": None,
+            "trend_spacing_rate": 0.0002,
+        },
+    )
+
+    assert response.status_code == 200
+    body = cast(dict[str, Any], response.json())
+    assert body["payload"]["entry_mode"] == "trend"
+    assert body["payload"]["grid_spacing_rate"] is None
+    assert body["payload"]["trend_spacing_rate"] == pytest.approx(0.0002)
+
+
+def test_post_rejects_trend_mode_without_trend_spacing(client: TestClient):
+    """entry_mode=trend 但未填顺势间距视为配置错误"""
+    response = _create(client, entry_mode="trend", grid_spacing_rate=None)
+
+    assert response.status_code == 422
+    assert "trend_spacing_rate 必填" in response.text
 
 
 def test_positions_hide_take_profit_line_when_fixed_take_profit_disabled(

@@ -1,8 +1,9 @@
 """信号网格策略的配置与平仓结果契约"""
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from smart_trader.model import (
+    EntryMode,
     OrderSide,
     OrderSizeUnit,
     PlaceOrderBehavior,
@@ -12,6 +13,30 @@ from smart_trader.model import (
 )
 from smart_trader.strategy.grid_position import GridPosition
 from smart_trader.strategy.signal import Signal
+
+
+def validate_spacing_mode(
+    entry_mode: EntryMode,
+    grid_spacing_rate: float | None,
+    trend_spacing_rate: float | None,
+) -> None:
+    """校验加仓模式与间距字段的一致性
+
+    - `grid`: 网格间距必填, 顺势间距必须为空;
+    - `trend`: 顺势间距必填, 网格间距必须为空。
+
+    @raise ValueError: 模式要求的字段为空, 或无关字段非空
+    """
+    if entry_mode is EntryMode.GRID:
+        if grid_spacing_rate is None:
+            raise ValueError("entry_mode=grid 时 grid_spacing_rate 必填")
+        if trend_spacing_rate is not None:
+            raise ValueError("entry_mode=grid 时 trend_spacing_rate 必须为空")
+        return
+    if trend_spacing_rate is None:
+        raise ValueError("entry_mode=trend 时 trend_spacing_rate 必填")
+    if grid_spacing_rate is not None:
+        raise ValueError("entry_mode=trend 时 grid_spacing_rate 必须为空")
 
 
 class SignalGridStrategyConfig(BaseModel):
@@ -24,14 +49,17 @@ class SignalGridStrategyConfig(BaseModel):
     # 单层规模: amount + unit 是唯一来源; quote 单位在开仓时按收盘价折算数量
     per_order_amount: float = Field(default=0.02, ge=0)
     per_order_unit: OrderSizeUnit = OrderSizeUnit.BASE
+    # 加仓间距口径: grid = 网格间距, trend = 顺势阶梯;
+    # 必须与间距字段一致（见 validate_spacing_mode）
+    entry_mode: EntryMode = EntryMode.GRID
     # 加仓间距阈值, 正负号决定语义(见 GridSpacingGate):
     #   正数: 单向 —— 仅亏损方向走出间距后加仓
     #   负数: 双向距离限制 —— 距基准仓位不超过 |值| 即加仓(盈利方向也放行)
-    grid_spacing_rate: float = 0.01
-    # 顺势加仓间距: 非空时装配 TrendSpacingGate（以最外层仓位为基准, 盈利方向
-    # 走出间距才加仓; 只有一层时第二层无条件加仓, 两层以上另允许收盘价落在
-    # 最外层两层开仓价之间的小回踩加仓）,
-    # 并替换 grid_spacing_rate 的间距口径（二者语义互斥）
+    # 仅 grid 模式填写; trend 模式必须为空
+    grid_spacing_rate: float | None = 0.01
+    # 顺势加仓间距: 仅 trend 模式填写; 以最外层仓位为基准, 盈利方向
+    # 走出间距才加仓（只有一层时第二层无条件加仓, 两层以上另允许收盘价落在
+    # 最外层两层开仓价之间的小回踩加仓）
     trend_spacing_rate: float | None = None
     max_order: int = 10000
     highest_price: float = 1000000
@@ -75,6 +103,14 @@ class SignalGridStrategyConfig(BaseModel):
     enable_trailing_stop: bool = False
     trailing_stop_rate: float = 0.02
     trailing_stop_activation_profit_rate: float = 0.01
+
+    @model_validator(mode="after")
+    def _require_consistent_spacing(self) -> "SignalGridStrategyConfig":
+        """加仓模式必须与间距字段一致"""
+        validate_spacing_mode(
+            self.entry_mode, self.grid_spacing_rate, self.trend_spacing_rate
+        )
+        return self
 
 
 class CloseOutcome(BaseModel):

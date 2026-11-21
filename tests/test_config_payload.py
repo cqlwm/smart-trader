@@ -7,6 +7,7 @@ from pandas import DataFrame
 
 from smart_trader.model import (
     DataSource,
+    EntryMode,
     MarketSignal,
     OrderSide,
     OrderSizeUnit,
@@ -59,8 +60,90 @@ def test_defaults_describe_a_single_timer_alpha_strategy():
     assert payload.master_side is OrderSide.BUY
     assert payload.per_order_amount == pytest.approx(0.02)
     assert payload.per_order_unit is OrderSizeUnit.BASE
+    assert payload.entry_mode is EntryMode.GRID
     assert payload.trend_spacing_rate is None
     assert payload.place_order_behavior is PlaceOrderBehavior.CHASER_OPEN
+
+
+def test_trend_mode_allows_empty_grid_spacing():
+    """顺势模式: 网格间距可为空, 模式与字段原样透传"""
+    payload = StrategyConfigPayload(
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
+        trend_spacing_rate=0.0002,
+    )
+
+    config = payload.to_strategy_config("trend_only")
+
+    assert config.entry_mode is EntryMode.TREND
+    assert config.grid_spacing_rate is None, "网格间距留空必须原样透传"
+    assert config.trend_spacing_rate == pytest.approx(0.0002)
+
+
+def test_json_roundtrip_preserves_entry_mode_and_absent_grid_spacing():
+    payload = StrategyConfigPayload(
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
+        trend_spacing_rate=0.0002,
+    )
+
+    restored = StrategyConfigPayload.from_json(payload.to_json())
+
+    assert restored.entry_mode is EntryMode.TREND, "加仓模式不得在往返中丢失"
+    assert restored.grid_spacing_rate is None, "网格间距留空不得在往返中变成默认值"
+    assert restored.trend_spacing_rate == pytest.approx(0.0002)
+
+
+def test_from_strategy_config_keeps_entry_mode():
+    config = SignalGridStrategyConfig(
+        symbol=Symbol(base="doge", quote="usdt"),
+        timeframe="1m",
+        strategy_key="trend_only",
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
+        trend_spacing_rate=0.0002,
+    )
+
+    payload = StrategyConfigPayload.from_strategy_config(
+        config, data_source=DataSource.TIMER
+    )
+
+    assert payload.entry_mode is EntryMode.TREND
+    assert payload.grid_spacing_rate is None
+    assert payload.trend_spacing_rate == pytest.approx(0.0002)
+
+
+def test_grid_mode_requires_grid_spacing():
+    with pytest.raises(ValueError, match="grid_spacing_rate 必填"):
+        StrategyConfigPayload(entry_mode=EntryMode.GRID, grid_spacing_rate=None)
+
+
+def test_grid_mode_rejects_trend_spacing():
+    with pytest.raises(ValueError, match="trend_spacing_rate 必须为空"):
+        StrategyConfigPayload(entry_mode=EntryMode.GRID, trend_spacing_rate=0.0002)
+
+
+def test_trend_mode_requires_trend_spacing():
+    with pytest.raises(ValueError, match="trend_spacing_rate 必填"):
+        StrategyConfigPayload(entry_mode=EntryMode.TREND, grid_spacing_rate=None)
+
+
+def test_trend_mode_rejects_grid_spacing():
+    """默认网格间距 0.01 与 trend 模式冲突"""
+    with pytest.raises(ValueError, match="grid_spacing_rate 必须为空"):
+        StrategyConfigPayload(entry_mode=EntryMode.TREND, trend_spacing_rate=0.0002)
+
+
+def test_strategy_config_rejects_mode_field_mismatch():
+    with pytest.raises(ValueError, match="grid_spacing_rate 必填"):
+        SignalGridStrategyConfig(
+            symbol=Symbol(base="doge", quote="usdt"),
+            timeframe="1m",
+            strategy_key="no_spacing",
+            entry_mode=EntryMode.GRID,
+            grid_spacing_rate=None,
+        )
+
 
 
 def test_json_roundtrip_preserves_every_field():

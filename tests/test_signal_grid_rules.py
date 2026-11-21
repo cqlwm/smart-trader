@@ -10,7 +10,13 @@ from typing import TypeVar
 
 import pytest
 
-from smart_trader.model import OrderSide, PositionSide, SignalDirection, SignalKind
+from smart_trader.model import (
+    EntryMode,
+    OrderSide,
+    PositionSide,
+    SignalDirection,
+    SignalKind,
+)
 from smart_trader.strategy.entry_gate import (
     DirectionalSignalGate,
     EntryGate,
@@ -121,11 +127,15 @@ def test_fixed_take_profit_enabled_adds_policy():
 
 
 def test_trend_spacing_rate_assembles_trend_spacing_gate():
-    """trend_spacing_rate 非空时装配顺势闸门并替换网格闸门"""
-    strategy, _, _, _ = build_strategy(trend_spacing_rate=0.01)
+    """entry_mode=trend 时装配顺势闸门并替换网格闸门"""
+    strategy, _, _, _ = build_strategy(
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
+        trend_spacing_rate=0.01,
+    )
 
     assert _entry_gate_of(strategy, TrendSpacingGate) is not None, (
-        "trend_spacing_rate 非空应装配 TrendSpacingGate"
+        "entry_mode=trend 应装配 TrendSpacingGate"
     )
     assert _entry_gate_of(strategy, GridSpacingGate) is None, (
         "顺势闸门与网格闸门语义互斥, 不得同时装配"
@@ -133,16 +143,39 @@ def test_trend_spacing_rate_assembles_trend_spacing_gate():
 
 
 def test_default_config_keeps_grid_spacing_gate():
-    """默认（trend_spacing_rate 为空）保持网格间距口径"""
+    """默认 entry_mode=grid 保持网格间距口径"""
     strategy, _, _, _ = build_strategy()
 
+    assert strategy.config.entry_mode is EntryMode.GRID
     assert _entry_gate_of(strategy, GridSpacingGate) is not None
     assert _entry_gate_of(strategy, TrendSpacingGate) is None
 
 
+def test_trend_spacing_gate_when_grid_spacing_is_absent():
+    """只填顺势间距（网格留空）时仍装配顺势闸门, 不回退网格口径"""
+    strategy, _, _, _ = build_strategy(
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
+        trend_spacing_rate=0.01,
+    )
+
+    assert _entry_gate_of(strategy, TrendSpacingGate) is not None, (
+        "网格留空 + 顺势间距非空应装配 TrendSpacingGate"
+    )
+    assert _entry_gate_of(strategy, GridSpacingGate) is None, (
+        "网格间距为空时不得装配 GridSpacingGate"
+    )
+
+
+
 def test_entry_gate_chain_order_with_trend_spacing():
     """闸门链顺序: 上限 → 信号 → 价格区间 → 顺势间距 → 上限止损"""
-    strategy, _, _, _ = build_strategy(trend_spacing_rate=0.01, lowest_price=0.4)
+    strategy, _, _, _ = build_strategy(
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
+        trend_spacing_rate=0.01,
+        lowest_price=0.4,
+    )
 
     names = [type(gate).__name__ for gate in strategy.entry_gates.gates]
 

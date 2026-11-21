@@ -6,7 +6,14 @@
 """
 
 from smart_trader.exchange.ports import Exchange
-from smart_trader.model import OrderSide, Position, PositionSide, SignalKind, Symbol
+from smart_trader.model import (
+    EntryMode,
+    OrderSide,
+    Position,
+    PositionSide,
+    SignalKind,
+    Symbol,
+)
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from smart_trader.strategy.signal_grid_strategy import SignalGridStrategy
@@ -69,7 +76,10 @@ def test_template_assembles_trend_spacing_gate():
         "顺势与网格间距口径互斥, 不得同时装配"
     )
     assert strategy.config.trend_spacing_rate is not None, (
-        "trend_spacing_rate 必须显式声明, 否则回退为网格口径"
+        "trend_spacing_rate 必须显式声明"
+    )
+    assert strategy.config.entry_mode is EntryMode.TREND, (
+        "顺势模板必须显式声明 entry_mode=trend"
     )
 
 

@@ -9,6 +9,7 @@ import {
 } from "../api/hooks";
 import type {
   DataSource,
+  EntryMode,
   OrderSide,
   OrderSizeUnit,
   PlaceOrderBehavior,
@@ -42,6 +43,7 @@ interface Draft {
   master_side: OrderSide;
   per_order_amount: string;
   per_order_unit: OrderSizeUnit;
+  entry_mode: EntryMode;
   grid_spacing_rate: string;
   trend_spacing_rate: string;
   max_order: string;
@@ -95,6 +97,11 @@ const ORDER_SIZE_UNIT_OPTIONS: { value: OrderSizeUnit; label: string }[] = [
   { value: "quote", label: "USDT 名义价值" },
 ];
 
+const ENTRY_MODE_OPTIONS: { value: EntryMode; label: string }[] = [
+  { value: "grid", label: "grid · 网格间距（逆势补仓）" },
+  { value: "trend", label: "trend · 顺势间距（顺势阶梯）" },
+];
+
 const MASTER_SIDE_OPTIONS: { value: OrderSide; label: string }[] = [
   { value: "buy", label: "buy · 买" },
   { value: "sell", label: "sell · 卖" },
@@ -129,7 +136,11 @@ function draftFromPayload(
     master_side: payload.master_side,
     per_order_amount: String(payload.per_order_amount),
     per_order_unit: payload.per_order_unit,
-    grid_spacing_rate: String(payload.grid_spacing_rate),
+    entry_mode: payload.entry_mode,
+    grid_spacing_rate:
+      payload.grid_spacing_rate === null
+        ? ""
+        : String(payload.grid_spacing_rate),
     trend_spacing_rate:
       payload.trend_spacing_rate === null
         ? ""
@@ -178,6 +189,13 @@ function parseInteger(label: string, raw: string): number {
 }
 
 function payloadFromDraft(draft: Draft): StrategyConfigPayload {
+  const isTrendMode = draft.entry_mode === "trend";
+  const gridSpacingRate = isTrendMode
+    ? null
+    : parseNumber("网格间距", draft.grid_spacing_rate);
+  const trendSpacingRate = isTrendMode
+    ? parseNumber("顺势间距", draft.trend_spacing_rate)
+    : null;
   return {
     symbol: draft.symbol.trim(),
     timeframe: draft.timeframe.trim(),
@@ -190,11 +208,9 @@ function payloadFromDraft(draft: Draft): StrategyConfigPayload {
     master_side: draft.master_side,
     per_order_amount: parseNumber("单层规模", draft.per_order_amount),
     per_order_unit: draft.per_order_unit,
-    grid_spacing_rate: parseNumber("网格间距", draft.grid_spacing_rate),
-    trend_spacing_rate:
-      draft.trend_spacing_rate.trim() === ""
-        ? null
-        : parseNumber("顺势间距", draft.trend_spacing_rate),
+    entry_mode: draft.entry_mode,
+    grid_spacing_rate: gridSpacingRate,
+    trend_spacing_rate: trendSpacingRate,
     max_order: parseInteger("最大层数", draft.max_order),
     highest_price: parseNumber("价格上限", draft.highest_price),
     lowest_price: parseNumber("价格下限", draft.lowest_price),
@@ -678,26 +694,42 @@ function ConfigEditor({
         </ConfigSection>
 
         <ConfigSection title="加仓间距">
-          <ConfigField label="网格间距">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={draft.grid_spacing_rate}
-              onChange={(event) =>
-                onPatch("grid_spacing_rate", event.target.value)
-              }
+          <ConfigField label="加仓模式">
+            <SelectInput
+              value={draft.entry_mode}
+              options={ENTRY_MODE_OPTIONS}
+              onChange={(value) => {
+                onPatch("entry_mode", value);
+                onPatch(
+                  value === "grid" ? "trend_spacing_rate" : "grid_spacing_rate",
+                  "",
+                );
+              }}
             />
           </ConfigField>
-          <ConfigField label="顺势间距 · 留空用网格">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={draft.trend_spacing_rate}
-              onChange={(event) =>
-                onPatch("trend_spacing_rate", event.target.value)
-              }
-            />
-          </ConfigField>
+          {draft.entry_mode === "grid" ? (
+            <ConfigField label="网格间距">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={draft.grid_spacing_rate}
+                onChange={(event) =>
+                  onPatch("grid_spacing_rate", event.target.value)
+                }
+              />
+            </ConfigField>
+          ) : (
+            <ConfigField label="顺势间距">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={draft.trend_spacing_rate}
+                onChange={(event) =>
+                  onPatch("trend_spacing_rate", event.target.value)
+                }
+              />
+            </ConfigField>
+          )}
           <ConfigField label="价格上限">
             <input
               type="text"

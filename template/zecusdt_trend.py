@@ -1,6 +1,6 @@
 from smart_trader import log
 from smart_trader.exchange.ports import Exchange
-from smart_trader.model import OrderSide, PositionSide, SignalKind, Symbol
+from smart_trader.model import EntryMode, OrderSide, PositionSide, SignalKind, Symbol
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.strategy.alpha_trend_signal.alpha_trend_signal import AlphaTrendSignal
 from smart_trader.strategy.signal_grid_strategy import (
@@ -62,6 +62,8 @@ def trend_long(exchange: Exchange, journal: OrderJournal) -> StrategyTask:
         position_side=position_side,
         master_side=master_side,
         per_order_amount=qty_,
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
         trend_spacing_rate=0.0001,
         max_order=50,
 
@@ -94,6 +96,8 @@ def trend_short_config() -> SignalGridStrategyConfig:
         master_side=master_side,
         per_order_amount=qty_,
         # 顺势加仓间距: 越过最外层 0.01% 或回踩不破最外层两层开仓价时加一层（顺势阶梯, 替代网格间距口径）
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
         trend_spacing_rate=0.0001,
         max_order=50,
 

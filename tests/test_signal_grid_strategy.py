@@ -11,6 +11,7 @@ import pytest
 from smart_trader.exceptions import ErrorCode, SmartTraderError
 from smart_trader.exchange.ports import AccountPort
 from smart_trader.model import (
+    EntryMode,
     Kline,
     OrderResult,
     OrderSide,
@@ -217,7 +218,11 @@ def test_negative_spacing_blocks_beyond_distance():
 
 def test_trend_spacing_adds_layer_after_profit_spacing():
     """顺势间距: 已有多层时, 盈利方向恰好走出间距才加仓"""
-    strategy, trading, _, _ = build_strategy(trend_spacing_rate=0.01)
+    strategy, trading, _, _ = build_strategy(
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
+        trend_spacing_rate=0.01,
+    )
     seed_position(strategy, "INNER", entry_price=0.5, quantity=100.0)
     seed_position(strategy, "OUTER", entry_price=0.52, quantity=100.0)
 
@@ -235,7 +240,11 @@ def test_trend_spacing_blocks_loss_direction():
     同样的 -10% 行情在 `grid_spacing_rate=0.01`（网格口径）下会加仓,
     顺势口径必须拦截 —— 只顺盈利方向加层。
     """
-    strategy, trading, _, _ = build_strategy(trend_spacing_rate=0.01)
+    strategy, trading, _, _ = build_strategy(
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
+        trend_spacing_rate=0.01,
+    )
     seed_position(strategy, "LOW", entry_price=0.5, quantity=100.0)
     seed_position(strategy, "HIGH", entry_price=0.6, quantity=100.0)
 
@@ -247,7 +256,11 @@ def test_trend_spacing_blocks_loss_direction():
 
 def test_trend_spacing_allows_second_layer_in_loss_direction():
     """只有一层已成交仓位时, 第二层逆势也应加仓"""
-    strategy, trading, _, _ = build_strategy(trend_spacing_rate=0.01)
+    strategy, trading, _, _ = build_strategy(
+        entry_mode=EntryMode.TREND,
+        grid_spacing_rate=None,
+        trend_spacing_rate=0.01,
+    )
     seed_position(strategy)
 
     push_kline(strategy, 0.495)
@@ -455,6 +468,30 @@ def test_apply_config_updates_tuning_and_keeps_positions():
     assert len(trading.placed) == 2, "新间距 5% 应允许 -6% 处加仓"
     assert trading.placed[-1].quantity == pytest.approx(50.0), (
         f"新层应使用新单层规模, 实际 {trading.placed[-1].quantity}"
+    )
+
+
+def test_apply_config_switches_entry_mode_and_rebuilds_spacing_gate():
+    """热更新切换加仓模式: 间距闸门随 entry_mode 重建, 仓位保留"""
+    strategy, _, _, _ = build_strategy()
+    push_kline(strategy, 0.5)
+    position_id = strategy.positions[0].id
+
+    strategy.apply_config(
+        strategy.config.model_copy(
+            update={
+                "entry_mode": EntryMode.TREND,
+                "grid_spacing_rate": None,
+                "trend_spacing_rate": 0.01,
+            }
+        )
+    )
+
+    gate_names = [type(gate).__name__ for gate in strategy.entry_gates.gates]
+    assert "TrendSpacingGate" in gate_names, "切换为 trend 必须装配顺势闸门"
+    assert "GridSpacingGate" not in gate_names, "网格闸门必须被替换"
+    assert [position.id for position in strategy.positions] == [position_id], (
+        "热更新切换加仓模式不得丢失既有仓位"
     )
 
 

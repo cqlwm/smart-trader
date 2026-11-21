@@ -223,6 +223,7 @@ export type StrategySignalType =
   | "alpha_trend"
   | "alpha_trend_inverse"
   | "none";
+export type EntryMode = "grid" | "trend";
 export type SignalKind = "trigger" | "directional";
 export type OrderSizeUnit = "base" | "quote";
 export type PlaceOrderBehavior = "chaser" | "chaser_open" | "normal";
@@ -239,7 +240,8 @@ export interface StrategyConfigPayload {
   master_side: OrderSide;
   per_order_amount: number;
   per_order_unit: OrderSizeUnit;
-  grid_spacing_rate: number;
+  entry_mode: EntryMode;
+  grid_spacing_rate: number | null;
   trend_spacing_rate: number | null;
   max_order: number;
   highest_price: number;

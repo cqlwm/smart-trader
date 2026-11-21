@@ -152,6 +152,7 @@ storage (queries.py / reader.py)           只读仓储: 只发 SELECT, 不建�
 | Step 34 | **AlphaTrend 反向信号**：新增组合式 `InvertedSignal`（`strategy/inverted_signal.py`），只反转非中性方向（`SignalDirection.opposite()`），入场闸门与离场策略共享同一 `MarketSignal`，因此两侧同时反向；`StrategySignalType` 新增 `ALPHA_TREND_INVERSE = "alpha_trend_inverse"`，配置载荷物化/回写与控制台选项同步。单配置仍只持一个方向（多空双向反手需 long / short 两个配置） | 已完成 |
 | Step 35 | **单层规模支持名义价值**：`per_order_qty` 替换为 `per_order_amount` + `per_order_unit`（`OrderSizeUnit.BASE` / `QUOTE`），单一来源避免双字段真相；`quote` 在开仓时按信号收盘价折算数量（`Decimal` 除法），经 `SymbolInfo.format_qty` 按 `step_size` 向下取整并校验最小数量 / 最小名义价值，校验发生在创建仓位行之前；`amount=0` 仍表示空仓位。存量 payload 由 `006_convert_per_order_amount.py` 按 `base` 迁移 | 已完成 |
 | Step 36 | **配置热新增 + 调参热更新**：`StrategyRuntime` 接受 `configs_provider` 并每 2 秒轮询 `strategy_configs`；新增策略按 data_source 挂入既有循环（WS `add_kline_stream` 断开重连后重订阅，Timer `add_timer_subscription` 动态加入调度），并注册到 `CommandRunner`；版本变化且身份字段不变时调用 `SignalGridStrategy.apply_config`（原地更新 config 对象、重建闸门/离场链、保留仓位与信号去重状态）；身份字段与 data_source 创建后不可变（API 拒绝）；停用仍要求重启（启用未运行配置走热新增）。单条配置失败只记录日志；`RuntimeRegistry.heartbeat` 加锁串行化临时文件写入 | 已完成 |
+| Step 37 | **显式加仓模式（entry_mode）**：`SignalGridStrategy` 不按策略类型拆分（编排/账本/风控为两种口径共享，差异仅在间距闸门）；新增 `EntryMode`（`grid` / `trend`）与配置字段 `entry_mode`，由共享校验保证模式与间距字段一致（`grid` 模式网格必填、顺势为空；`trend` 模式反之），`_build_spacing_gate` 按模式装配；控制台新增"加仓模式"选择器并联动显示对应间距字段；存量 payload 由 `008_add_entry_mode.py` 回填 | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -180,7 +181,7 @@ storage (queries.py / reader.py)           只读仓储: 只发 SELECT, 不建�
    「信号与规则层设计」覆盖 strategy 层（此前只覆盖 storage 层）。
 5. **日志与配置模块无测试**（`log.init_logging` 的级别解析、`config` 的必填校验）。
 6. ~~**顺势加仓**~~ —— **已由 Step 20 解决**：需要"价格顺趋势上涨/下跌到一定距离即加仓"时，
-   用 `TrendSpacingGate`（`trend_spacing_rate` 装配后替换 `GridSpacingGate`，见
+   用 `TrendSpacingGate`（`entry_mode=trend` 时替换 `GridSpacingGate`，见
    `02-domain-model.md` 八.3.2）；"逆势逐层减仓"由 `enable_signal_stop_loss=True`
    装配 `LayeredReducePolicy` 承担（Step 23 拆分后与 `enable_signal_take_profit`
    独立）。
