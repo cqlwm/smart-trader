@@ -1,6 +1,11 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
-import { usePositionDetail, usePositions, useStrategies } from "../api/hooks";
+import {
+  useArchivedPositions,
+  usePositionDetail,
+  usePositions,
+  useStrategies,
+} from "../api/hooks";
 import type { OrderStatus, OrderView, PositionView } from "../api/types";
 import {
   EmptyState,
@@ -21,6 +26,8 @@ import {
 } from "../utils/format";
 
 type Tab = "active" | "archived";
+
+const ARCHIVE_PAGE_SIZE = 20;
 
 const phaseVariant: Record<PositionView["phase"], "green" | "amber" | "blue" | "dim"> = {
   opening: "amber",
@@ -47,17 +54,35 @@ export function PositionsPage() {
   const [tab, setTab] = useState<Tab>("active");
   const [strategyKey, setStrategyKey] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [archiveOffset, setArchiveOffset] = useState(0);
 
   const strategies = useStrategies();
-  const positions = usePositions(strategyKey, tab === "archived");
+  const activePositions = usePositions(strategyKey, false, tab === "active");
+  const archivedPositions = useArchivedPositions(
+    strategyKey,
+    ARCHIVE_PAGE_SIZE,
+    archiveOffset,
+    tab === "archived",
+  );
+  const positions = tab === "active" ? activePositions : archivedPositions;
 
-  const rows = useMemo(() => {
-    const items = positions.data ?? [];
-    return tab === "archived" ? items.filter((position) => !position.active) : items;
-  }, [positions.data, tab]);
+  const rows =
+    tab === "active"
+      ? (activePositions.data ?? [])
+      : (archivedPositions.data?.items ?? []);
+  const total =
+    tab === "active" ? rows.length : (archivedPositions.data?.total ?? 0);
+  const page = Math.floor(archiveOffset / ARCHIVE_PAGE_SIZE) + 1;
+  const totalPages = Math.max(1, Math.ceil(total / ARCHIVE_PAGE_SIZE));
 
   function switchTab(next: Tab) {
     setTab(next);
+    setExpanded(null);
+    setArchiveOffset(0);
+  }
+
+  function changeArchiveOffset(next: number) {
+    setArchiveOffset(next);
     setExpanded(null);
   }
 
@@ -71,7 +96,13 @@ export function PositionsPage() {
         kicker="02 / POSITIONS"
         title="持仓"
         description="逻辑仓位的派生视图：每个格子的数量、均价、相位、盈亏都由订单流水重新计算。"
-        meta={positions.data ? `${rows.length} 条记录 · UTC` : undefined}
+        meta={
+          positions.data
+            ? tab === "active"
+              ? `${rows.length} 条记录 · UTC`
+              : `第 ${page} / ${totalPages} 页 · 共 ${total} 条`
+            : undefined
+        }
         actions={
           <RefreshButton
             onClick={() => {
@@ -107,6 +138,7 @@ export function PositionsPage() {
             onChange={(event) => {
               setStrategyKey(event.target.value);
               setExpanded(null);
+              setArchiveOffset(0);
             }}
           >
             <option value="">全部策略</option>
@@ -119,7 +151,7 @@ export function PositionsPage() {
         </label>
 
         <span className="toolbar-note mono">
-          {tab === "active" ? "ACTIVE=1" : "ACTIVE=0"} · DERIVED FROM ORDERS
+          {tab === "active" ? "ACTIVE=1 · DERIVED FROM ORDERS" : "ACTIVE=0 · 更新时间倒序"}
         </span>
       </section>
 
@@ -152,7 +184,10 @@ export function PositionsPage() {
             <div className="panel-head">
               <div>
                 <h2 className="panel-title">仓位明细</h2>
-                <span className="panel-sub mono">POSITION LAYERS · {rows.length}</span>
+                <span className="panel-sub mono">
+                  POSITION LAYERS ·{" "}
+                  {tab === "archived" ? `${rows.length} / ${total}` : rows.length}
+                </span>
               </div>
               <span className="panel-note">点击行展开订单</span>
             </div>
@@ -189,6 +224,42 @@ export function PositionsPage() {
                 </tbody>
               </table>
             </div>
+
+            {tab === "archived" ? (
+              <div className="pagination">
+                <span className="mono dim">
+                  OFFSET {archiveOffset} · LIMIT {ARCHIVE_PAGE_SIZE}
+                </span>
+                <div className="pagination-controls">
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={archiveOffset === 0}
+                    onClick={() =>
+                      changeArchiveOffset(
+                        Math.max(0, archiveOffset - ARCHIVE_PAGE_SIZE),
+                      )
+                    }
+                  >
+                    上一页
+                  </button>
+                  <span className="mono">
+                    {page} / {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={archiveOffset + ARCHIVE_PAGE_SIZE >= total}
+                    onClick={() =>
+                      changeArchiveOffset(archiveOffset + ARCHIVE_PAGE_SIZE)
+                    }
+                  >
+                    下一页
+                  </button>
+                </div>
+                <span className="mono dim">{total} ROWS</span>
+              </div>
+            ) : null}
           </section>
         )
       ) : null}

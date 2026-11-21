@@ -44,6 +44,7 @@ from smart_trader.api.schemas import (
     PositionAckPage,
     PositionAckView,
     PositionDetailView,
+    PositionPage,
     PositionView,
     StrategyConfigCreateRequest,
     StrategyConfigUpdateRequest,
@@ -279,6 +280,23 @@ def get_positions(
         _reader(request),
         strategy_key=strategy_key,
         include_closed=include_closed,
+        fixed_take_profit_keys=_fixed_take_profit_keys(request),
+    )
+
+
+@router.get("/positions/archived", response_model=PositionPage)
+def get_archived_positions(
+    request: Request,
+    strategy_key: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> PositionPage:
+    """归档仓位分页: 更新时间倒序, 最近归档的排在最前"""
+    return service.list_archived_position_views(
+        _reader(request),
+        strategy_key=strategy_key,
+        limit=limit,
+        offset=offset,
         fixed_take_profit_keys=_fixed_take_profit_keys(request),
     )
 

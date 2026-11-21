@@ -49,6 +49,26 @@ class OrderJournalReader:
         with self._engine.connect() as conn:
             return queries.select_positions_by_ids(conn, position_ids)
 
+    def load_archived_positions(
+        self,
+        *,
+        strategy_key: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[GridPositionRow]:
+        """归档仓位页（`active=0`, 更新时间倒序）"""
+        with self._engine.connect() as conn:
+            return queries.select_archived_positions(
+                conn, strategy_key=strategy_key, limit=limit, offset=offset
+            )
+
+    def count_archived_positions(
+        self, *, strategy_key: str | None = None
+    ) -> int:
+        """归档仓位总数（与 load_archived_positions 同口径）"""
+        with self._engine.connect() as conn:
+            return queries.count_archived_positions(conn, strategy_key=strategy_key)
+
     def load_orders_for_positions(self, position_ids: list[str]) -> list[OrderRecord]:
         """若干逻辑仓位的全部订单行"""
         with self._engine.connect() as conn:

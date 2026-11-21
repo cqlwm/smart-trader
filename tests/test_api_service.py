@@ -1,5 +1,6 @@
 """只读 API 服务层测试: 派生视图 / 聚合 / 过滤 / 分页 / 告警"""
 
+import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 from smart_trader.api.service import (
     build_overview,
     get_position_detail,
+    list_archived_position_views,
     list_order_views,
     list_position_views,
     list_strategy_summaries,
@@ -427,6 +429,84 @@ def test_list_positions_excludes_archived_by_default(
     assert archived[0].active is False
     assert archived[0].closed_reason == PositionCloseReason.EXIT_SETTLED
     assert archived[0].phase == "closed"
+
+
+def _archive_round_trip(
+    journal: OrderJournal,
+    db_path: Path,
+    position_id: str,
+    *,
+    updated_at: str,
+    strategy_key: str = DEFAULT_STRATEGY_KEY,
+    symbol: str = DEFAULT_SYMBOL,
+) -> None:
+    """已平仓仓位 + 显式更新时间, 让排序断言不依赖归档调用的时钟精度"""
+    _long_round_trip(
+        journal, position_id, strategy_key=strategy_key, symbol=symbol
+    )
+    journal.close_position(position_id, PositionCloseReason.EXIT_SETTLED)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE grid_positions SET updated_at = ? WHERE id = ?",
+            (updated_at, position_id),
+        )
+
+
+def test_archived_positions_page_returns_newest_first_with_total(
+    journal: OrderJournal, reader: OrderJournalReader, db_path: Path
+):
+    _long_round_trip(journal, "POS-ACTIVE")
+    _archive_round_trip(
+        journal, db_path, "POS1", updated_at="2026-01-01T00:00:00+00:00"
+    )
+    _archive_round_trip(
+        journal, db_path, "POS2", updated_at="2026-01-03T00:00:00+00:00"
+    )
+    _archive_round_trip(
+        journal, db_path, "POS3", updated_at="2026-01-02T00:00:00+00:00"
+    )
+
+    first = list_archived_position_views(reader, limit=2, offset=0)
+
+    assert [view.id for view in first.items] == ["POS2", "POS3"], "最近归档的排在最前"
+    assert first.total == 3, f"总数应为 3, 实际 {first.total}"
+    assert (first.limit, first.offset) == (2, 0)
+    assert all(not view.active for view in first.items), "归档页不得混入活跃仓位"
+
+    second = list_archived_position_views(reader, limit=2, offset=2)
+    assert [view.id for view in second.items] == ["POS1"]
+    assert second.total == 3
+
+    beyond = list_archived_position_views(reader, limit=2, offset=99)
+    assert beyond.items == [], "越界页返回空列表"
+    assert beyond.total == 3, "越界页仍应返回总数供前端回退页码"
+
+
+def test_archived_positions_filter_by_strategy_and_empty_history(
+    journal: OrderJournal, reader: OrderJournalReader, db_path: Path
+):
+    empty = list_archived_position_views(reader, limit=20, offset=0)
+    assert empty.items == []
+    assert empty.total == 0
+
+    _archive_round_trip(
+        journal, db_path, "POS1", updated_at="2026-01-01T00:00:00+00:00"
+    )
+    _archive_round_trip(
+        journal,
+        db_path,
+        "POS2",
+        updated_at="2026-01-02T00:00:00+00:00",
+        strategy_key=OTHER_STRATEGY_KEY,
+        symbol=OTHER_SYMBOL,
+    )
+
+    filtered = list_archived_position_views(
+        reader, strategy_key=OTHER_STRATEGY_KEY, limit=20, offset=0
+    )
+
+    assert [view.id for view in filtered.items] == ["POS2"], "策略键必须隔离"
+    assert filtered.total == 1
 
 
 def test_order_role_is_derived_from_position_side(

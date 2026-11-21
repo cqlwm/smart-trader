@@ -12,6 +12,7 @@ import type {
   OverviewView,
   PositionDetailView,
   PositionAckView,
+  PositionPage,
   PositionView,
   StrategyConfigCreateRequest,
   StrategyConfigPayload,
@@ -46,7 +47,11 @@ export function useStrategies() {
   });
 }
 
-export function usePositions(strategyKey: string, includeClosed: boolean) {
+export function usePositions(
+  strategyKey: string,
+  includeClosed: boolean,
+  enabled = true,
+) {
   const params = new URLSearchParams();
   if (strategyKey) {
     params.set("strategy_key", strategyKey);
@@ -56,6 +61,28 @@ export function usePositions(strategyKey: string, includeClosed: boolean) {
     queryKey: ["positions", strategyKey, includeClosed],
     queryFn: () => apiGet<PositionView[]>(`/api/positions?${params.toString()}`),
     refetchInterval: REFRESH_MS,
+    enabled,
+  });
+}
+
+export function useArchivedPositions(
+  strategyKey: string,
+  limit: number,
+  offset: number,
+  enabled = true,
+) {
+  const params = new URLSearchParams();
+  if (strategyKey) {
+    params.set("strategy_key", strategyKey);
+  }
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+  return useQuery({
+    queryKey: ["positions-archived", strategyKey, limit, offset],
+    queryFn: () =>
+      apiGet<PositionPage>(`/api/positions/archived?${params.toString()}`),
+    refetchInterval: REFRESH_MS,
+    enabled,
   });
 }
 

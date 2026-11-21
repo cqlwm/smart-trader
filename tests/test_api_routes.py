@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from smart_trader.api.app import create_app
-from smart_trader.model import OrderStatus
+from smart_trader.model import OrderStatus, PositionCloseReason
 from smart_trader.storage.command_store import CommandStore
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.reader import OrderJournalReader
@@ -140,6 +140,42 @@ def test_position_detail_returns_404_for_unknown_id(client: TestClient):
     response = client.get("/api/positions/missing")
 
     assert response.status_code == 404
+
+
+def test_archived_positions_endpoint_returns_paginated_page(
+    journal: OrderJournal, client: TestClient
+):
+    _seed_single_position(journal)
+    seed_position(
+        journal,
+        make_position("POS2"),
+        [make_order("buy-pos2", "POS2")],
+    )
+    journal.close_position("POS2", PositionCloseReason.EXIT_SETTLED)
+
+    response = client.get(
+        "/api/positions/archived", params={"limit": 20, "offset": 0}
+    )
+
+    assert response.status_code == 200, "archived 路由不得被 /positions/{id} 吞掉"
+    body = cast(dict[str, Any], response.json())
+    assert body["total"] == 1
+    assert body["limit"] == 20
+    assert body["offset"] == 0
+    items = cast(list[dict[str, Any]], body["items"])
+    assert [item["id"] for item in items] == ["POS2"]
+    assert items[0]["active"] is False
+
+
+@pytest.mark.parametrize(
+    "params", [{"limit": 0}, {"limit": 201}, {"offset": -1}]
+)
+def test_archived_positions_endpoint_rejects_out_of_range_paging(
+    client: TestClient, params: dict[str, int]
+):
+    response = client.get("/api/positions/archived", params=params)
+
+    assert response.status_code == 422
 
 
 def test_orders_endpoint_rejects_unknown_status(client: TestClient):

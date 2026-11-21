@@ -615,6 +615,9 @@ web/ (React)  ──HTTP──▶  smart_trader/api/  ──▶  storage.reader 
 
 - `web/`：React + TypeScript + Vite + TanStack Query；HashRouter 避免 SPA history fallback；
 - 开发期 Vite proxy `/api` → `127.0.0.1:8000`，生产期 `npm run build` 后由 API 托管 `web/dist`；
+- 归档历史走服务端分页（`/api/positions/archived`，默认 20 条/页，按 `updated_at` 倒序），
+  只加载当前页仓位的订单，避免历史增长后全量扫描；活跃仓位仍由 `/api/positions` 返回
+  （策略仓位有上限，规模可控）；
 - 所有金额/数量展示保留原始精度，不做前端二次计算（派生量以 API 为准）；
 - P0 只读页面不提供写操作按钮；P1 控制按钮只提交命令（不直接下单 / 不写账本），
   并且只有危险动作（全平 / 撤入场单 / kill switch）弹二次确认。

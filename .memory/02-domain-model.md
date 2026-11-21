@@ -405,6 +405,7 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 | `OrderView` | `OrderRecord` + 所属仓位的 `position_side` | `role` 由 `entry_side` / `exit_side` 派生；`unconfirmed = status is None`（WAL） |
 | `PositionView` | `GridPosition` | `phase`、`quantity`、`price`、`realized_pnl` 直接取计算属性；`stop_loss_price` / `take_profit_price` 由均价与费率派生 |
 | `PositionDetailView` | `PositionView` + 关联订单 | 详情页使用 |
+| `PositionPage` | 归档仓位分页 | `items/total/limit/offset`；仅归档（`active=0`），按 `updated_at` 倒序，订单只为当前页仓位加载 |
 | `StrategySummaryView` | 同 `strategy_key` 的仓位 + 订单聚合 + 运行态心跳 | 活跃/归档仓位数、已实现盈亏、挂单数、未确认数、最后更新时间；`timeframe` / `alive` / `running` / `heartbeat_at` / `reconcile` 来自心跳文件（账本不含 timeframe 与运行态） |
 | `ReconcileView` | 心跳文件中的 `ReconcileSnapshot` | `exchange_qty` / `local_qty` / `gap` / `checked_at` / `tracked_exit_orders` / `max_exit_query_failures` / `failing_exit_orders`；只读，不落库 |
 | `OverviewView` | 全库聚合 | 计数、盈亏合计、策略摘要、告警（未确认订单） |

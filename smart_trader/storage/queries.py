@@ -44,6 +44,43 @@ def select_positions_by_ids(
     return [GridPositionRow.model_validate(dict(row)) for row in rows]
 
 
+def select_archived_positions(
+    conn: Connection,
+    *,
+    strategy_key: str | None,
+    limit: int,
+    offset: int,
+) -> list[GridPositionRow]:
+    """归档仓位页（active=0）: 更新时间倒序, rowid 倒序 tie-break"""
+    stmt = select(schema.grid_positions).where(schema.grid_positions.c.active == 0)
+    if strategy_key is not None:
+        stmt = stmt.where(schema.grid_positions.c.strategy_key == strategy_key)
+    stmt = (
+        stmt.order_by(
+            schema.grid_positions.c.updated_at.desc(), text("rowid DESC")
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = conn.execute(stmt).mappings().all()
+    return [GridPositionRow.model_validate(dict(row)) for row in rows]
+
+
+def count_archived_positions(
+    conn: Connection, *, strategy_key: str | None
+) -> int:
+    """与 select_archived_positions 同口径的归档总数"""
+    stmt = (
+        select(func.count())
+        .select_from(schema.grid_positions)
+        .where(schema.grid_positions.c.active == 0)
+    )
+    if strategy_key is not None:
+        stmt = stmt.where(schema.grid_positions.c.strategy_key == strategy_key)
+    total = conn.execute(stmt).scalar_one()
+    return int(total)
+
+
 def select_orders_for_positions(
     conn: Connection, position_ids: list[str]
 ) -> list[OrderRecord]:

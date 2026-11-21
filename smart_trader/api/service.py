@@ -15,6 +15,7 @@ from smart_trader.api.schemas import (
     OverviewView,
     PositionAckView,
     PositionDetailView,
+    PositionPage,
     PositionPhase,
     PositionView,
     ReconcileView,
@@ -30,7 +31,11 @@ from smart_trader.model import (
 )
 from smart_trader.runtime import RuntimeSnapshot
 from smart_trader.storage.reader import OrderJournalReader
-from smart_trader.storage.records import OrderRecord, PositionAckRecord
+from smart_trader.storage.records import (
+    GridPositionRow,
+    OrderRecord,
+    PositionAckRecord,
+)
 from smart_trader.strategy.grid_position import GridPosition
 
 _UNCONFIRMED_ALERT_LIMIT = 50
@@ -44,16 +49,10 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _load_positions(
-    reader: OrderJournalReader,
-    *,
-    strategy_key: str | None = None,
-    include_closed: bool = False,
+def _positions_with_orders(
+    reader: OrderJournalReader, rows: list[GridPositionRow]
 ) -> list[GridPosition]:
-    """仓位行 + 关联订单 → 逻辑仓位（一次查询取全部订单）"""
-    rows = reader.load_positions(
-        strategy_key=strategy_key, include_closed=include_closed
-    )
+    """仓位行 + 关联订单（一次查询）→ 逻辑仓位"""
     orders = reader.load_orders_for_positions([row.id for row in rows])
     by_position: dict[str, list[OrderRecord]] = {}
     for order in orders:
@@ -61,6 +60,21 @@ def _load_positions(
     return [
         GridPosition.from_row(row, by_position.get(row.id, [])) for row in rows
     ]
+
+
+def _load_positions(
+    reader: OrderJournalReader,
+    *,
+    strategy_key: str | None = None,
+    include_closed: bool = False,
+) -> list[GridPosition]:
+    """仓位行 + 关联订单 → 逻辑仓位（一次查询取全部订单）"""
+    return _positions_with_orders(
+        reader,
+        reader.load_positions(
+            strategy_key=strategy_key, include_closed=include_closed
+        ),
+    )
 
 
 def _order_role(
@@ -200,6 +214,35 @@ def list_position_views(
         )
         for position in positions
     ]
+
+
+def list_archived_position_views(
+    reader: OrderJournalReader,
+    *,
+    strategy_key: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    fixed_take_profit_keys: AbstractSet[str] = frozenset(),
+) -> PositionPage:
+    """归档仓位分页（更新时间倒序）; 订单只为当前页仓位加载"""
+    rows = reader.load_archived_positions(
+        strategy_key=strategy_key, limit=limit, offset=offset
+    )
+    positions = _positions_with_orders(reader, rows)
+    return PositionPage(
+        items=[
+            _position_view(
+                position,
+                fixed_take_profit_enabled=(
+                    position.strategy_key in fixed_take_profit_keys
+                ),
+            )
+            for position in positions
+        ],
+        total=reader.count_archived_positions(strategy_key=strategy_key),
+        limit=limit,
+        offset=offset,
+    )
 
 
 def get_position_detail(

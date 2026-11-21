@@ -88,6 +88,13 @@ class PositionDetailView(PositionView):
     orders: list[OrderView]
 
 
+class PositionPage(ApiModel):
+    items: list[PositionView]
+    total: int
+    limit: int
+    offset: int
+
+
 class ReconcileView(ApiModel):
     """持仓对账与出场跟踪运行态（心跳文件派生, 不落库）"""
 

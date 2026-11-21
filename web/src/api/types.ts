@@ -66,6 +66,13 @@ export interface PositionDetailView extends PositionView {
   orders: OrderView[];
 }
 
+export interface PositionPage {
+  items: PositionView[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface ReconcileView {
   checked_at: string | null;
   exchange_qty: number | null;

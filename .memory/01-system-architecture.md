@@ -441,6 +441,7 @@ WS / Timer 事件循环（守护线程），没有启用配置或装配失败时
 | `/api/overview` | 策略数、仓位/订单计数、已实现盈亏、未确认订单告警 |
 | `/api/strategies` | 按 `strategy_key` 聚合的策略摘要 |
 | `/api/positions?strategy_key=&include_closed=` | 逻辑仓位派生视图（数量/均价/phase/止损止盈线/待成交出场单） |
+| `/api/positions/archived?strategy_key=&limit=&offset=` | 归档仓位分页（`active=0`，按 `updated_at` 倒序；返回 `items/total/limit/offset`） |
 | `/api/positions/{id}` | 仓位详情 + 全部订单 |
 | `/api/orders?strategy_key=&status=&limit=&offset=` | 订单分页（`status=unconfirmed` 映射 `status IS NULL`） |
 
