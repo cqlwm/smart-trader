@@ -18,6 +18,7 @@ from smart_trader.model import (
     OrderSizeUnit,
     OrderStatus,
     PlaceOrderBehavior,
+    PositionCloseReason,
     PositionSide,
     Symbol,
 )
@@ -443,6 +444,32 @@ def test_zero_quote_amount_registers_empty_position_without_order():
 
 
 # ------------------------------------------------------------- 调参热更新
+
+
+def test_is_flat_reflects_open_positions():
+    strategy, _, _, _ = build_strategy()
+
+    assert strategy.is_flat() is True, "无仓位视为已清零"
+
+    push_kline(strategy, 0.5)
+
+    assert strategy.is_flat() is False, "存在持仓时不得视为已平"
+
+
+def test_abandon_positions_archives_locally_with_reason():
+    """抛弃只归档本地仓位, 不撤单/不平仓, 之后不再出现在策略仓位列表"""
+    strategy, _, journal, _ = build_strategy()
+    push_kline(strategy, 0.5)
+    position_id = strategy.positions[0].id
+
+    archived = strategy.abandon_positions()
+
+    assert archived == 1
+    assert strategy.positions == []
+    rows = journal.load_all_positions(DEFAULT_STRATEGY_KEY)
+    row = next(item for item in rows if item.id == position_id)
+    assert row.active is False
+    assert row.closed_reason is PositionCloseReason.ABANDONED
 
 
 def test_apply_config_updates_tuning_and_keeps_positions():

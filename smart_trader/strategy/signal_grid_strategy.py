@@ -387,6 +387,31 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
         self.close_position = True
         logger.info("策略全平请求已排队: %s", self.config.strategy_key)
 
+    def is_flat(self) -> bool:
+        """是否已无待处理敞口: 所有仓位可平量耗尽且无存活挂单"""
+        with self._callback_lock:
+            return all(
+                position.quantity <= 0 and not position.has_live_orders
+                for position in self.positions
+            )
+
+    def abandon_positions(self) -> int:
+        """抛弃本地仓位: 归档为 abandoned, 不触碰交易所侧持仓/挂单
+
+        @return 归档的仓位数
+        """
+        with self._callback_lock:
+            positions = self.positions
+            if not positions:
+                return 0
+            self._archive(positions, PositionCloseReason.ABANDONED)
+        logger.warning(
+            "策略已抛弃本地仓位: %s, 仓位 %s 个; 交易所持仓/挂单未处理",
+            self.config.strategy_key,
+            len(positions),
+        )
+        return len(positions)
+
     def cancel_pending_entries(self) -> tuple[int, int]:
         """撤销全部未成交入场单（持回调锁, 与 K 线决策串行）
 

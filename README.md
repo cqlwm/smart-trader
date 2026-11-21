@@ -119,6 +119,7 @@ uv run python scripts/migrations/003_add_strategy_configs.py "$DB"
 uv run python scripts/migrations/005_add_position_acks.py "$DB"
 uv run python scripts/migrations/006_convert_per_order_amount.py "$DB"
 uv run python scripts/migrations/008_add_entry_mode.py "$DB"
+uv run python scripts/migrations/009_add_strategy_lifecycle.py "$DB"
 ```
 
 如需从 `template/` 导入初始策略配置，再执行 `004_seed_template_configs.py`（不覆盖已编辑的配置）。
@@ -204,7 +205,7 @@ SMART_TRADER_API_PORT=8001 uv run uvicorn run:create_application --factory --rel
 
 ## 控制台与 API
 
-页面：总览、持仓、订单、行情、策略配置。
+页面：总览、策略（实例列表 + 详情：配置 / 持仓 / 归档 / 订单 / 行情）、行情。
 
 | 方法 | 端点 | 说明 |
 | --- | --- | --- |
@@ -215,7 +216,9 @@ SMART_TRADER_API_PORT=8001 uv run uvicorn run:create_application --factory --rel
 | GET | `/api/positions/{id}` | 仓位详情与全部订单 |
 | GET | `/api/orders` | 订单分页（`status=unconfirmed` 映射 `status IS NULL`） |
 | GET | `/api/market/chart` | 公共 K 线 + AlphaTrend 指标点 |
-| GET / POST / PUT | `/api/configs` 系列 | 策略配置查询、新建、乐观锁更新 |
+| GET / POST / PUT | `/api/configs` 系列 | 策略配置查询、新建、参数更新（启停走 enable/disable） |
+| POST | `/api/strategies/{key}/disable` | 停用：立即暂停并按 `close_all` / `limit_exit` / `keep` / `abandon` 处置持仓 |
+| POST | `/api/strategies/{key}/enable` | 启用：恢复正常生命周期与运行意图 |
 | POST | `/api/strategies/{key}/commands` | `pause` / `resume` / `close_all` / `cancel_entries` |
 | POST | `/api/commands/kill-switch` | 全局 kill switch：先全平再暂停 |
 | GET | `/api/commands` | 命令审计 |

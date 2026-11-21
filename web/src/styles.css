@@ -1550,7 +1550,7 @@ a:focus-visible {
   }
 }
 
-/* ---- P3 配置页 ---- */
+/* ---- P3 策略配置 / 详情页 ---- */
 
 .config-head-actions {
   display: flex;
@@ -1754,6 +1754,7 @@ a:focus-visible {
 }
 
 .modal-field input,
+.modal-field select,
 .modal-field textarea {
   padding: 8px 10px;
   border: 1px solid var(--line);
@@ -1765,6 +1766,7 @@ a:focus-visible {
 }
 
 .modal-field input:focus,
+.modal-field select:focus,
 .modal-field textarea:focus {
   outline: none;
   border-color: var(--amber);

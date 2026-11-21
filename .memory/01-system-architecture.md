@@ -102,7 +102,7 @@ storage (queries.py / reader.py)           只读仓储: 只发 SELECT, 不建�
 | `smart_trader/strategy_runtime.py` | `StrategyRuntime`：按启用配置的 `data_source` 装配策略任务与事件循环（WS / Timer 可同时存在，各自在守护线程中运行）；没有启用配置或装配失败时只记日志，控制台继续可用 |
 | `smart_trader/api/` | `schemas`（响应契约）+ `service`（账本派生与聚合）+ `market_service`（K线+AlphaTrend）+ `market_provider`（惰性行情实例）+ `command_service`（命令视图）+ `app`（FastAPI 路由；P0 只读 + P1 命令提交 + P2 公共行情；可选启停钩子供统一入口挂载策略运行时） |
 | `smart_trader/exchange/binance/binance_exchange.py` | 完整适配器 + `BinanceMarketData`（只读公共行情，无交易/账户能力）+ `create_public_market_data`（零凭据） |
-| `web/` | React + Vite 控制台（总览 / 持仓 / 订单 / 行情 / 策略配置），HashRouter；`npm run build` 产物可由 API 托管 |
+| `web/` | React + Vite 控制台（总览 / 策略 / 行情），HashRouter；策略页为实例列表 + 详情（配置 / 持仓 / 归档 / 订单 / 行情 五个 Tab），`npm run build` 产物可由 API 托管 |
 | `run.py` | 唯一进程入口：控制台 API + 策略运行时同进程；按每个策略配置的 `data_source` 装配 WS / Timer 循环 |
 | `scripts/migrations/` | 库结构演化编号脚本（纯运维，与业务包解耦）：每次演化新增一个编号文件，手动对存量库执行一次；幂等，重复执行无害 |
 | `smart_trader/execution/limit_order_chaser.py` | 追单执行策略 |
@@ -153,6 +153,8 @@ storage (queries.py / reader.py)           只读仓储: 只发 SELECT, 不建�
 | Step 35 | **单层规模支持名义价值**：`per_order_qty` 替换为 `per_order_amount` + `per_order_unit`（`OrderSizeUnit.BASE` / `QUOTE`），单一来源避免双字段真相；`quote` 在开仓时按信号收盘价折算数量（`Decimal` 除法），经 `SymbolInfo.format_qty` 按 `step_size` 向下取整并校验最小数量 / 最小名义价值，校验发生在创建仓位行之前；`amount=0` 仍表示空仓位。存量 payload 由 `006_convert_per_order_amount.py` 按 `base` 迁移 | 已完成 |
 | Step 36 | **配置热新增 + 调参热更新**：`StrategyRuntime` 接受 `configs_provider` 并每 2 秒轮询 `strategy_configs`；新增策略按 data_source 挂入既有循环（WS `add_kline_stream` 断开重连后重订阅，Timer `add_timer_subscription` 动态加入调度），并注册到 `CommandRunner`；版本变化且身份字段不变时调用 `SignalGridStrategy.apply_config`（原地更新 config 对象、重建闸门/离场链、保留仓位与信号去重状态）；身份字段与 data_source 创建后不可变（API 拒绝）；停用仍要求重启（启用未运行配置走热新增）。单条配置失败只记录日志；`RuntimeRegistry.heartbeat` 加锁串行化临时文件写入 | 已完成 |
 | Step 37 | **显式加仓模式（entry_mode）**：`SignalGridStrategy` 不按策略类型拆分（编排/账本/风控为两种口径共享，差异仅在间距闸门）；新增 `EntryMode`（`grid` / `trend`）与配置字段 `entry_mode`，由共享校验保证模式与间距字段一致（`grid` 模式网格必填、顺势为空；`trend` 模式反之），`_build_spacing_gate` 按模式装配；控制台新增"加仓模式"选择器并联动显示对应间距字段；存量 payload 由 `008_add_entry_mode.py` 回填 | 已完成 |
+| Step 38 | **策略详情页（前端信息架构收敛）**：侧边栏从 5 项收敛为 总览 / 策略 / 行情；策略页为实例列表（合并配置与运行态摘要），点击进入 `/strategies/{strategy_key}` 详情；详情页集中展示配置启用/进程在线/决策运行状态，提供暂停/恢复与启用/停用，并以 配置 / 持仓 / 归档 / 订单 / 行情 五个 Tab 复用已有 API 的 `strategy_key` 过滤；配置编辑器与仓位/订单表格抽为共享组件，删除旧 Configs/Positions/Orders 页面 | 已完成 |
+| Step 39 | **策略生命周期与停用编排**：`strategy_configs` 增加 `desired_running` / `lifecycle` / `disable_policy` / 时间戳与错误字段；停用改为异步流程（立即暂停 + 后台处置），支持 `close_all`（等待清零）/ `limit_exit`（挂单后守护）/ `keep`（冻结守护）/ `abandon`（本地归档不再管理）；`guard`/`disabling` 配置重启后以暂停态加载并继续跟踪出场与对账；暂停/恢复持久化 `desired_running`；新增 enable/disable API，PUT 仅修改参数；迁移脚本 `009_add_strategy_lifecycle.py` | 已完成 |
 
 ### 待办清单（Step 5）
 

@@ -11,8 +11,10 @@ from smart_trader.api.app import create_app
 from smart_trader.model import CommandAction, CommandStatus
 from smart_trader.runtime import RuntimeRegistry
 from smart_trader.storage.command_store import CommandStore
+from smart_trader.storage.config_store import ConfigStore
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.reader import OrderJournalReader
+from smart_trader.strategy.config_payload import StrategyConfigPayload
 from smart_trader.task.command_runner import CommandRunner
 from tests.api_harness import AUTH_HEADERS, TEST_TOKEN
 from tests.test_command_runner import KEY, FakeControllableStrategy
@@ -70,6 +72,52 @@ def test_submit_pause_command_returns_pending(client: TestClient):
     assert body["action"] == "pause"
     assert body["status"] == "pending"
     assert body["strategy_key"] == KEY
+
+
+def test_pause_and_resume_persist_desired_running(
+    db_path: Path,
+    journal: OrderJournal,
+    reader: OrderJournalReader,
+    commands: CommandStore,
+):
+    """暂停/恢复命令同时持久化运行意图, 且不递增配置版本"""
+    configs = ConfigStore(str(db_path))
+    created = configs.create(
+        strategy_key=KEY, payload=StrategyConfigPayload().to_json()
+    )
+    try:
+        with TestClient(
+            create_app(
+                reader,
+                commands,
+                token=TEST_TOKEN,
+                config_store=configs,
+            ),
+            headers=AUTH_HEADERS,
+        ) as client:
+            assert (
+                client.post(
+                    f"/api/strategies/{KEY}/commands", json=_body("pause")
+                ).status_code
+                == 202
+            )
+            paused = configs.get(KEY)
+            assert paused is not None
+            assert paused.desired_running is False
+            assert paused.version == created.version, "暂停不得递增配置版本"
+
+            assert (
+                client.post(
+                    f"/api/strategies/{KEY}/commands", json=_body("resume")
+                ).status_code
+                == 202
+            )
+            resumed = configs.get(KEY)
+            assert resumed is not None
+            assert resumed.desired_running is True
+            assert resumed.version == created.version
+    finally:
+        configs.close()
 
 
 def test_submit_kill_switch_is_global(client: TestClient):

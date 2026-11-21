@@ -14,12 +14,19 @@
 from collections.abc import Iterable
 
 from smart_trader.exchange.ports import Exchange
-from smart_trader.model import DataSource
+from smart_trader.model import DataSource, StrategyLifecycle
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import StrategyConfigRecord
 from smart_trader.strategy.config_payload import StrategyConfigPayload
 from smart_trader.strategy.signal_grid_strategy import SignalGridStrategy
 from smart_trader.task.strategy_task import StrategyTask
+
+_GUARD_LIFECYCLES = (StrategyLifecycle.DISABLING, StrategyLifecycle.GUARD)
+
+
+def should_load(record: StrategyConfigRecord) -> bool:
+    """启用配置正常加载; 停用流程/守护态配置以暂停态加载"""
+    return record.enabled or record.lifecycle in _GUARD_LIFECYCLES
 
 
 def build_strategy_tasks(
@@ -40,7 +47,7 @@ def build_strategy_tasks(
     """
     tasks: list[StrategyTask] = []
     for record in records:
-        if not record.enabled:
+        if not should_load(record):
             continue
         try:
             payload = StrategyConfigPayload.from_json(record.payload)
@@ -58,5 +65,7 @@ def build_strategy_tasks(
             journal=journal,
             account=exchange,
         )
+        if not record.desired_running or record.lifecycle is not StrategyLifecycle.ACTIVE:
+            strategy.pause()
         tasks.append(StrategyTask(symbol=config.symbol, strategy=strategy))
     return tasks

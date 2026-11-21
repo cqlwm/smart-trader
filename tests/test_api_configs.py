@@ -84,11 +84,9 @@ def _put(
     *,
     strategy_key: str = KEY,
     expected_version: int = 1,
-    enabled: bool = True,
     payload: dict[str, object] | None = None,
 ):
     body: dict[str, object] = {
-        "enabled": enabled,
         "expected_version": expected_version,
         "payload": {
             "symbol": "DOGE/USDT",
@@ -97,6 +95,34 @@ def _put(
         },
     }
     return client.put(f"/api/configs/{strategy_key}", json=body)
+
+
+def _disable(
+    client: TestClient,
+    *,
+    strategy_key: str = KEY,
+    policy: str = "close_all",
+    expected_version: int = 1,
+):
+    return client.post(
+        f"/api/strategies/{strategy_key}/disable",
+        json={
+            "position_policy": policy,
+            "expected_version": expected_version,
+        },
+    )
+
+
+def _enable(
+    client: TestClient,
+    *,
+    strategy_key: str = KEY,
+    expected_version: int = 1,
+):
+    return client.post(
+        f"/api/strategies/{strategy_key}/enable",
+        json={"expected_version": expected_version},
+    )
 
 
 def _seed_active_position(journal: OrderJournal, strategy_key: str = KEY) -> None:
@@ -296,17 +322,22 @@ def test_put_unknown_key_returns_404(client: TestClient):
     assert _put(client, strategy_key="missing").status_code == 404
 
 
-def test_disable_with_active_positions_returns_409(
+def test_disable_with_active_positions_requests_lifecycle(
     client: TestClient, journal: OrderJournal
 ):
+    """停用不再要求先平仓, 而是进入生命周期流程并记录处置策略"""
     _create(client)
     _seed_active_position(journal)
 
-    response = _put(client, enabled=False)
+    response = _disable(client, policy="close_all")
 
-    assert response.status_code == 409
-    assert "enabled" in cast(dict[str, Any], response.json())["detail"]
-    assert client.get(f"/api/configs/{KEY}").json()["enabled"] is True
+    assert response.status_code == 200
+    body = cast(dict[str, Any], response.json())
+    assert body["enabled"] is False
+    assert body["desired_running"] is False
+    assert body["lifecycle"] == "disabling"
+    assert body["disable_policy"] == "close_all"
+    assert body["disable_requested_at"] is not None
 
 
 @pytest.mark.parametrize(
@@ -373,13 +404,19 @@ def test_tuning_parameter_change_with_active_positions_is_allowed(
     assert cast(dict[str, Any], response.json())["version"] == 2
 
 
-def test_disable_without_active_positions_is_allowed(client: TestClient):
+def test_enable_resets_lifecycle(client: TestClient):
     _create(client)
+    assert _disable(client, policy="keep").status_code == 200
 
-    response = _put(client, enabled=False)
+    response = _enable(client, expected_version=2)
 
     assert response.status_code == 200
-    assert cast(dict[str, Any], response.json())["enabled"] is False
+    body = cast(dict[str, Any], response.json())
+    assert body["enabled"] is True
+    assert body["desired_running"] is True
+    assert body["lifecycle"] == "active"
+    assert body["disable_policy"] is None
+    assert body["version"] == 3
 
 
 def test_delete_config_is_not_allowed(client: TestClient):

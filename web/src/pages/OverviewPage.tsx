@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { newIdempotencyKey } from "../api/client";
 import {
@@ -496,7 +497,12 @@ function OverviewBody({
                     style={{ animationDelay: `${260 + index * 40}ms` }}
                   >
                     <td>
-                      <span className="cell-primary mono">{strategy.strategy_key}</span>
+                      <Link
+                        className="cell-primary mono"
+                        to={`/strategies/${encodeURIComponent(strategy.strategy_key)}`}
+                      >
+                        {strategy.strategy_key}
+                      </Link>
                     </td>
                     <td>
                       <div className="cell-stack">

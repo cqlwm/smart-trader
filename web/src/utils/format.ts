@@ -104,6 +104,7 @@ export const closeReasonLabel: Record<PositionCloseReason, string> = {
   external_reconciled: "外部平仓对账",
   orphan_reaped: "孤儿回收",
   entry_discarded: "入场单丢弃",
+  abandoned: "停用抛弃",
 };
 
 export function orderStatusText(

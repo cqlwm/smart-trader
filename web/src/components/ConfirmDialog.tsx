@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import type { ReactNode } from "react";
 
 export function ConfirmDialog({
   open,
@@ -9,6 +10,7 @@ export function ConfirmDialog({
   tone,
   busy,
   error,
+  children,
   onConfirm,
   onClose,
 }: {
@@ -20,6 +22,7 @@ export function ConfirmDialog({
   tone: "danger" | "amber";
   busy: boolean;
   error: string | null;
+  children?: ReactNode;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -55,6 +58,7 @@ export function ConfirmDialog({
           {title}
         </h2>
         <p className="modal-desc">{description}</p>
+        {children}
         {error ? <div className="modal-error mono">{error}</div> : null}
         <div className="modal-actions">
           <button type="button" className="button" onClick={onClose} disabled={busy} autoFocus>

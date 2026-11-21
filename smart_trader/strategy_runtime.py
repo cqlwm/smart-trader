@@ -22,12 +22,21 @@ from smart_trader.data_event_loop import (
     TimerDataEventLoop,
 )
 from smart_trader.exchange.ports import Exchange, MarketDataPort
-from smart_trader.model import DataSource, Symbol
+from smart_trader.model import (
+    DataSource,
+    DisablePositionPolicy,
+    StrategyLifecycle,
+    Symbol,
+)
 from smart_trader.runtime import RuntimeRegistry
 from smart_trader.storage.command_store import CommandStore
+from smart_trader.storage.config_store import ConfigStore
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import StrategyConfigRecord
-from smart_trader.strategy.config_loader import build_strategy_tasks
+from smart_trader.strategy.config_loader import (
+    build_strategy_tasks,
+    should_load,
+)
 from smart_trader.strategy.config_payload import StrategyConfigPayload
 from smart_trader.strategy.signal_grid_strategy import SignalGridStrategy
 from smart_trader.task.command_runner import CommandRunner, controllable_strategies
@@ -73,6 +82,7 @@ class StrategyRuntime:
     @param registry 运行态心跳
     @param configs_provider 配置读取入口（通常是 `ConfigStore.list`）;
         提供后启用配置热新增 / 调参热更新
+    @param lifecycle_store 配置写入入口; 提供后由运行时推进停用流程
     @param config_poll_interval 配置轮询间隔（秒）
     """
 
@@ -86,6 +96,7 @@ class StrategyRuntime:
         registry: RuntimeRegistry,
         poll_interval: float = 2.0,
         configs_provider: ConfigsProvider | None = None,
+        lifecycle_store: ConfigStore | None = None,
         config_poll_interval: float = 2.0,
         ws_loop_factory: WsLoopFactory = _create_ws_loop,
         timer_loop_factory: TimerLoopFactory = _create_timer_loop,
@@ -97,6 +108,7 @@ class StrategyRuntime:
         self._registry = registry
         self._poll_interval = poll_interval
         self._configs_provider = configs_provider
+        self._lifecycle_store = lifecycle_store
         self._config_poll_interval = config_poll_interval
         self._ws_loop_factory = ws_loop_factory
         self._timer_loop_factory = timer_loop_factory
@@ -115,6 +127,8 @@ class StrategyRuntime:
         # 构造失败 / 需要重启的配置版本: 避免轮询线程每轮重复日志与重试
         self._failed_versions: dict[str, int] = {}
         self._restart_notified: dict[str, int] = {}
+        # 停用流程里的一次性动作（request_close_all / abandon）只执行一次
+        self._disable_action_done: set[str] = set()
 
     def start(self) -> None:
         """启动策略运行时; 幂等, 装配失败只记录日志并保持控制台可用"""
@@ -124,6 +138,7 @@ class StrategyRuntime:
         self._supervisor_stop.clear()
         self._failed_versions.clear()
         self._restart_notified.clear()
+        self._disable_action_done.clear()
 
         if self._configs_provider is not None:
             try:
@@ -133,7 +148,7 @@ class StrategyRuntime:
                 self.stop()
             return
 
-        enabled = [record for record in self._records if record.enabled]
+        enabled = [record for record in self._records if should_load(record)]
         if not enabled:
             logger.warning("没有启用的策略配置, 控制台以只读模式启动")
             return
@@ -220,15 +235,15 @@ class StrategyRuntime:
         with self._sync_lock:
             records = list(self._configs_provider())
             current = {record.strategy_key: record for record in records}
-            enabled = [record for record in records if record.enabled]
+            loadable = [record for record in records if should_load(record)]
             pending = [
                 record
-                for record in enabled
+                for record in loadable
                 if record.strategy_key not in self._running
                 and self._failed_versions.get(record.strategy_key) != record.version
             ]
             if pending:
-                exchange = self._exchange_for(enabled)
+                exchange = self._exchange_for(loadable)
                 if exchange is not None:
                     for record in pending:
                         self._add_strategy(record, exchange)
@@ -237,9 +252,9 @@ class StrategyRuntime:
                 if record is None:
                     self._notify_restart(key, -1, "配置已删除")
                     continue
-                if record.version == running.version:
-                    continue
-                self._update_strategy(key, running, record)
+                if record.version != running.version:
+                    self._update_strategy(key, running, record)
+                self._supervise_lifecycle(key, running, record)
 
     def _exchange_for(
         self, enabled: list[StrategyConfigRecord]
@@ -350,12 +365,23 @@ class StrategyRuntime:
     ) -> None:
         if self._failed_versions.get(key) == record.version:
             return
-        if not record.enabled:
-            self._notify_restart(key, record.version, "停用")
+        if record.lifecycle in (
+            StrategyLifecycle.DISABLING,
+            StrategyLifecycle.GUARD,
+        ):
             running.version = record.version
+            running.payload = record.payload
+            self._supervise_lifecycle(key, running, record)
+            return
+        if not record.enabled:
+            # 历史停用（lifecycle=disabled）: 只保持暂停, 不再要求重启
+            self._pause_running(running)
+            running.version = record.version
+            running.payload = record.payload
             return
         if record.payload == running.payload:
             running.version = record.version
+            self._apply_desired_running(running, record)
             return
         try:
             payload = StrategyConfigPayload.from_json(record.payload)
@@ -404,9 +430,118 @@ class StrategyRuntime:
 
         running.version = record.version
         running.payload = record.payload
+        self._apply_desired_running(running, record)
         if self._command_runner is not None:
             self._command_runner.heartbeat()
         logger.info("策略热更新完成: %s (v%s)", key, record.version)
+
+    def _pause_running(self, running: _RunningStrategy) -> None:
+        strategy = running.task.strategy
+        if isinstance(strategy, SignalGridStrategy) and strategy.is_running:
+            strategy.pause()
+
+    def _apply_desired_running(
+        self, running: _RunningStrategy, record: StrategyConfigRecord
+    ) -> None:
+        """按持久化运行意图同步暂停状态（重启后保持暂停）"""
+        strategy = running.task.strategy
+        if not isinstance(strategy, SignalGridStrategy):
+            return
+        if record.lifecycle is not StrategyLifecycle.ACTIVE:
+            self._pause_running(running)
+            return
+        if record.desired_running and not strategy.is_running:
+            strategy.resume()
+        elif not record.desired_running and strategy.is_running:
+            strategy.pause()
+
+    def _supervise_lifecycle(
+        self, key: str, running: _RunningStrategy, record: StrategyConfigRecord
+    ) -> None:
+        """推进停用流程: 暂停 → 按 policy 处置持仓 → guard / disabled"""
+        strategy = running.task.strategy
+        if not isinstance(strategy, SignalGridStrategy):
+            return
+        lifecycle = record.lifecycle
+        if lifecycle is StrategyLifecycle.ACTIVE:
+            self._disable_action_done.discard(key)
+            self._apply_desired_running(running, record)
+            return
+        if lifecycle is StrategyLifecycle.DISABLING:
+            self._pause_running(running)
+            policy = record.disable_policy
+            if policy is None:
+                self._complete_disable(
+                    key, StrategyLifecycle.DISABLED, error="缺少停用策略"
+                )
+                return
+            if policy is DisablePositionPolicy.CLOSE_ALL:
+                if key not in self._disable_action_done:
+                    strategy.request_close_all()
+                    self._disable_action_done.add(key)
+                    logger.warning("停用开始, 等待全平: %s", key)
+                if strategy.is_flat():
+                    self._complete_disable(key, StrategyLifecycle.DISABLED)
+                return
+            if key not in self._disable_action_done:
+                if policy is DisablePositionPolicy.LIMIT_EXIT:
+                    strategy.request_close_all()
+                elif policy is DisablePositionPolicy.ABANDON:
+                    count = strategy.abandon_positions()
+                    logger.warning(
+                        "停用抛弃: %s, 本地归档 %s 个仓位; 交易所持仓/挂单未处理",
+                        key,
+                        count,
+                    )
+                self._disable_action_done.add(key)
+            target = (
+                StrategyLifecycle.DISABLED
+                if policy is DisablePositionPolicy.ABANDON
+                else StrategyLifecycle.GUARD
+            )
+            self._complete_disable(key, target)
+            return
+        if lifecycle is StrategyLifecycle.GUARD:
+            # 守护态: 保持暂停; limit_exit 在重启后需要重新挂一次出场单
+            self._pause_running(running)
+            if (
+                record.disable_policy is DisablePositionPolicy.LIMIT_EXIT
+                and key not in self._disable_action_done
+            ):
+                strategy.request_close_all()
+                self._disable_action_done.add(key)
+            return
+        # disabled: 保持暂停, 直到重新启用
+        self._pause_running(running)
+        self._disable_action_done.discard(key)
+
+    def _complete_disable(
+        self,
+        key: str,
+        lifecycle: StrategyLifecycle,
+        *,
+        error: str | None = None,
+    ) -> None:
+        if self._lifecycle_store is None:
+            logger.warning(
+                "缺少 lifecycle_store, 停用流程无法完成: %s -> %s",
+                key,
+                lifecycle.value,
+            )
+            return
+        updated = self._lifecycle_store.complete_disable(
+            key, lifecycle, error=error
+        )
+        if updated is None:
+            logger.warning(
+                "停用完成写入被并发状态变更忽略: %s -> %s",
+                key,
+                lifecycle.value,
+            )
+            return
+        logger.warning(
+            "停用流程完成: %s -> %s", key, lifecycle.value
+        )
 
     def _notify_restart(self, key: str, version: int, reason: str) -> None:
         if self._restart_notified.get(key) == version:

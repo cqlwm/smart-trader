@@ -8,7 +8,8 @@ export type PositionCloseReason =
   | "exit_settled"
   | "external_reconciled"
   | "orphan_reaped"
-  | "entry_discarded";
+  | "entry_discarded"
+  | "abandoned";
 
 export interface OrderView {
   order_id: string;
@@ -227,6 +228,16 @@ export type EntryMode = "grid" | "trend";
 export type SignalKind = "trigger" | "directional";
 export type OrderSizeUnit = "base" | "quote";
 export type PlaceOrderBehavior = "chaser" | "chaser_open" | "normal";
+export type StrategyLifecycle =
+  | "active"
+  | "disabling"
+  | "guard"
+  | "disabled";
+export type DisablePositionPolicy =
+  | "close_all"
+  | "limit_exit"
+  | "keep"
+  | "abandon";
 
 export interface StrategyConfigPayload {
   symbol: string;
@@ -267,6 +278,12 @@ export interface StrategyConfigView {
   payload: StrategyConfigPayload;
   version: number;
   enabled: boolean;
+  desired_running: boolean;
+  lifecycle: StrategyLifecycle;
+  disable_policy: DisablePositionPolicy | null;
+  disable_requested_at: string | null;
+  disable_completed_at: string | null;
+  disable_error: string | null;
   updated_by: string;
   created_at: string;
   updated_at: string;
@@ -279,7 +296,6 @@ export interface StrategyConfigCreateRequest {
 }
 
 export interface StrategyConfigUpdateRequest {
-  enabled: boolean;
   expected_version: number;
   payload: StrategyConfigPayload;
 }

@@ -14,12 +14,14 @@ from pydantic import BaseModel, ConfigDict
 from smart_trader.model import (
     CommandAction,
     CommandStatus,
+    DisablePositionPolicy,
     OrderSide,
     OrderStatus,
     OrderType,
     PositionAckStatus,
     PositionCloseReason,
     PositionSide,
+    StrategyLifecycle,
 )
 
 
@@ -104,6 +106,13 @@ class StrategyConfigRecord(BaseModel):
     updated_by: str = "web"
     created_at: str = ""
     updated_at: str = ""
+    # 生命周期: desired_running 是持久化暂停意图; lifecycle 是停用流程状态
+    desired_running: bool = True
+    lifecycle: StrategyLifecycle = StrategyLifecycle.ACTIVE
+    disable_policy: DisablePositionPolicy | None = None
+    disable_requested_at: str | None = None
+    disable_completed_at: str | None = None
+    disable_error: str | None = None
 
 
 class PositionAckRecord(BaseModel):

@@ -5,6 +5,7 @@ import type {
   CommandAction,
   CommandPage,
   CommandView,
+  DisablePositionPolicy,
   HealthView,
   MarketChartView,
   OrderPage,
@@ -150,8 +151,11 @@ export function useSubmitCommand() {
           idempotency_key: input.idempotencyKey,
         },
       ),
-    onSuccess: () => {
+    onSuccess: (_data, input) => {
       void client.invalidateQueries({ queryKey: ["commands"] });
+      void client.invalidateQueries({ queryKey: ["strategies"] });
+      void client.invalidateQueries({ queryKey: ["config", input.strategyKey] });
+      void client.invalidateQueries({ queryKey: ["configs"] });
     },
   });
 }
@@ -196,6 +200,18 @@ export function useConfigs() {
   });
 }
 
+export function useConfig(strategyKey: string) {
+  return useQuery({
+    queryKey: ["config", strategyKey],
+    queryFn: () =>
+      apiGet<StrategyConfigView>(
+        `/api/configs/${encodeURIComponent(strategyKey)}`,
+      ),
+    enabled: strategyKey !== "",
+    refetchInterval: REFRESH_MS,
+  });
+}
+
 export function useConfigDefaults(enabled: boolean) {
   return useQuery({
     queryKey: ["config-defaults"],
@@ -212,6 +228,7 @@ export function useCreateConfig() {
       apiPost<StrategyConfigView>("/api/configs", input),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["configs"] });
+      void client.invalidateQueries({ queryKey: ["strategies"] });
     },
   });
 }
@@ -229,8 +246,56 @@ export function useUpdateConfig() {
         `/api/configs/${encodeURIComponent(input.strategyKey)}`,
         input.body,
       ),
-    onSuccess: () => {
+    onSuccess: (_data, input) => {
       void client.invalidateQueries({ queryKey: ["configs"] });
+      void client.invalidateQueries({ queryKey: ["config", input.strategyKey] });
+      void client.invalidateQueries({ queryKey: ["strategies"] });
+    },
+  });
+}
+
+export interface DisableStrategyInput {
+  strategyKey: string;
+  policy: DisablePositionPolicy;
+  expectedVersion: number;
+}
+
+export function useDisableStrategy() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: DisableStrategyInput) =>
+      apiPost<StrategyConfigView>(
+        `/api/strategies/${encodeURIComponent(input.strategyKey)}/disable`,
+        {
+          position_policy: input.policy,
+          expected_version: input.expectedVersion,
+        },
+      ),
+    onSuccess: (_data, input) => {
+      void client.invalidateQueries({ queryKey: ["configs"] });
+      void client.invalidateQueries({ queryKey: ["config", input.strategyKey] });
+      void client.invalidateQueries({ queryKey: ["strategies"] });
+    },
+  });
+}
+
+export interface EnableStrategyInput {
+  strategyKey: string;
+  expectedVersion: number;
+}
+
+export function useEnableStrategy() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: EnableStrategyInput) =>
+      apiPost<StrategyConfigView>(
+        `/api/strategies/${encodeURIComponent(input.strategyKey)}/enable`,
+        { expected_version: input.expectedVersion },
+      ),
+    onSuccess: (_data, input) => {
+      void client.invalidateQueries({ queryKey: ["configs"] });
+      void client.invalidateQueries({ queryKey: ["config", input.strategyKey] });
+      void client.invalidateQueries({ queryKey: ["strategies"] });
     },
   });
 }

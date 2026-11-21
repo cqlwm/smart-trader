@@ -516,7 +516,12 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 | `strategy_key` | TEXT PK，账本归属键，创建后不可变 |
 | `payload` | `StrategyConfigPayload` 的 JSON 文本 |
 | `version` | 乐观锁版本，从 1 递增 |
-| `enabled` | 启动时是否加载；无删除，只能停用 |
+| `enabled` | 是否希望启用；停用后不会在重启时自动加载 |
+| `desired_running` | 期望运行态（暂停持久化）；重启后按此恢复，不自动恢复交易 |
+| `lifecycle` | `active` / `disabling` / `guard` / `disabled`（见下） |
+| `disable_policy` | 停用时选择的持仓处置策略（`close_all` / `limit_exit` / `keep` / `abandon`） |
+| `disable_requested_at` / `disable_completed_at` | 停用流程时间戳 |
+| `disable_error` | 停用流程失败原因（如设置为空） |
 | `updated_by` | 最后修改方（当前固定 `web`） |
 | `created_at` / `updated_at` | UTC 时间戳 |
 
@@ -550,11 +555,34 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 `quote` 表达的是订单名义价值（价格 × 数量），不是保证金。
 
 护栏：`symbol` / `timeframe` / `data_source` / `position_side` / `master_side`
-创建后不可修改（API 409）；活跃仓位存在时禁止停用；其余字段可改，
-保存后由运行时轮询热更新。
+创建后不可修改（API 409）；其余字段可改，保存后由运行时轮询热更新。
+启停只允许走 `/strategies/{key}/enable` / `disable`，PUT 只改参数。
+
+**生命周期与停用流程（Step 39）**：
+
+- `active`：正常加载；`desired_running` 决定是否暂停。
+- `disabling`：已暂停，运行时正在按 `disable_policy` 处置持仓。
+- `guard`：已停用但仍有仓位/挂单；进程重启后以**暂停态守护**加载，
+  继续跟踪出场单与对账，不再产生新决策。
+- `disabled`：已停用且无待守护仓位；重启不再加载。
+
+停用是异步编排，入口 `POST /strategies/{key}/disable`
+（带 `position_policy` 与 `expected_version`）立即置 `desired_running=false`、
+`enabled=false`、`lifecycle=disabling`，由运行时监督线程执行：
+
+| 策略 | 行为 | 完成态 |
+| --- | --- | --- |
+| `close_all` | 请求现有全平流程（按收盘价挂出场单），等待仓位清零 | `disabled` |
+| `limit_exit` | 请求挂出场单后立即停止决策 | `guard` |
+| `keep` | 不动仓位与挂单，仅停止决策 | `guard` |
+| `abandon` | 本地仓位按 `abandoned` 归档并移出管理；交易所仓位/挂单不处理 | `disabled` |
+
+`enabled=true` 与 `lifecycle=disabling/guard` 的配置在启动时也会加载：
+启用配置正常加载；其余以 `is_running=false` 启动。`disabled` 不加载。
+暂停/恢复命令会持久化 `desired_running`，重启后保持暂停意图。
 
 **热更新边界（Step 36）**：运行时每 2 秒读取配置表。新增启用配置热加载；
 现有配置版本变化且身份字段不变时，`SignalGridStrategy.apply_config` 原地更新参数、
 重建闸门 / 离场链，保留仓位、订单与信号状态。`symbol` / `timeframe` /
 `position_side` / `master_side` / `data_source` **创建后不可修改**（API 409）；
-停用仍需重启，启用未运行配置走热新增。
+停用/启用由生命周期流程处理，不再要求重启。

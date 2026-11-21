@@ -169,6 +169,24 @@ class EntryMode(Enum):
     TREND = "trend"  # 顺势阶梯: 顺盈利方向走出间距才加仓
 
 
+class StrategyLifecycle(Enum):
+    """策略实例生命周期（停用流程的持久化状态）"""
+
+    ACTIVE = "active"  # 正常加载; desired_running 决定暂停与否
+    DISABLING = "disabling"  # 已暂停, 正在按 policy 处置持仓
+    GUARD = "guard"  # 已停用但仍有仓位/挂单, 以暂停态守护
+    DISABLED = "disabled"  # 已停用且无需守护, 重启不加载
+
+
+class DisablePositionPolicy(Enum):
+    """停用时对已有持仓的处置策略"""
+
+    CLOSE_ALL = "close_all"  # 全平并等待仓位清零后停用
+    LIMIT_EXIT = "limit_exit"  # 挂出场单后立即停用, 进入守护态
+    KEEP = "keep"  # 冻结保留, 不新增挂单, 进入守护态
+    ABANDON = "abandon"  # 本地归档, 不再管理; 交易所仓位/挂单不处理
+
+
 class PositionAckStatus(Enum):
     """人工外部仓位声明状态: active 生效中, revoked 已撤销（保留审计）"""
 
@@ -472,13 +490,15 @@ class PositionCloseReason(Enum):
     - `EXTERNAL_RECONCILED`：持仓对账发现交易所已无对应持仓（外部手动平仓），
       策略内部关闭 —— 绝未向交易所下达出场单；
     - `ORPHAN_REAPED`：零数量空仓位超时回收；
-    - `ENTRY_DISCARDED`：出场流程撤掉未成交入场单后仓位归零归档。
+    - `ENTRY_DISCARDED`：出场流程撤掉未成交入场单后仓位归零归档；
+    - `ABANDONED`：停用时选择抛弃, 本地归档后不再管理（交易所侧未处理）。
     """
 
     EXIT_SETTLED = "exit_settled"
     EXTERNAL_RECONCILED = "external_reconciled"
     ORPHAN_REAPED = "orphan_reaped"
     ENTRY_DISCARDED = "entry_discarded"
+    ABANDONED = "abandoned"
 
 
 class MarketSignal(BaseModel):

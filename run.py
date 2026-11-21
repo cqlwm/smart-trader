@@ -80,6 +80,8 @@ def create_application() -> FastAPI:
         registry=registry,
         # 运行中轮询配置: 新增策略与调参无需重启进程
         configs_provider=config_store.list,
+        # 停用流程需要回写生命周期状态
+        lifecycle_store=config_store,
     )
 
     def shutdown() -> None:

@@ -21,10 +21,7 @@ from smart_trader.api import (
     position_ack_service,
     service,
 )
-from smart_trader.api.config_service import (
-    ConfigFieldImmutableError,
-    ConfigInUseError,
-)
+from smart_trader.api.config_service import ConfigFieldImmutableError
 from smart_trader.api.market_provider import MarketDataProvider
 from smart_trader.api.market_service import build_market_chart
 from smart_trader.api.position_ack_service import (
@@ -49,6 +46,8 @@ from smart_trader.api.schemas import (
     StrategyConfigCreateRequest,
     StrategyConfigUpdateRequest,
     StrategyConfigView,
+    StrategyDisableRequest,
+    StrategyEnableRequest,
     StrategySummaryView,
 )
 from smart_trader.exceptions import SmartTraderError
@@ -249,13 +248,11 @@ def create_config(
 def update_config(
     request: Request, strategy_key: str, body: StrategyConfigUpdateRequest
 ) -> StrategyConfigView:
-    """覆盖更新; 版本冲突或活跃仓位护栏返回 409"""
+    """覆盖更新参数; 启停走 enable / disable 端点"""
     try:
         return config_service.update_config(
             _config_store(request),
-            _reader(request),
             strategy_key,
-            enabled=body.enabled,
             expected_version=body.expected_version,
             payload=body.payload,
         )
@@ -263,9 +260,47 @@ def update_config(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (
         ConfigVersionConflictError,
-        ConfigInUseError,
         ConfigFieldImmutableError,
     ) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/strategies/{strategy_key}/disable", response_model=StrategyConfigView
+)
+def disable_strategy(
+    request: Request, strategy_key: str, body: StrategyDisableRequest
+) -> StrategyConfigView:
+    """请求停用: 立即暂停, 运行时按 position_policy 处置持仓"""
+    try:
+        return config_service.disable_config(
+            _config_store(request),
+            strategy_key,
+            policy=body.position_policy,
+            expected_version=body.expected_version,
+        )
+    except ConfigNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConfigVersionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/strategies/{strategy_key}/enable", response_model=StrategyConfigView
+)
+def enable_strategy(
+    request: Request, strategy_key: str, body: StrategyEnableRequest
+) -> StrategyConfigView:
+    """重新启用策略并恢复运行意图"""
+    try:
+        return config_service.enable_config(
+            _config_store(request),
+            strategy_key,
+            expected_version=body.expected_version,
+        )
+    except ConfigNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConfigVersionConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
@@ -361,6 +396,16 @@ def submit_strategy_command(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if body.action in (CommandAction.PAUSE, CommandAction.RESUME):
+        # 持久化暂停意图: 进程重启后仍保持暂停, 不会自动恢复交易
+        store = cast(ConfigStore | None, request.app.state.configs)
+        if store is not None:
+            try:
+                store.set_desired_running(
+                    strategy_key, body.action is CommandAction.RESUME
+                )
+            except ConfigNotFoundError:
+                pass
     return command_service.command_view(record)
 
 

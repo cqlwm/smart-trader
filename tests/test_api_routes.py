@@ -207,11 +207,13 @@ def test_openapi_write_surface_is_commands_and_configs_only(client: TestClient):
     assert methods == {"get", "post", "put"}, f"写面只允许命令与配置, 实际: {methods}"
     assert post_paths == {
         "/api/strategies/{strategy_key}/commands",
+        "/api/strategies/{strategy_key}/disable",
+        "/api/strategies/{strategy_key}/enable",
         "/api/commands/kill-switch",
         "/api/configs",
         "/api/strategies/{strategy_key}/position-acks",
         "/api/position-acks/{ack_id}/revoke",
-    }, f"POST 只允许命令提交、新建配置与仓位声明, 实际: {post_paths}"
+    }, f"POST 只允许命令提交、启停、新建配置与仓位声明, 实际: {post_paths}"
     assert put_paths == {"/api/configs/{strategy_key}"}, (
         f"PUT 只允许更新配置, 实际: {put_paths}"
     )

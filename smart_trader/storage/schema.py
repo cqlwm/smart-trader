@@ -109,6 +109,13 @@ strategy_configs = Table(
     Column("updated_by", Text, nullable=False, server_default=text("'web'")),
     Column("created_at", Text, nullable=False),
     Column("updated_at", Text, nullable=False),
+    # 生命周期: 新列必须追加在末尾, 与编号迁移脚本的 ALTER TABLE 顺序一致
+    Column("desired_running", Integer, nullable=False, server_default=text("1")),
+    Column("lifecycle", Text, nullable=False, server_default=text("'active'")),
+    Column("disable_policy", Text),
+    Column("disable_requested_at", Text),
+    Column("disable_completed_at", Text),
+    Column("disable_error", Text),
 )
 
 # ---- position_acks: 人工外部仓位声明（对账告警抑制, 不参与交易） ----

@@ -10,6 +10,7 @@ import logging
 import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -17,15 +18,18 @@ from smart_trader.data_event_loop import DataEventLoop, Task
 from smart_trader.exchange.ports import Exchange, MarketDataPort
 from smart_trader.model import (
     DataSource,
+    DisablePositionPolicy,
     Kline,
     OrderRequest,
     OrderResult,
     Position,
+    StrategyLifecycle,
     Symbol,
     SymbolInfo,
 )
 from smart_trader.runtime import RuntimeRegistry, RuntimeSnapshot
 from smart_trader.storage.command_store import CommandStore
+from smart_trader.storage.config_store import ConfigStore
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import StrategyConfigRecord
 from smart_trader.strategy.config_payload import StrategyConfigPayload
@@ -119,10 +123,15 @@ class RuntimeFactory:
     """构造 StrategyRuntime 并在用例结束时统一停止, 避免遗留线程"""
 
     def __init__(
-        self, journal: OrderJournal, commands: CommandStore, registry: RuntimeRegistry
+        self,
+        journal: OrderJournal,
+        commands: CommandStore,
+        registry: RuntimeRegistry,
+        configs: ConfigStore,
     ) -> None:
         self._journal = journal
         self._commands = commands
+        self.configs = configs
         self.registry = registry
         self.created: list[StrategyRuntime] = []
 
@@ -159,6 +168,7 @@ class RuntimeFactory:
             command_store=self._commands,
             registry=self.registry,
             configs_provider=configs_provider,
+            lifecycle_store=self.configs,
             # 测试手动调用 sync_configs_once, 监督线程不参与竞态
             config_poll_interval=3600.0,
             ws_loop_factory=ws_loop_factory,
@@ -177,10 +187,12 @@ def runtime_factory(tmp_path: Path) -> Iterator[RuntimeFactory]:
     db_path = tmp_path / "smart_trader.db"
     journal = OrderJournal(str(db_path))
     commands = CommandStore(str(db_path))
+    configs = ConfigStore(str(db_path))
     registry = RuntimeRegistry(tmp_path / "runtime.json")
-    factory = RuntimeFactory(journal, commands, registry)
+    factory = RuntimeFactory(journal, commands, registry, configs)
     yield factory
     factory.cleanup()
+    configs.close()
     commands.close()
     journal.close()
 
@@ -194,6 +206,9 @@ def _record(
     timeframe: str = "1m",
     version: int = 1,
     grid_spacing_rate: float = 0.01,
+    desired_running: bool = True,
+    lifecycle: StrategyLifecycle = StrategyLifecycle.ACTIVE,
+    disable_policy: DisablePositionPolicy | None = None,
 ) -> StrategyConfigRecord:
     payload = StrategyConfigPayload(
         symbol=symbol,
@@ -207,6 +222,9 @@ def _record(
         payload=payload.to_json(),
         enabled=enabled,
         version=version,
+        desired_running=desired_running,
+        lifecycle=lifecycle,
+        disable_policy=disable_policy,
     )
 
 
@@ -558,9 +576,10 @@ def test_hot_enable_previously_disabled_config_starts_it(
     ]
 
 
-def test_hot_disable_requires_restart_and_keeps_strategy_running(
-    runtime_factory: RuntimeFactory, caplog: pytest.LogCaptureFixture
+def test_hot_disable_pauses_strategy_without_unloading(
+    runtime_factory: RuntimeFactory,
 ) -> None:
+    """配置停用后运行中的策略立即暂停, 但任务不被热摘除"""
     state = [_record("disable_me", DataSource.TIMER)]
     timer_loops: list[RecordingTimerLoop] = []
     runtime = runtime_factory(
@@ -571,14 +590,98 @@ def test_hot_disable_requires_restart_and_keeps_strategy_running(
     )
     runtime.start()
 
-    state[0] = _record("disable_me", DataSource.TIMER, enabled=False, version=2)
-    with caplog.at_level(logging.WARNING):
-        runtime.sync_configs_once()
-
-    assert "停用" in caplog.text
-    assert len(timer_loops[0].tasks) == 1, (
-        "停用不热摘除任务; 需要重启进程, 避免孤立在途订单"
+    state[0] = _record(
+        "disable_me",
+        DataSource.TIMER,
+        enabled=False,
+        desired_running=False,
+        lifecycle=StrategyLifecycle.DISABLED,
+        version=2,
     )
+    runtime.sync_configs_once()
+
+    task = cast(StrategyTask, timer_loops[0].tasks[0])
+    assert isinstance(task.strategy, SignalGridStrategy)
+    assert task.strategy.is_running is False, "停用后不得继续产生新决策"
+    assert len(timer_loops[0].tasks) == 1, (
+        "停用不热摘除任务; 避免孤立在途订单"
+    )
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected"),
+    [
+        (DisablePositionPolicy.KEEP, StrategyLifecycle.GUARD),
+        (DisablePositionPolicy.LIMIT_EXIT, StrategyLifecycle.GUARD),
+        (DisablePositionPolicy.ABANDON, StrategyLifecycle.DISABLED),
+        (DisablePositionPolicy.CLOSE_ALL, StrategyLifecycle.DISABLED),
+    ],
+)
+def test_disable_policy_completes_lifecycle(
+    runtime_factory: RuntimeFactory,
+    policy: DisablePositionPolicy,
+    expected: StrategyLifecycle,
+) -> None:
+    """每停机处置策略终态: keep/limit_exit 守护, abandon/close_all 停用"""
+    key = "lifecycle_me"
+    state = [_record(key, DataSource.TIMER)]
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+
+    runtime_factory.configs.create(
+        strategy_key=key, payload=state[0].payload, enabled=True
+    )
+    runtime_factory.configs.request_disable(
+        key, policy=policy, expected_version=1
+    )
+    state[0] = _record(
+        key,
+        DataSource.TIMER,
+        enabled=False,
+        desired_running=False,
+        lifecycle=StrategyLifecycle.DISABLING,
+        disable_policy=policy,
+        version=2,
+    )
+
+    runtime.sync_configs_once()
+
+    stored = runtime_factory.configs.get(key)
+    assert stored is not None
+    assert stored.lifecycle is expected, (
+        f"{policy.value} 应完成到 {expected.value}, 实际 {stored.lifecycle}"
+    )
+    task = cast(StrategyTask, timer_loops[0].tasks[0])
+    assert isinstance(task.strategy, SignalGridStrategy)
+    assert task.strategy.is_running is False
+
+
+def test_desired_running_change_pauses_without_version_bump(
+    runtime_factory: RuntimeFactory,
+) -> None:
+    """暂停意图不递增版本, 运行时每轮仍必须同步到策略"""
+    state = [_record("pause_me", DataSource.TIMER)]
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+
+    state[0] = _record("pause_me", DataSource.TIMER, desired_running=False)
+    runtime.sync_configs_once()
+
+    task = cast(StrategyTask, timer_loops[0].tasks[0])
+    assert isinstance(task.strategy, SignalGridStrategy)
+    assert task.strategy.is_running is False
 
 
 def test_hot_add_invalid_payload_does_not_stop_runtime(

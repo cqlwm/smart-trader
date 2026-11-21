@@ -14,6 +14,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 
 from smart_trader.exceptions import ErrorCode, SmartTraderError
+from smart_trader.model import DisablePositionPolicy, StrategyLifecycle
 from smart_trader.storage import schema
 from smart_trader.storage.engine import create_engine_for_path
 from smart_trader.storage.records import StrategyConfigRecord
@@ -102,6 +103,12 @@ class ConfigStore:
             updated_by=updated_by or "web",
             created_at=now,
             updated_at=now,
+            desired_running=enabled,
+            lifecycle=(
+                StrategyLifecycle.ACTIVE
+                if enabled
+                else StrategyLifecycle.DISABLED
+            ),
         )
         try:
             with self._engine.begin() as conn:
@@ -119,11 +126,10 @@ class ConfigStore:
         strategy_key: str,
         *,
         payload: str,
-        enabled: bool,
         expected_version: int,
         updated_by: str = "web",
     ) -> StrategyConfigRecord:
-        """覆盖更新: 版本必须匹配, 成功后版本 +1"""
+        """覆盖参数: 版本必须匹配, 成功后版本 +1; 不改启停与生命周期"""
         key = strategy_key.strip()
         now = _now()
         with self._engine.begin() as conn:
@@ -135,7 +141,6 @@ class ConfigStore:
                 )
                 .values(
                     payload=payload,
-                    enabled=enabled,
                     updated_by=updated_by or "web",
                     version=expected_version + 1,
                     updated_at=now,
@@ -156,6 +161,147 @@ class ConfigStore:
         if updated is None:
             raise ConfigNotFoundError(key)
         return updated
+
+    def set_desired_running(
+        self, strategy_key: str, running: bool
+    ) -> StrategyConfigRecord:
+        """持久化暂停意图; 不属于参数版本, 不递增 version"""
+        key = strategy_key.strip()
+        now = _now()
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                update(schema.strategy_configs)
+                .where(schema.strategy_configs.c.strategy_key == key)
+                .values(desired_running=running, updated_at=now)
+            )
+            if result.rowcount != 1:
+                raise ConfigNotFoundError(key)
+        updated = self.get(key)
+        if updated is None:
+            raise ConfigNotFoundError(key)
+        return updated
+
+    def request_disable(
+        self,
+        strategy_key: str,
+        *,
+        policy: DisablePositionPolicy,
+        expected_version: int,
+        updated_by: str = "web",
+    ) -> StrategyConfigRecord:
+        """请求停用: 立即置暂停意图与 disabling, 由运行时执行持仓处置"""
+        key = strategy_key.strip()
+        now = _now()
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                update(schema.strategy_configs)
+                .where(
+                    schema.strategy_configs.c.strategy_key == key,
+                    schema.strategy_configs.c.version == expected_version,
+                )
+                .values(
+                    enabled=False,
+                    desired_running=False,
+                    lifecycle=StrategyLifecycle.DISABLING.value,
+                    disable_policy=policy.value,
+                    disable_requested_at=now,
+                    disable_completed_at=None,
+                    disable_error=None,
+                    version=expected_version + 1,
+                    updated_by=updated_by or "web",
+                    updated_at=now,
+                )
+            )
+            if result.rowcount != 1:
+                self._raise_version_error(conn, key, expected_version)
+        updated = self.get(key)
+        if updated is None:
+            raise ConfigNotFoundError(key)
+        return updated
+
+    def enable(
+        self,
+        strategy_key: str,
+        *,
+        expected_version: int,
+        updated_by: str = "web",
+    ) -> StrategyConfigRecord:
+        """启用: 恢复正常生命周期并清除停用流程状态"""
+        key = strategy_key.strip()
+        now = _now()
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                update(schema.strategy_configs)
+                .where(
+                    schema.strategy_configs.c.strategy_key == key,
+                    schema.strategy_configs.c.version == expected_version,
+                )
+                .values(
+                    enabled=True,
+                    desired_running=True,
+                    lifecycle=StrategyLifecycle.ACTIVE.value,
+                    disable_policy=None,
+                    disable_requested_at=None,
+                    disable_completed_at=None,
+                    disable_error=None,
+                    version=expected_version + 1,
+                    updated_by=updated_by or "web",
+                    updated_at=now,
+                )
+            )
+            if result.rowcount != 1:
+                self._raise_version_error(conn, key, expected_version)
+        updated = self.get(key)
+        if updated is None:
+            raise ConfigNotFoundError(key)
+        return updated
+
+    def complete_disable(
+        self,
+        strategy_key: str,
+        lifecycle: StrategyLifecycle,
+        *,
+        error: str | None = None,
+    ) -> StrategyConfigRecord | None:
+        """运行时完成停用处置; 仅当仍处于 disabling 时生效（防止覆盖并发启用）"""
+        if lifecycle not in (StrategyLifecycle.GUARD, StrategyLifecycle.DISABLED):
+            raise ValueError(f"非法停用完成态: {lifecycle}")
+        key = strategy_key.strip()
+        now = _now()
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                update(schema.strategy_configs)
+                .where(
+                    schema.strategy_configs.c.strategy_key == key,
+                    schema.strategy_configs.c.lifecycle
+                    == StrategyLifecycle.DISABLING.value,
+                )
+                .values(
+                    lifecycle=lifecycle.value,
+                    disable_completed_at=now,
+                    disable_error=error,
+                    version=schema.strategy_configs.c.version + 1,
+                    updated_at=now,
+                )
+            )
+            if result.rowcount != 1:
+                return None
+        return self.get(key)
+
+    @staticmethod
+    def _raise_version_error(
+        conn: Connection, strategy_key: str, expected_version: int
+    ) -> None:
+        current = conn.execute(
+            select(schema.strategy_configs.c.version).where(
+                schema.strategy_configs.c.strategy_key == strategy_key
+            )
+        ).scalar_one_or_none()
+        if current is None:
+            raise ConfigNotFoundError(strategy_key)
+        raise ConfigVersionConflictError(
+            strategy_key, expected_version, int(current)
+        )
 
     # ---- 读 ----
 

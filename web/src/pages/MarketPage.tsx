@@ -83,7 +83,7 @@ export function MarketPage() {
   return (
     <>
       <PageHeader
-        kicker="04 / MARKET"
+        kicker="03 / MARKET"
         title="行情"
         description="Binance 公共 K 线与 AlphaTrend 指标；叠加当前仓位的入场/止损/止盈价格线与订单成交标记。"
         meta={

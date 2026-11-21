@@ -254,7 +254,13 @@ CREATE TABLE IF NOT EXISTS strategy_configs (
     enabled INTEGER NOT NULL DEFAULT 1,
     updated_by TEXT NOT NULL DEFAULT 'web',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    desired_running INTEGER NOT NULL DEFAULT 1,
+    lifecycle TEXT NOT NULL DEFAULT 'active',
+    disable_policy TEXT,
+    disable_requested_at TEXT,
+    disable_completed_at TEXT,
+    disable_error TEXT
 );
 
 CREATE TABLE IF NOT EXISTS position_acks (

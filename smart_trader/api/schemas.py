@@ -10,12 +10,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from smart_trader.model import (
     CommandAction,
     CommandStatus,
+    DisablePositionPolicy,
     OrderSide,
     OrderStatus,
     OrderType,
     PositionAckStatus,
     PositionCloseReason,
     PositionSide,
+    StrategyLifecycle,
 )
 from smart_trader.strategy.config_payload import StrategyConfigPayload
 
@@ -254,6 +256,12 @@ class StrategyConfigView(ApiModel):
     payload: StrategyConfigPayload
     version: int
     enabled: bool
+    desired_running: bool
+    lifecycle: StrategyLifecycle
+    disable_policy: DisablePositionPolicy | None = None
+    disable_requested_at: str | None = None
+    disable_completed_at: str | None = None
+    disable_error: str | None = None
     updated_by: str
     created_at: str
     updated_at: str
@@ -266,6 +274,14 @@ class StrategyConfigCreateRequest(ApiModel):
 
 
 class StrategyConfigUpdateRequest(ApiModel):
-    enabled: bool
     expected_version: int = Field(ge=1)
     payload: StrategyConfigPayload
+
+
+class StrategyDisableRequest(ApiModel):
+    position_policy: DisablePositionPolicy
+    expected_version: int = Field(ge=1)
+
+
+class StrategyEnableRequest(ApiModel):
+    expected_version: int = Field(ge=1)

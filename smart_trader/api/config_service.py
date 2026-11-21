@@ -1,13 +1,14 @@
-"""策略配置 API 服务: 视图转换 / 创建 / 更新 / 不可变字段与活跃仓位护栏
+"""策略配置 API 服务: 视图转换 / 创建 / 更新 / 启停 / 不可变字段护栏
 
-护栏是 API 层的策略而不是仓储职责: 身份字段创建后不可变是配置语义;
-"有活跃仓位时不许停用"需要账本视角, 因此在这里用只读 reader 判定。
+护栏是 API 层的策略而不是仓储职责: 身份字段创建后不可变是配置语义。
+停用不再要求"先平仓", 而是进入生命周期流程, 由策略运行时按所选
+持仓处置策略执行（见 .memory/02-domain-model 十二节）。
 """
 
 from smart_trader.api.schemas import StrategyConfigView
 from smart_trader.exceptions import ErrorCode, SmartTraderError
+from smart_trader.model import DisablePositionPolicy
 from smart_trader.storage.config_store import ConfigNotFoundError, ConfigStore
-from smart_trader.storage.reader import OrderJournalReader
 from smart_trader.storage.records import StrategyConfigRecord
 from smart_trader.strategy.config_payload import StrategyConfigPayload
 
@@ -34,19 +35,6 @@ class ConfigFieldImmutableError(SmartTraderError):
         self.changes = changes
 
 
-class ConfigInUseError(SmartTraderError):
-    """活跃仓位存在时试图停用配置"""
-
-    def __init__(self, strategy_key: str, changes: list[str]):
-        super().__init__(
-            ErrorCode.CONFIG_IN_USE,
-            f"策略 {strategy_key} 存在活跃仓位, 不能修改: {', '.join(changes)};"
-            " 请先平仓再停用",
-        )
-        self.strategy_key = strategy_key
-        self.changes = changes
-
-
 def config_view(record: StrategyConfigRecord) -> StrategyConfigView:
     """记录 → 视图; payload JSON 在 API 边界解析校验"""
     return StrategyConfigView(
@@ -54,6 +42,12 @@ def config_view(record: StrategyConfigRecord) -> StrategyConfigView:
         payload=StrategyConfigPayload.from_json(record.payload),
         version=record.version,
         enabled=record.enabled,
+        desired_running=record.desired_running,
+        lifecycle=record.lifecycle,
+        disable_policy=record.disable_policy,
+        disable_requested_at=record.disable_requested_at,
+        disable_completed_at=record.disable_completed_at,
+        disable_error=record.disable_error,
         updated_by=record.updated_by,
         created_at=record.created_at,
         updated_at=record.updated_at,
@@ -90,14 +84,12 @@ def create_config(
 
 def update_config(
     store: ConfigStore,
-    reader: OrderJournalReader,
     strategy_key: str,
     *,
-    enabled: bool,
     expected_version: int,
     payload: StrategyConfigPayload,
 ) -> StrategyConfigView:
-    """覆盖更新; 身份字段始终不可变, 有活跃仓位时还禁止停用（409）"""
+    """覆盖更新参数; 身份字段不可变, 启停不改 enabled（走 enable/disable）"""
     existing = store.get(strategy_key)
     if existing is None:
         raise ConfigNotFoundError(strategy_key)
@@ -111,14 +103,39 @@ def update_config(
     if immutable_changes:
         raise ConfigFieldImmutableError(strategy_key, immutable_changes)
 
-    active_positions = reader.load_positions(strategy_key=strategy_key)
-    if active_positions and existing.enabled and not enabled:
-        raise ConfigInUseError(strategy_key, ["enabled"])
-
     record = store.update(
         strategy_key,
         payload=payload.to_json(),
-        enabled=enabled,
+        expected_version=expected_version,
+    )
+    return config_view(record)
+
+
+def disable_config(
+    store: ConfigStore,
+    strategy_key: str,
+    *,
+    policy: DisablePositionPolicy,
+    expected_version: int,
+) -> StrategyConfigView:
+    """请求停用: 立即暂停并进入流程, 运行时按 policy 处置持仓"""
+    record = store.request_disable(
+        strategy_key,
+        policy=policy,
+        expected_version=expected_version,
+    )
+    return config_view(record)
+
+
+def enable_config(
+    store: ConfigStore,
+    strategy_key: str,
+    *,
+    expected_version: int,
+) -> StrategyConfigView:
+    """重新启用: 恢复 active 生命周期与运行意图"""
+    record = store.enable(
+        strategy_key,
         expected_version=expected_version,
     )
     return config_view(record)

@@ -16,32 +16,18 @@ const PAGES = [
     desc: "账本聚合与告警",
   },
   {
-    path: "/positions",
+    path: "/strategies",
     index: "02",
-    label: "持仓",
-    en: "POSITIONS",
-    desc: "逻辑仓位与订单派生",
-  },
-  {
-    path: "/orders",
-    index: "03",
-    label: "订单",
-    en: "ORDERS",
-    desc: "委托流水与 WAL 状态",
+    label: "策略",
+    en: "STRATEGIES",
+    desc: "实例配置、仓位与运行状态",
   },
   {
     path: "/market",
-    index: "04",
+    index: "03",
     label: "行情",
     en: "MARKET",
     desc: "K 线 / AlphaTrend / 仓位标记",
-  },
-  {
-    path: "/configs",
-    index: "05",
-    label: "配置",
-    en: "CONFIG",
-    desc: "策略参数与实例",
   },
 ] as const;
 

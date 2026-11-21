@@ -12,6 +12,7 @@ from smart_trader.model import (
     OrderRequest,
     OrderResult,
     Position,
+    StrategyLifecycle,
     StrategySignalType,
     Symbol,
     SymbolInfo,
@@ -62,6 +63,8 @@ def _record(
     enabled: bool = True,
     max_order: int = 5,
     signal_type: StrategySignalType = StrategySignalType.ALPHA_TREND,
+    desired_running: bool = True,
+    lifecycle: StrategyLifecycle = StrategyLifecycle.ACTIVE,
 ) -> StrategyConfigRecord:
     payload = StrategyConfigPayload(
         symbol="doge/usdt",
@@ -74,6 +77,8 @@ def _record(
         strategy_key=strategy_key,
         payload=payload.to_json(),
         enabled=enabled,
+        desired_running=desired_running,
+        lifecycle=lifecycle,
     )
 
 
@@ -132,6 +137,81 @@ def test_ws_source_loads_ws_records(journal: OrderJournal, exchange: Exchange):
         "ws_enabled"
     ]
 
+
+def test_guard_config_is_loaded_paused(journal: OrderJournal, exchange: Exchange):
+    records = [
+        _record(
+            "guard_me",
+            DataSource.TIMER,
+            enabled=False,
+            lifecycle=StrategyLifecycle.GUARD,
+            desired_running=False,
+        )
+    ]
+
+    tasks = build_strategy_tasks(
+        records, data_source=DataSource.TIMER, exchange=exchange, journal=journal
+    )
+
+    assert len(tasks) == 1, "守护态配置重启后必须加载, 否则仓位无人跟踪"
+    strategy = _strategy_of(tasks[0])
+    assert strategy.is_running is False, "守护态必须以暂停启动"
+
+
+def test_disabling_config_is_loaded_paused(journal: OrderJournal, exchange: Exchange):
+    records = [
+        _record(
+            "disabling_me",
+            DataSource.TIMER,
+            enabled=False,
+            lifecycle=StrategyLifecycle.DISABLING,
+            desired_running=False,
+        )
+    ]
+
+    tasks = build_strategy_tasks(
+        records, data_source=DataSource.TIMER, exchange=exchange, journal=journal
+    )
+
+    assert len(tasks) == 1
+    assert _strategy_of(tasks[0]).is_running is False
+
+
+def test_disabled_config_is_not_loaded(journal: OrderJournal, exchange: Exchange):
+    records = [
+        _record(
+            "disabled_me",
+            DataSource.TIMER,
+            enabled=False,
+            lifecycle=StrategyLifecycle.DISABLED,
+            desired_running=False,
+        )
+    ]
+
+    tasks = build_strategy_tasks(
+        records, data_source=DataSource.TIMER, exchange=exchange, journal=journal
+    )
+
+    assert tasks == []
+
+
+def test_paused_active_config_starts_paused(journal: OrderJournal, exchange: Exchange):
+    records = [
+        _record(
+            "paused_me",
+            DataSource.TIMER,
+            desired_running=False,
+        )
+    ]
+
+    tasks = build_strategy_tasks(
+        records, data_source=DataSource.TIMER, exchange=exchange, journal=journal
+    )
+
+    assert len(tasks) == 1
+    assert _strategy_of(tasks[0]).is_running is False, (
+        "暂停意图必须跨重启保留"
+    )
 
 def test_task_order_follows_input_order(journal: OrderJournal, exchange: Exchange):
     records = [
