@@ -1649,6 +1649,31 @@ a:focus-visible {
   align-items: end;
 }
 
+/* 行为行: 独占整行, 依赖参数缩进挂在下方, 避免勾选后挤压网格 */
+.config-behavior {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.config-behavior > .config-field {
+  max-width: 260px;
+}
+
+.config-behavior-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-left: 12px;
+  padding-left: 16px;
+  border-left: 1px solid var(--line-strong);
+}
+
+.config-behavior-body .config-field {
+  max-width: 220px;
+}
+
 .config-field {
   display: flex;
   flex-direction: column;

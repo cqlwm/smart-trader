@@ -180,7 +180,7 @@ SMART_TRADER_API_PORT=8001 uv run uvicorn run:create_application --factory --rel
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `symbol` / `timeframe` | `DOGE/USDT` / `1m` | 交易对与 K 线周期 |
-| `data_source` | `timer` | 行情驱动方式：`ws`（WebSocket 推送）或 `timer`（REST 定时拉取） |
+| `data_source` | `ws` | 行情驱动方式：`ws`（WebSocket 推送）或 `timer`（REST 定时拉取） |
 | `signal_type` / `signal_kind` | `alpha_trend` / `directional` | 信号实现：`alpha_trend`（原始方向）/ `alpha_trend_inverse`（反向解读）/ `none`；`directional` 有方向倾向，`trigger` 任何非中性信号都触发 |
 | `atr_multiple` / `period` | `1.0` / `8` | AlphaTrend 参数 |
 | `position_side` / `master_side` | `long` / `buy` | 持仓方向与网格主攻方向 |

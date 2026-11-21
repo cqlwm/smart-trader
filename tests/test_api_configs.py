@@ -128,7 +128,7 @@ def test_list_configs_returns_views(client: TestClient):
     assert items[0]["strategy_key"] == KEY
     assert items[0]["version"] == 1
     assert items[0]["enabled"] is True
-    assert items[0]["payload"]["data_source"] == "timer"
+    assert items[0]["payload"]["data_source"] == "ws"
 
 
 def test_defaults_return_form_baseline(client: TestClient):
@@ -138,7 +138,7 @@ def test_defaults_return_form_baseline(client: TestClient):
     body = cast(dict[str, Any], response.json())
     assert body["symbol"] == "DOGE/USDT"
     assert body["timeframe"] == "1m"
-    assert body["data_source"] == "timer"
+    assert body["data_source"] == "ws"
     assert body["signal_type"] == "alpha_trend"
     assert body["per_order_amount"] == pytest.approx(0.02)
     assert body["per_order_unit"] == "base"
@@ -314,7 +314,7 @@ def test_disable_with_active_positions_returns_409(
     [
         ("symbol", "ZEC/USDT"),
         ("timeframe", "5m"),
-        ("data_source", "ws"),
+        ("data_source", "timer"),
         ("position_side", "short"),
         ("master_side", "sell"),
     ],
@@ -337,7 +337,7 @@ def test_identity_change_with_active_positions_returns_409(
     [
         ("symbol", "ZEC/USDT"),
         ("timeframe", "5m"),
-        ("data_source", "ws"),
+        ("data_source", "timer"),
         ("position_side", "short"),
         ("master_side", "sell"),
     ],

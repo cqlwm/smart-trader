@@ -49,12 +49,12 @@ class _OtherSignal(Signal):
         return MarketSignal()
 
 
-def test_defaults_describe_a_single_timer_alpha_strategy():
+def test_defaults_describe_a_single_ws_alpha_strategy():
     payload = StrategyConfigPayload()
 
     assert payload.symbol == "DOGE/USDT"
     assert payload.timeframe == "1m"
-    assert payload.data_source is DataSource.TIMER
+    assert payload.data_source is DataSource.WS
     assert payload.signal_type is StrategySignalType.ALPHA_TREND
     assert payload.position_side is PositionSide.LONG
     assert payload.master_side is OrderSide.BUY

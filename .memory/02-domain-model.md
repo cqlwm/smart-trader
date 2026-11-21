@@ -523,7 +523,7 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 `StrategyConfigPayload`（`strategy/config_payload.py`）是**纯参数模型**，不含 `strategy_key`：
 
 - 身份 / 数据源：`symbol`（ccxt 形式，规范化为 `BASE/QUOTE`）、`timeframe`、
-  `data_source`（`ws` / `timer`）；
+  `data_source`（`ws` / `timer`，默认 `ws`）；
 - 信号：`signal_type`（`alpha_trend` / `alpha_trend_inverse` / `none`）、`atr_multiple`、`period`、`signal_kind`；
 - 方向：`position_side`、`master_side`；
 - 网格：`per_order_amount`、`per_order_unit`、`entry_mode`（`grid` / `trend`）、

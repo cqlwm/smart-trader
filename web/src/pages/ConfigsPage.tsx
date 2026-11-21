@@ -72,8 +72,8 @@ interface EditorState {
 }
 
 const DATA_SOURCE_OPTIONS: { value: DataSource; label: string }[] = [
+  { value: "ws", label: "ws · WebSocket 推送" },
   { value: "timer", label: "timer · REST 定时" },
-  { value: "ws", label: "ws · WebSocket" },
 ];
 
 const SIGNAL_TYPE_OPTIONS: { value: StrategySignalType; label: string }[] = [
@@ -100,6 +100,17 @@ const ORDER_SIZE_UNIT_OPTIONS: { value: OrderSizeUnit; label: string }[] = [
 const ENTRY_MODE_OPTIONS: { value: EntryMode; label: string }[] = [
   { value: "grid", label: "grid · 网格间距（逆势补仓）" },
   { value: "trend", label: "trend · 顺势间距（顺势阶梯）" },
+];
+
+type SignalStopLossMode = "off" | "two_layers" | "single_layer";
+
+const SIGNAL_STOP_LOSS_MODE_OPTIONS: {
+  value: SignalStopLossMode;
+  label: string;
+}[] = [
+  { value: "off", label: "关闭 · 不按信号止损" },
+  { value: "two_layers", label: "两层浮亏触发" },
+  { value: "single_layer", label: "一层浮亏触发（更敏感）" },
 ];
 
 const MASTER_SIDE_OPTIONS: { value: OrderSide; label: string }[] = [
@@ -188,6 +199,20 @@ function parseInteger(label: string, raw: string): number {
   return value;
 }
 
+/** 开关关闭时隐藏的数值字段: 允许为空/非法, 落库用 0 占位（后端不使用） */
+function parseInactiveNumber(raw: string): number {
+  const trimmed = raw.trim();
+  const value = Number(trimmed);
+  return trimmed !== "" && Number.isFinite(value) ? value : 0;
+}
+
+function signalStopLossModeOf(draft: Draft): SignalStopLossMode {
+  if (draft.enable_single_layer_signal_stop_loss) {
+    return "single_layer";
+  }
+  return draft.enable_signal_stop_loss ? "two_layers" : "off";
+}
+
 function payloadFromDraft(draft: Draft): StrategyConfigPayload {
   const isTrendMode = draft.entry_mode === "trend";
   const gridSpacingRate = isTrendMode
@@ -196,6 +221,7 @@ function payloadFromDraft(draft: Draft): StrategyConfigPayload {
   const trendSpacingRate = isTrendMode
     ? parseNumber("顺势间距", draft.trend_spacing_rate)
     : null;
+  const stopLossMode = signalStopLossModeOf(draft);
   return {
     symbol: draft.symbol.trim(),
     timeframe: draft.timeframe.trim(),
@@ -215,26 +241,30 @@ function payloadFromDraft(draft: Draft): StrategyConfigPayload {
     highest_price: parseNumber("价格上限", draft.highest_price),
     lowest_price: parseNumber("价格下限", draft.lowest_price),
     enable_signal_take_profit: draft.enable_signal_take_profit,
-    enable_signal_stop_loss: draft.enable_signal_stop_loss,
-    enable_single_layer_signal_stop_loss:
-      draft.enable_single_layer_signal_stop_loss,
+    enable_signal_stop_loss: stopLossMode !== "off",
+    enable_single_layer_signal_stop_loss: stopLossMode === "single_layer",
     fixed_rate_take_profit: draft.fixed_rate_take_profit,
     take_profit_use_limit_order: draft.take_profit_use_limit_order,
-    fixed_take_profit_rate: parseNumber(
-      "固定止盈率",
-      draft.fixed_take_profit_rate,
-    ),
+    fixed_take_profit_rate: draft.fixed_rate_take_profit
+      ? parseNumber("固定止盈率", draft.fixed_take_profit_rate)
+      : parseInactiveNumber(draft.fixed_take_profit_rate),
     place_order_behavior: draft.place_order_behavior,
     enable_max_order_stop_loss: draft.enable_max_order_stop_loss,
     paused_after_stop_loss: draft.paused_after_stop_loss,
     enable_order_stop_loss: draft.enable_order_stop_loss,
-    order_stop_loss_rate: parseNumber("单笔止损率", draft.order_stop_loss_rate),
+    order_stop_loss_rate: draft.enable_order_stop_loss
+      ? parseNumber("单笔止损率", draft.order_stop_loss_rate)
+      : parseInactiveNumber(draft.order_stop_loss_rate),
     enable_trailing_stop: draft.enable_trailing_stop,
-    trailing_stop_rate: parseNumber("跟踪止损率", draft.trailing_stop_rate),
-    trailing_stop_activation_profit_rate: parseNumber(
-      "跟踪止损激活盈利率",
-      draft.trailing_stop_activation_profit_rate,
-    ),
+    trailing_stop_rate: draft.enable_trailing_stop
+      ? parseNumber("跟踪止损率", draft.trailing_stop_rate)
+      : parseInactiveNumber(draft.trailing_stop_rate),
+    trailing_stop_activation_profit_rate: draft.enable_trailing_stop
+      ? parseNumber(
+          "跟踪止损激活盈利率",
+          draft.trailing_stop_activation_profit_rate,
+        )
+      : parseInactiveNumber(draft.trailing_stop_activation_profit_rate),
   };
 }
 
@@ -582,6 +612,7 @@ function ConfigEditor({
   onSave: () => void;
 }) {
   const draft = editor.draft;
+  const signalStopLossMode = signalStopLossModeOf(draft);
   return (
     <section className="panel config-editor reveal">
       <div className="panel-head">
@@ -635,14 +666,9 @@ function ConfigEditor({
               onChange={(value) => onPatch("data_source", value)}
             />
           </ConfigField>
-          <Toggle
-            label="启用 · 启动时加载"
-            checked={draft.enabled}
-            onChange={(checked) => onPatch("enabled", checked)}
-          />
         </ConfigSection>
 
-        <ConfigSection title="方向与仓位">
+        <ConfigSection title="方向">
           <ConfigField label="持仓方向 · 创建后不可变">
             <SelectInput
               value={draft.position_side}
@@ -657,38 +683,6 @@ function ConfigEditor({
               options={MASTER_SIDE_OPTIONS}
               disabled={editor.mode === "edit"}
               onChange={(value) => onPatch("master_side", value)}
-            />
-          </ConfigField>
-          <ConfigField label="信号解读">
-            <SelectInput
-              value={draft.signal_kind}
-              options={SIGNAL_KIND_OPTIONS}
-              onChange={(value) => onPatch("signal_kind", value)}
-            />
-          </ConfigField>
-          <ConfigField label="单层规模">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={draft.per_order_amount}
-              onChange={(event) =>
-                onPatch("per_order_amount", event.target.value)
-              }
-            />
-          </ConfigField>
-          <ConfigField label="规模单位">
-            <SelectInput
-              value={draft.per_order_unit}
-              options={ORDER_SIZE_UNIT_OPTIONS}
-              onChange={(value) => onPatch("per_order_unit", value)}
-            />
-          </ConfigField>
-          <ConfigField label="最大层数">
-            <input
-              type="text"
-              inputMode="numeric"
-              value={draft.max_order}
-              onChange={(event) => onPatch("max_order", event.target.value)}
             />
           </ConfigField>
         </ConfigSection>
@@ -730,6 +724,31 @@ function ConfigEditor({
               />
             </ConfigField>
           )}
+          <ConfigField label="单层规模">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={draft.per_order_amount}
+              onChange={(event) =>
+                onPatch("per_order_amount", event.target.value)
+              }
+            />
+          </ConfigField>
+          <ConfigField label="规模单位">
+            <SelectInput
+              value={draft.per_order_unit}
+              options={ORDER_SIZE_UNIT_OPTIONS}
+              onChange={(value) => onPatch("per_order_unit", value)}
+            />
+          </ConfigField>
+          <ConfigField label="最大层数">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={draft.max_order}
+              onChange={(event) => onPatch("max_order", event.target.value)}
+            />
+          </ConfigField>
           <ConfigField label="价格上限">
             <input
               type="text"
@@ -756,117 +775,184 @@ function ConfigEditor({
               onChange={(value) => onPatch("signal_type", value)}
             />
           </ConfigField>
-          <ConfigField label="ATR 倍数">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={draft.atr_multiple}
-              onChange={(event) => onPatch("atr_multiple", event.target.value)}
+          <ConfigField label="信号解读">
+            <SelectInput
+              value={draft.signal_kind}
+              options={SIGNAL_KIND_OPTIONS}
+              onChange={(value) => onPatch("signal_kind", value)}
             />
           </ConfigField>
-          <ConfigField label="指标周期">
-            <input
-              type="text"
-              inputMode="numeric"
-              value={draft.period}
-              onChange={(event) => onPatch("period", event.target.value)}
-            />
-          </ConfigField>
-          <Toggle
-            label="信号止盈"
-            checked={draft.enable_signal_take_profit}
-            onChange={(checked) => onPatch("enable_signal_take_profit", checked)}
-          />
-          <Toggle
-            label="信号止损"
-            checked={draft.enable_signal_stop_loss}
-            onChange={(checked) => onPatch("enable_signal_stop_loss", checked)}
-          />
-          <Toggle
-            label="单层信号止损（一层浮亏即离场）"
-            checked={draft.enable_single_layer_signal_stop_loss}
-            onChange={(checked) =>
-              onPatch("enable_single_layer_signal_stop_loss", checked)
-            }
-          />
+          {draft.signal_type !== "none" ? (
+            <>
+              <ConfigField label="ATR 倍数">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={draft.atr_multiple}
+                  onChange={(event) =>
+                    onPatch("atr_multiple", event.target.value)
+                  }
+                />
+              </ConfigField>
+              <ConfigField label="指标周期">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={draft.period}
+                  onChange={(event) => onPatch("period", event.target.value)}
+                />
+              </ConfigField>
+            </>
+          ) : null}
         </ConfigSection>
 
-        <ConfigSection title="止盈止损">
-          <Toggle
-            label="固定比例止盈"
-            checked={draft.fixed_rate_take_profit}
-            onChange={(checked) => onPatch("fixed_rate_take_profit", checked)}
-          />
-          <ConfigField label="固定止盈率">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={draft.fixed_take_profit_rate}
-              onChange={(event) =>
-                onPatch("fixed_take_profit_rate", event.target.value)
-              }
-            />
-          </ConfigField>
-          <Toggle
-            label="止盈用限价单"
-            checked={draft.take_profit_use_limit_order}
-            onChange={(checked) =>
-              onPatch("take_profit_use_limit_order", checked)
+        <ConfigSection title="止盈行为">
+          <ConfigBehavior
+            control={
+              <Toggle
+                label="信号止盈"
+                checked={draft.enable_signal_take_profit}
+                onChange={(checked) =>
+                  onPatch("enable_signal_take_profit", checked)
+                }
+              />
             }
           />
-          <Toggle
-            label="单笔止损"
-            checked={draft.enable_order_stop_loss}
-            onChange={(checked) => onPatch("enable_order_stop_loss", checked)}
+          <ConfigBehavior
+            control={
+              <Toggle
+                label="固定比例止盈"
+                checked={draft.fixed_rate_take_profit}
+                onChange={(checked) =>
+                  onPatch("fixed_rate_take_profit", checked)
+                }
+              />
+            }
+          >
+            {draft.fixed_rate_take_profit ? (
+              <>
+                <ConfigField label="固定止盈率">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={draft.fixed_take_profit_rate}
+                    onChange={(event) =>
+                      onPatch("fixed_take_profit_rate", event.target.value)
+                    }
+                  />
+                </ConfigField>
+                <Toggle
+                  label="止盈用限价单"
+                  checked={draft.take_profit_use_limit_order}
+                  onChange={(checked) =>
+                    onPatch("take_profit_use_limit_order", checked)
+                  }
+                />
+              </>
+            ) : null}
+          </ConfigBehavior>
+        </ConfigSection>
+
+        <ConfigSection title="止损行为">
+          <ConfigBehavior
+            control={
+              <ConfigField label="信号止损">
+                <SelectInput
+                  value={signalStopLossMode}
+                  options={SIGNAL_STOP_LOSS_MODE_OPTIONS}
+                  onChange={(value) => {
+                    onPatch("enable_signal_stop_loss", value !== "off");
+                    onPatch(
+                      "enable_single_layer_signal_stop_loss",
+                      value === "single_layer",
+                    );
+                  }}
+                />
+              </ConfigField>
+            }
           />
-          <ConfigField label="单笔止损率">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={draft.order_stop_loss_rate}
-              onChange={(event) =>
-                onPatch("order_stop_loss_rate", event.target.value)
-              }
-            />
-          </ConfigField>
-          <Toggle
-            label="达到上限全止损"
-            checked={draft.enable_max_order_stop_loss}
-            onChange={(checked) => onPatch("enable_max_order_stop_loss", checked)}
-          />
-          <Toggle
-            label="止损后暂停"
-            checked={draft.paused_after_stop_loss}
-            onChange={(checked) => onPatch("paused_after_stop_loss", checked)}
-          />
-          <Toggle
-            label="跟踪止损"
-            checked={draft.enable_trailing_stop}
-            onChange={(checked) => onPatch("enable_trailing_stop", checked)}
-          />
-          <ConfigField label="跟踪止损率">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={draft.trailing_stop_rate}
-              onChange={(event) =>
-                onPatch("trailing_stop_rate", event.target.value)
-              }
-            />
-          </ConfigField>
-          <ConfigField label="跟踪激活盈利率">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={draft.trailing_stop_activation_profit_rate}
-              onChange={(event) =>
-                onPatch(
-                  "trailing_stop_activation_profit_rate",
-                  event.target.value,
-                )
-              }
-            />
-          </ConfigField>
+          <ConfigBehavior
+            control={
+              <Toggle
+                label="单笔止损"
+                checked={draft.enable_order_stop_loss}
+                onChange={(checked) =>
+                  onPatch("enable_order_stop_loss", checked)
+                }
+              />
+            }
+          >
+            {draft.enable_order_stop_loss ? (
+              <ConfigField label="单笔止损率">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={draft.order_stop_loss_rate}
+                  onChange={(event) =>
+                    onPatch("order_stop_loss_rate", event.target.value)
+                  }
+                />
+              </ConfigField>
+            ) : null}
+          </ConfigBehavior>
+          <ConfigBehavior
+            control={
+              <Toggle
+                label="达到最大层数全平"
+                checked={draft.enable_max_order_stop_loss}
+                onChange={(checked) =>
+                  onPatch("enable_max_order_stop_loss", checked)
+                }
+              />
+            }
+          >
+            {draft.enable_max_order_stop_loss ? (
+              <Toggle
+                label="全平后暂停策略"
+                checked={draft.paused_after_stop_loss}
+                onChange={(checked) =>
+                  onPatch("paused_after_stop_loss", checked)
+                }
+              />
+            ) : null}
+          </ConfigBehavior>
+          <ConfigBehavior
+            control={
+              <Toggle
+                label="跟踪止损"
+                checked={draft.enable_trailing_stop}
+                onChange={(checked) => onPatch("enable_trailing_stop", checked)}
+              />
+            }
+          >
+            {draft.enable_trailing_stop ? (
+              <>
+                <ConfigField label="跟踪止损率">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={draft.trailing_stop_rate}
+                    onChange={(event) =>
+                      onPatch("trailing_stop_rate", event.target.value)
+                    }
+                  />
+                </ConfigField>
+                <ConfigField label="跟踪激活盈利率">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={draft.trailing_stop_activation_profit_rate}
+                    onChange={(event) =>
+                      onPatch(
+                        "trailing_stop_activation_profit_rate",
+                        event.target.value,
+                      )
+                    }
+                  />
+                </ConfigField>
+              </>
+            ) : null}
+          </ConfigBehavior>
         </ConfigSection>
 
         <ConfigSection title="执行">
@@ -877,6 +963,18 @@ function ConfigEditor({
               onChange={(value) => onPatch("place_order_behavior", value)}
             />
           </ConfigField>
+        </ConfigSection>
+
+        <ConfigSection title="启用">
+          <ConfigBehavior
+            control={
+              <Toggle
+                label="启用 · 启动时加载"
+                checked={draft.enabled}
+                onChange={(checked) => onPatch("enabled", checked)}
+              />
+            }
+          />
         </ConfigSection>
 
         <div className="config-form-foot">
@@ -909,6 +1007,22 @@ function ConfigSection({
     <div className="config-section">
       <div className="config-section-title">{title}</div>
       <div className="config-grid">{children}</div>
+    </div>
+  );
+}
+
+/** 一个独立行为占满整行; 依赖参数缩进挂在行为下方 */
+function ConfigBehavior({
+  control,
+  children,
+}: {
+  control: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="config-behavior">
+      {control}
+      {children ? <div className="config-behavior-body">{children}</div> : null}
     </div>
   );
 }

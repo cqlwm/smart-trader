@@ -41,7 +41,7 @@ class StrategyConfigPayload(BaseModel):
     # 身份 / 数据源
     symbol: str = "DOGE/USDT"
     timeframe: str = Field(default="1m", min_length=1)
-    data_source: DataSource = DataSource.TIMER
+    data_source: DataSource = DataSource.WS
 
     # 信号
     signal_type: StrategySignalType = StrategySignalType.ALPHA_TREND
