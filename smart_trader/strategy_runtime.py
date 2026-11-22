@@ -70,6 +70,12 @@ class _RunningStrategy:
     data_source: DataSource
     version: int
     payload: str
+    # 交易所仓位归属键: (symbol, position_side); 同一账户同一方向只允许一个策略
+    conflict_key: tuple[str, str]
+
+
+def _conflict_key(payload: StrategyConfigPayload) -> tuple[str, str]:
+    return (payload.symbol, payload.position_side.value)
 
 
 class StrategyRuntime:
@@ -129,6 +135,8 @@ class StrategyRuntime:
         self._restart_notified: dict[str, int] = {}
         # 停用流程里的一次性动作（request_close_all / abandon）只执行一次
         self._disable_action_done: set[str] = set()
+        # 已告警过的 symbol+方向冲突: 阻塞策略 -> (占用者, 版本), 避免每轮轮询刷屏
+        self._conflict_reported: dict[str, tuple[str, int]] = {}
 
     def start(self) -> None:
         """启动策略运行时; 幂等, 装配失败只记录日志并保持控制台可用"""
@@ -139,6 +147,7 @@ class StrategyRuntime:
         self._failed_versions.clear()
         self._restart_notified.clear()
         self._disable_action_done.clear()
+        self._conflict_reported.clear()
 
         if self._configs_provider is not None:
             try:
@@ -149,6 +158,7 @@ class StrategyRuntime:
             return
 
         enabled = [record for record in self._records if should_load(record)]
+        enabled = self._drop_conflicting_records(enabled)
         if not enabled:
             logger.warning("没有启用的策略配置, 控制台以只读模式启动")
             return
@@ -256,6 +266,65 @@ class StrategyRuntime:
                     self._update_strategy(key, running, record)
                 self._supervise_lifecycle(key, running, record)
 
+    def _drop_conflicting_records(
+        self, records: list[StrategyConfigRecord]
+    ) -> list[StrategyConfigRecord]:
+        """按 (symbol, position_side) 去重: 同一账户同一方向只保留先到的策略
+
+        交易所持仓是 symbol+方向维度的净持仓, 不按 strategy_key 隔离;
+        两个策略同方向并行会互相把对方的成交对账成"外部平仓"。
+        无效载荷保留给装配器报错, 不在本方法吞掉。
+        """
+        claimed: dict[tuple[str, str], str] = {}
+        kept: list[StrategyConfigRecord] = []
+        for record in records:
+            try:
+                payload = StrategyConfigPayload.from_json(record.payload)
+            except (ValueError, TypeError):
+                kept.append(record)
+                continue
+            conflict = _conflict_key(payload)
+            owner = claimed.get(conflict)
+            if owner is not None and owner != record.strategy_key:
+                self._report_conflict(record, owner, conflict)
+                continue
+            claimed[conflict] = record.strategy_key
+            kept.append(record)
+        return kept
+
+    def _conflict_owner(
+        self, conflict: tuple[str, str], key: str
+    ) -> str | None:
+        """返回已占用该 symbol+方向的运行中策略 key"""
+        for running_key, running in self._running.items():
+            if running_key == key:
+                continue
+            if running.conflict_key == conflict:
+                return running_key
+        return None
+
+    def _report_conflict(
+        self,
+        record: StrategyConfigRecord,
+        owner: str,
+        conflict: tuple[str, str],
+    ) -> None:
+        """记录并告警 symbol+方向冲突; 同一占用者/版本只告警一次"""
+        signature = (owner, record.version)
+        if self._conflict_reported.get(record.strategy_key) == signature:
+            return
+        self._conflict_reported[record.strategy_key] = signature
+        logger.error(
+            "同一账户同一方向只允许一个策略: %s %s; "
+            "策略 %s 与运行中的 %s 冲突, 已跳过 %s。"
+            "请关闭其中一个策略或使用独立子账户",
+            conflict[0],
+            conflict[1],
+            record.strategy_key,
+            owner,
+            record.strategy_key,
+        )
+
     def _exchange_for(
         self, enabled: list[StrategyConfigRecord]
     ) -> Exchange | None:
@@ -281,6 +350,11 @@ class StrategyRuntime:
         key = record.strategy_key
         try:
             payload = StrategyConfigPayload.from_json(record.payload)
+            conflict = _conflict_key(payload)
+            owner = self._conflict_owner(conflict, key)
+            if owner is not None:
+                self._report_conflict(record, owner, conflict)
+                return
             tasks = build_strategy_tasks(
                 [record],
                 data_source=payload.data_source,
@@ -315,7 +389,9 @@ class StrategyRuntime:
             data_source=payload.data_source,
             version=record.version,
             payload=record.payload,
+            conflict_key=conflict,
         )
+        self._conflict_reported.pop(key, None)
         self._register_command(task)
         logger.info(
             "策略热新增: %s (v%s, %s)",

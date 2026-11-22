@@ -17,6 +17,7 @@ from smart_trader.model import (
     OrderStatus,
     PlaceOrderBehavior,
     PositionSide,
+    SymbolInfo,
 )
 from smart_trader.storage.order_journal import OrderJournal
 from smart_trader.storage.records import OrderRecord
@@ -30,6 +31,7 @@ from smart_trader.strategy.signal_grid_config import SignalGridStrategyConfig
 from tests.fakes import (
     DEFAULT_STRATEGY_KEY,
     DEFAULT_SYMBOL,
+    DEFAULT_SYMBOL_INFO,
     FakeAccountPort,
     FakeTradingPort,
     make_exchange_position,
@@ -58,6 +60,8 @@ class ReconcileHarness:
         positions: list[GridPosition],
         *,
         config_fields: dict[str, object] | None = None,
+        symbol_info: SymbolInfo | None = None,
+        symbol_info_error: Exception | None = None,
     ) -> None:
         fields = dict(LONG_FIELDS)
         fields.update(config_fields or {})
@@ -72,12 +76,25 @@ class ReconcileHarness:
             journal=self.journal,
             positions=lambda: self.positions,
         )
+        self.symbol_info = (
+            symbol_info
+            if symbol_info is not None
+            # 测试默认放宽最小名义价值, 避免无关用例被尘埃判定误伤
+            else DEFAULT_SYMBOL_INFO.model_copy(update={"min_notional": 1.0})
+        )
+        self._symbol_info_error = symbol_info_error
         self.reconciler = PositionReconciler(
             config=self.config,
             account=self.account,
             positions=lambda: self.positions,
             lifecycle=self.lifecycle,
+            symbol_info=self._symbol_info,
         )
+
+    def _symbol_info(self) -> SymbolInfo:
+        if self._symbol_info_error is not None:
+            raise self._symbol_info_error
+        return self.symbol_info
 
     def set_exchange_position(
         self, quantity: float, *, side: PositionSide = PositionSide.LONG
@@ -312,6 +329,84 @@ def test_partial_external_close_records_adjustment() -> None:
     assert result.archived == [], "仍有剩余持仓的仓位不应归档"
     assert result.adjustments == {"POS1": 50.0}, (
         f"应记录外部扣减量 50, 实际 {result.adjustments}"
+    )
+
+
+def test_partial_cut_leaving_untradeable_dust_archives_whole_position() -> None:
+    """外部平仓后只剩尘埃残量 -> 整层归档, 不得留下永远下不出去的仓位
+
+    真实事故: 0.06 ETH 被对账扣到只剩 0.002, 止损单名义价值 3.36 USDC
+    低于交易所最小值 20, 每分钟重试一次全部被拒。
+    """
+    position = make_holding_position("POS1", 0.06, 1654.02)
+    harness = ReconcileHarness(
+        [position],
+        symbol_info=SymbolInfo(
+            symbol=DEFAULT_SYMBOL,
+            tick_size=0.01,
+            min_price=0.0,
+            max_price=0.0,
+            step_size=0.001,
+            min_qty=0.001,
+            max_qty=1_000_000.0,
+            min_notional=20.0,
+        ),
+    )
+    harness.set_exchange_position(0.002)
+
+    result = harness.reconciler.reconcile(close=1670.0)
+
+    assert result.archived == [position], (
+        "只剩 0.002 ETH(名义 3.34 USDC) 无法下单, 应整层归档, "
+        f"实际归档 {[item.id for item in result.archived]}"
+    )
+    assert result.adjustments == {}, (
+        f"整层归档后不得再留下尘埃扣减, 实际 {result.adjustments}"
+    )
+
+
+def test_partial_cut_above_min_notional_keeps_adjustment() -> None:
+    """残量仍可独立下单时必须保留部分扣减, 不得过度归档"""
+    position = make_holding_position("POS1", 0.06, 1654.02)
+    harness = ReconcileHarness(
+        [position],
+        symbol_info=SymbolInfo(
+            symbol=DEFAULT_SYMBOL,
+            tick_size=0.01,
+            min_price=0.0,
+            max_price=0.0,
+            step_size=0.001,
+            min_qty=0.001,
+            max_qty=1_000_000.0,
+            min_notional=20.0,
+        ),
+    )
+    harness.set_exchange_position(0.04)
+
+    result = harness.reconciler.reconcile(close=1670.0)
+
+    assert result.archived == [], "残量 0.04 ETH(名义 66.8 USDC) 可交易, 不应归档"
+    assert result.adjustments == pytest.approx({"POS1": 0.02}), (
+        f"应只扣减外部平掉的 0.02, 实际 {result.adjustments}"
+    )
+
+
+def test_symbol_info_failure_keeps_partial_adjustment() -> None:
+    """交易规则查询失败时保守保留部分扣减, 不得误归档整层仓位"""
+    position = make_holding_position("POS1", 0.06, 1654.02)
+    harness = ReconcileHarness(
+        [position],
+        symbol_info_error=SmartTraderError(
+            ErrorCode.EXCHANGE_UNAVAILABLE, "交易规则查询失败"
+        ),
+    )
+    harness.set_exchange_position(0.002)
+
+    result = harness.reconciler.reconcile(close=1670.0)
+
+    assert result.archived == [], "规则查询失败不得归档整层仓位"
+    assert result.adjustments == pytest.approx({"POS1": 0.058}), (
+        f"应退回部分扣减语义, 实际 {result.adjustments}"
     )
 
 

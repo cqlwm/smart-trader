@@ -168,7 +168,7 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 | `main_order_side` | 网格主攻方向；不参与入/出场归类 |
 | `opening_quantity` / `opening_price` | 开仓基准：接管持仓时的数量与均价（普通网格数量为 0）；`opening_price` 同时作为「尚无成交时的参考价」（网格间隔 / 止盈判定基准） |
 | `fixed_take_profit_rate` / `signal_min_take_profit_rate` | 止盈参数 |
-| `enable_stop_loss` / `stop_loss_rate` | 止损参数（**活参数**）：固定止损按 `仓位均价 × (1 ∓ stop_loss_rate)` 实时判定，修改（改库或改配置）后重启即生效，无需改其它字段 |
+| `enable_stop_loss` / `stop_loss_rate` | 止损参数（**开仓快照**）：建仓时从配置写入仓位行；固定止损按 `仓位均价 × (1 ∓ stop_loss_rate)` 实时判定，但**配置热更新不会回写存量仓位**——修改后只对新建仓位生效；需保护存量仓位时改库并重启 |
 | `enable_trailing_stop` / `trailing_stop_rate` / `trailing_stop_activation_rate` / `trailing_stop_price` | 跟踪止损参数与运行时状态（`trailing_stop_price` 只归属跟踪止损：开仓时以 `收盘价 × (1 ∓ stop_loss_rate)` 播种为 ratchet 下限，每根 K 线只向上抬升，不可派生，必须落库；**固定止损不读此字段**） |
 | `active` | 1 = 未到终态；0 = 已归档。**唯一物化的状态标记**，其余相位派生 |
 | `closed_reason` | 归档原因（`PositionCloseReason`，TEXT 可空）：活跃仓位为 `NULL`，归档时与 `active=0` 同语句写入；`NULL` 的归档行 = 历史归档（该列引入前），仅作审计展示、不参与逻辑判定。同一根 K 线多个归档来源命中时**先收集的原因优先**：孤儿回收跳过已被出场结算/对账收集的仓位，避免覆盖真实出场原因 |
@@ -432,6 +432,12 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
 内部归档 / 扣减，属于既有收敛路径。`max_exit_query_failures` 是单个出场单的连续查询
 失败次数，达到 3 次生成 warning；查询成功后计数清零。心跳过期时整个 `reconcile` 为
 `None`，不展示旧的差额数据。
+
+**尘埃残量（Step 40）**：部分外部扣减后残量 `quantity - cut` 若低于
+`SymbolInfo.min_qty`，或按最新收盘价计算的名义价值低于 `min_notional`，视为交易所侧
+已无该仓位可下单，**整层内部归档并 warning**（实测事故：0.06 ETH 被扣到 0.002，
+名义 3.36 USDC < 20，止损每分钟重试一次全部被拒）。残量仍可独立下单时保留部分扣减，
+避免过度归档真实剩余仓位。
 
 ## 十、控制命令（P1，`commands` 表）
 

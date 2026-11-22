@@ -195,9 +195,11 @@ SMART_TRADER_API_PORT=8001 uv run uvicorn run:create_application --factory --rel
 | `fixed_rate_take_profit` / `fixed_take_profit_rate` | `false` / `0.006` | 固定比例止盈 |
 | `take_profit_use_limit_order` | `false` | 是否在入场成交后直接挂限价止盈单 |
 | `place_order_behavior` | `chaser_open` | `normal` / `chaser`（追单并等成交）/ `chaser_open`（追单只挂单） |
-| `enable_order_stop_loss` / `order_stop_loss_rate` | `false` / `0.05` | 单层价格维度止损，按仓位均价实时计算 |
+| `enable_order_stop_loss` / `order_stop_loss_rate` | `false` / `0.05` | 单层价格维度止损，按仓位均价实时计算；开关/费率在建仓时写入仓位行，配置热更新只对新建仓位生效 |
 | `enable_trailing_stop` / `trailing_stop_rate` / `trailing_stop_activation_profit_rate` | `false` / `0.02` / `0.01` | 跟踪止损（激活后按高点回撤 ratchet） |
 | `enable_max_order_stop_loss` / `paused_after_stop_loss` | `false` / `true` | 达到仓位上限时全平，并可暂停策略 |
+
+> 同一账户、同一 `symbol + position_side` 只允许一个策略运行：交易所净持仓不按 `strategy_key` 隔离，同方向并行会互相把成交对账成外部平仓，甚至把止损层扣成无法下单的尘埃残量。运行时会跳过冲突的后到策略并记录 ERROR；请关闭其中一个（含其活跃仓位）或使用独立子账户。
 
 `alpha_trend_inverse` 在**信号层**反转方向：配置为 `position_side=long` 时，AlphaTrend 的看跌突破触发做多，看涨突破触发信号离场；因入场闸门与离场策略共享同一信号实例，两侧同时反向。单个配置仍只持一个方向，多空双向反手需 long / short 两个配置（交易所为双向持仓模式）。
 

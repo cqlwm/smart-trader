@@ -6,7 +6,15 @@
 
 import pytest
 
-from smart_trader.model import OrderResult, OrderSide, OrderStatus, PositionSide
+from smart_trader.exceptions import ErrorCode, SmartTraderError
+from smart_trader.model import (
+    OrderResult,
+    OrderSide,
+    OrderStatus,
+    PlaceOrderBehavior,
+    PositionSide,
+    TimeInForce,
+)
 from tests.fakes import DEFAULT_SYMBOL, make_order_record
 from tests.test_signal_grid_strategy import (
     build_strategy,
@@ -31,6 +39,74 @@ def test_stop_loss_triggers_exit_order():
 
     assert [request.side for request in trading.placed] == [OrderSide.SELL]
     assert strategy.positions[0].pending_exit_order is not None
+
+
+def test_force_exit_uses_immediately_fillable_behavior():
+    """止损属于风控动作: 必须走常规限价, 不能沿用 post-only 追单
+
+    CHASER_OPEN 会先挂 GTX 只做 maker 单, 止损在快速行情里可能挂不上或
+    挂在不利方向等待成交。
+    """
+    strategy, trading, _, _ = build_strategy(
+        enable_order_stop_loss=True,
+        order_stop_loss_rate=0.05,
+        place_order_behavior=PlaceOrderBehavior.CHASER_OPEN,
+    )
+    seed_position(
+        strategy,
+        enable_stop_loss=True,
+        stop_loss_rate=0.05,
+    )
+
+    push_kline(strategy, 0.47)
+
+    assert len(trading.placed) == 1, "止损应只产生一笔平仓委托"
+    request = trading.placed[0]
+    assert request.time_in_force is not TimeInForce.GTX, (
+        f"止损不得使用 post-only GTX, 实际 {request.time_in_force}"
+    )
+    assert request.time_in_force is None, (
+        f"止损应走常规限价单, 实际 time_in_force={request.time_in_force}"
+    )
+    assert request.quantity == pytest.approx(100.0), "止损应平掉整层可平量"
+
+
+def test_stop_failure_isolated_per_position():
+    """单个仓位止损失败不得中止整根 K 线, 其他仓位的止损必须继续执行"""
+    strategy, trading, _, _ = build_strategy(
+        enable_order_stop_loss=True, order_stop_loss_rate=0.05
+    )
+    first = seed_position(
+        strategy,
+        "POS-FAIL",
+        enable_stop_loss=True,
+        stop_loss_rate=0.05,
+    )
+    second = seed_position(
+        strategy,
+        "POS-OK",
+        enable_stop_loss=True,
+        stop_loss_rate=0.05,
+    )
+    trading.queue_place(
+        SmartTraderError(
+            ErrorCode.ORDER_NOTIONAL_TOO_SMALL,
+            "订单名义价值低于交易所最小值",
+        )
+    )
+
+    push_kline(strategy, 0.47)
+
+    assert len(trading.placed) == 2, (
+        f"失败仓位与后续仓位都应尝试下单, 实际 {len(trading.placed)} 笔"
+    )
+    assert first.pending_exit_order is None, "失败仓位的止损单不应被记录为挂出"
+    assert second.pending_exit_order is not None, (
+        "前一个仓位止损失败后, 后一个仓位必须继续执行止损"
+    )
+    assert len(strategy.positions) == 2, (
+        "止损执行失败的当根 K 线不得再开新仓（outcome.acted 必须置位）"
+    )
 
 
 def test_stop_loss_not_triggered_keeps_position():

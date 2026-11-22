@@ -155,6 +155,7 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
             account=account,
             positions=lambda: self.positions,
             lifecycle=self._lifecycle,
+            symbol_info=lambda: self.market.symbol_info(self.config.symbol),
         )
         self._apply_position_reconcile()
 
@@ -604,12 +605,20 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
 
         outcome = CloseOutcome()
         for position in self.positions:
-            self._apply_exit_decision(
-                position,
-                self._exit_policies.decide(position, ctx),
-                ctx.close,
-                outcome,
-            )
+            decision = self._exit_policies.decide(position, ctx)
+            try:
+                self._apply_exit_decision(position, decision, ctx.close, outcome)
+            except Exception:
+                # 风险动作按仓位隔离: 一个仓位止损失败不得中断整根 K 线的
+                # 其余仓位决策, 同时置 acted 阻止本根 K 线继续开新仓
+                outcome.acted = True
+                logger.exception(
+                    "仓位 %s 离场执行失败（方向=%s, 数量=%s, force=%s）",
+                    position.id,
+                    position.exit_side.name,
+                    position.quantity,
+                    decision.force,
+                )
 
         if self.close_position:
             # 一次性命令必须消费即清: 不复位则下一根 K 线再次全平, 无限重复挂出场单
@@ -663,14 +672,27 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
 
         exit_qty = self._exit_quantity(position)
         if exit_qty <= 0:
+            if decision.force:
+                logger.error(
+                    "仓位 %s 触发强制离场但可平量为 0（数量=%s, 外部扣减=%s）, "
+                    "无法下单",
+                    position.id,
+                    position.quantity,
+                    self._external_reductions.get(position.id, 0.0),
+                )
             # 可平量被外部平仓耗尽却未被本轮对账归档(浮点边界): 不下单
             return
+        # 止损/强制离场是风控动作: 默认走常规限价, 不沿用 post-only 追单,
+        # 避免快速行情下挂不上或挂在不利方向等待成交
+        effective_behavior = behavior
+        if decision.force and effective_behavior is None:
+            effective_behavior = PlaceOrderBehavior.NORMAL
         self._gateway.place_and_append(
             position,
             position.exit_side,
             exit_qty,
             price,
-            behavior=behavior,
+            behavior=effective_behavior,
         )
         outcome.acted = True
 
@@ -737,7 +759,10 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
 
     def _apply_position_reconcile(self) -> list[GridPosition]:
         """执行持仓对账并消费结果: 归档外部全平仓位, 记录部分平仓扣减量"""
-        result = self._position_reconciler.reconcile()
+        kline = self.latest_kline_obj
+        result = self._position_reconciler.reconcile(
+            close=kline.close if kline is not None else None
+        )
         for position in result.archived:
             self._archive([position], PositionCloseReason.EXTERNAL_RECONCILED)
         self._external_reductions = result.adjustments

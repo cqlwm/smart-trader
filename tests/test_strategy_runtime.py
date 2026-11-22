@@ -22,7 +22,9 @@ from smart_trader.model import (
     Kline,
     OrderRequest,
     OrderResult,
+    OrderSide,
     Position,
+    PositionSide,
     StrategyLifecycle,
     Symbol,
     SymbolInfo,
@@ -209,6 +211,7 @@ def _record(
     desired_running: bool = True,
     lifecycle: StrategyLifecycle = StrategyLifecycle.ACTIVE,
     disable_policy: DisablePositionPolicy | None = None,
+    position_side: PositionSide = PositionSide.LONG,
 ) -> StrategyConfigRecord:
     payload = StrategyConfigPayload(
         symbol=symbol,
@@ -216,6 +219,12 @@ def _record(
         data_source=data_source,
         max_order=3,
         grid_spacing_rate=grid_spacing_rate,
+        position_side=position_side,
+        master_side=(
+            OrderSide.BUY
+            if position_side is PositionSide.LONG
+            else OrderSide.SELL
+        ),
     )
     return StrategyConfigRecord(
         strategy_key=strategy_key,
@@ -296,7 +305,7 @@ def test_mixed_sources_start_both_loops_and_register_commands(
     runtime = runtime_factory(
         [
             _record("ws_strategy", DataSource.WS),
-            _record("timer_strategy", DataSource.TIMER),
+            _record("timer_strategy", DataSource.TIMER, symbol="btc/usdt"),
         ],
         exchange_factory=_UnusedExchange,
         ws_loops=ws_loops,
@@ -312,6 +321,85 @@ def test_mixed_sources_start_both_loops_and_register_commands(
         "timer_strategy",
         "ws_strategy",
     ]
+
+
+def test_conflicting_symbol_and_side_skips_second_at_startup(
+    runtime_factory: RuntimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """同一账户同 symbol 同方向: 只允许先到的一个策略启动"""
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [
+            _record(
+                "short_first",
+                DataSource.TIMER,
+                position_side=PositionSide.SHORT,
+            ),
+            _record(
+                "short_second",
+                DataSource.TIMER,
+                position_side=PositionSide.SHORT,
+            ),
+        ],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+    )
+    with caplog.at_level(logging.ERROR):
+        runtime.start()
+
+    assert len(timer_loops) == 1
+    assert [task.name for task in timer_loops[0].tasks] == [
+        "StrategyTask(DOGE/USDT|1m)"
+    ], "同 symbol+方向只允许一个策略任务, 否则交易所仓位会被重复记账"
+    assert "同一账户同一方向" in caplog.text, (
+        f"冲突必须显式告警, 实际日志: {caplog.text}"
+    )
+
+
+def test_same_symbol_different_side_is_allowed(runtime_factory: RuntimeFactory) -> None:
+    """同一 symbol 的多空双向在双向持仓模式下互不冲突"""
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [
+            _record("long_side", DataSource.TIMER, position_side=PositionSide.LONG),
+            _record("short_side", DataSource.TIMER, position_side=PositionSide.SHORT),
+        ],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+    )
+    runtime.start()
+
+    assert len(timer_loops) == 1
+    assert len(timer_loops[0].tasks) == 2, "不同方向不得被冲突校验误杀"
+
+
+def test_conflicting_hot_add_is_skipped(
+    runtime_factory: RuntimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """热新增策略与运行中策略冲突时必须跳过, 且不破坏已运行任务"""
+    state = [_record("short_running", DataSource.TIMER, position_side=PositionSide.SHORT)]
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+
+    state.append(
+        _record("short_new", DataSource.TIMER, position_side=PositionSide.SHORT)
+    )
+    with caplog.at_level(logging.ERROR):
+        runtime.sync_configs_once()
+
+    assert len(timer_loops) == 1
+    assert [task.name for task in timer_loops[0].tasks] == [
+        "StrategyTask(DOGE/USDT|1m)"
+    ], "冲突的热新增不得挂到事件循环"
+    assert "同一账户同一方向" in caplog.text
 
 
 def _heartbeat(runtime_factory: RuntimeFactory) -> RuntimeSnapshot | None:

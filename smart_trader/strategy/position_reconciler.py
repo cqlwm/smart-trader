@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict
 from smart_trader import log
 from smart_trader.exceptions import SmartTraderError
 from smart_trader.exchange.ports import AccountPort
-from smart_trader.model import ReconcileSnapshot
+from smart_trader.model import ReconcileSnapshot, SymbolInfo
 from smart_trader.strategy.grid_position import GridPosition
 from smart_trader.strategy.position_lifecycle import PositionLifecycle
 from smart_trader.strategy.signal_grid_config import SignalGridStrategyConfig
@@ -64,11 +64,13 @@ class PositionReconciler:
         account: AccountPort,
         positions: Callable[[], list[GridPosition]],
         lifecycle: PositionLifecycle,
+        symbol_info: Callable[[], SymbolInfo],
     ):
         self._config = config
         self._account = account
         self._positions = positions
         self._lifecycle = lifecycle
+        self._symbol_info = symbol_info
         # 上一次已告警的差额: 告警只在差额变化时重复（首轮 None = 必告警）
         self._last_reported_gap: float | None = None
         # 最近一次成功查询的运行态快照（心跳文件用, 不落账本）
@@ -78,8 +80,12 @@ class PositionReconciler:
         """当前对账快照（副本, 调用方可叠加出场跟踪计数）"""
         return self._snapshot.model_copy(deep=True)
 
-    def reconcile(self) -> PositionReconcileResult:
-        """执行一轮持仓对账; 查询异常跳过本轮, 绝不中断主循环"""
+    def reconcile(self, close: float | None = None) -> PositionReconcileResult:
+        """执行一轮持仓对账; 查询异常跳过本轮, 绝不中断主循环
+
+        @param close 最新收盘价; 用于判断外部扣减后的残量是否仍满足
+            最小名义价值。启动对账尚无行情时传 None, 退回仓位均价估算。
+        """
         held = [item for item in self._positions() if item.quantity > _QTY_EPS]
 
         try:
@@ -118,7 +124,7 @@ class PositionReconciler:
                 exchange_qty,
                 gap,
             )
-        return self._absorb(held, gap, warn)
+        return self._absorb(held, gap, warn, close)
 
     def _mark_gap_reported(self, gap: float) -> bool:
         """记录本轮差额并返回是否相对上次告警值发生变化（首次告警视为变化）"""
@@ -142,11 +148,16 @@ class PositionReconciler:
         return total
 
     def _absorb(
-        self, held: list[GridPosition], gap: float, warn: bool
+        self,
+        held: list[GridPosition],
+        gap: float,
+        warn: bool,
+        close: float | None,
     ) -> PositionReconcileResult:
         """按最外层优先把缺口分摊到仓位: 全吃归档, 部分吃记扣减
 
         @param warn 差额相对上轮是否变化; 不变时分摊明细日志静默（结果照常产出）
+        @param close 最新收盘价; 无行情时为 None
         """
         result = PositionReconcileResult()
         remaining = gap
@@ -154,8 +165,22 @@ class PositionReconciler:
             if remaining <= _QTY_EPS:
                 break
             cut = min(remaining, position.quantity)
+            residual = position.quantity - cut
+            if self._is_dust(position, residual, close):
+                # 残量低于最小可交易规模: 交易所侧已无可下单的对应仓位,
+                # 整层归档, 避免止损/平仓永远下不出去（实测事故:
+                # 0.06 ETH 被扣到 0.002, 名义 3.36 USDC < 20, 每分钟重试全被拒）
+                logger.warning(
+                    "仓位 %s 外部平掉 %s 后仅剩 %s, 低于最小可交易量/名义价值, "
+                    "整层归档",
+                    position.id,
+                    cut,
+                    residual,
+                )
+                cut = position.quantity
+                residual = 0.0
             remaining -= cut
-            if cut >= position.quantity - _QTY_EPS:
+            if residual <= _QTY_EPS:
                 if self._close_internally(position):
                     result.archived.append(position)
             else:
@@ -165,9 +190,31 @@ class PositionReconciler:
                         "仓位 %s 被外部平掉 %s, 剩余可平量 %s",
                         position.id,
                         cut,
-                        position.quantity - cut,
+                        residual,
                     )
         return result
+
+    def _is_dust(
+        self, position: GridPosition, residual: float, close: float | None
+    ) -> bool:
+        """残量是否已小到无法独立下单（低于最小数量或最小名义价值）
+
+        交易规则查询失败时保守返回 False（保留原部分扣减语义），
+        让下一轮对账重试, 不能因为查规则失败而误归档整层仓位。
+        """
+        if residual <= _QTY_EPS:
+            return False
+        try:
+            info = self._symbol_info()
+        except Exception:
+            logger.exception("查询交易规则失败, 跳过尘埃残量判定: %s", position.id)
+            return False
+        if residual + _QTY_EPS < info.min_qty:
+            return True
+        price = close if close is not None and close > 0 else position.price
+        if price <= 0:
+            return False
+        return price * residual + _QTY_EPS < info.min_notional
 
     @staticmethod
     def _outermost_first(held: list[GridPosition]) -> list[GridPosition]:

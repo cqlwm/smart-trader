@@ -453,6 +453,31 @@ error 日志刷屏。对账缺口只靠 `OrderReconciler`（订单行级）无�
 `AccountPort` 与其余读方法一律经 `_translate_error` 包装，网络类错误统一为
 `EXCHANGE_UNAVAILABLE`（`is_transient=True`），对账器按"跳过本轮"降级。
 
+### 16.1 仓位归属、尘埃残量与止损失败隔离（Step 40）
+
+**同一账户同一 symbol+方向只允许一个策略**：交易所净持仓不按 `strategy_key` 隔离，
+`PositionReconciler` 以 symbol+side 的实际持仓为权威。两个策略同方向并行时，
+A 的成交会让 B 的本地数量显得过多，B 的对账把 A 的仓位当"外部平仓"归档/扣减，
+最终把止损层扣成无法下单的尘埃。护栏放在 `StrategyRuntime`：
+
+- 启动装配 `_drop_conflicting_records` 按 `(symbol, position_side)` 先到先得；
+- 热新增 `_add_strategy` 查 `_running` 的 `conflict_key`，冲突时 ERROR 并跳过；
+- 不设置 `_failed_versions`，冲突解除后下一轮轮询自动重试；同一占用者/版本只告警一次。
+- 暂停 / 守护态配置同样占用交易所仓位，不能只看 `desired_running`。
+
+**尘埃残量**：部分外部扣减后残量低于 `min_qty`，或按最新收盘价计算的名义价值低于
+`min_notional` 时，该残量在交易所无法独立下单（实测：0.002 ETH ≈ 3.36 USDC < 20）。
+`PositionReconciler` 直接按整层归档并 warning，而不是记录一个永远下不出去的扣减；
+残量仍可交易时保留部分扣减。交易规则查询失败保守跳过尘埃判定，下一轮重试。
+
+**止损执行隔离**：`check_close_position` 对每个仓位单独 try/except，失败只记录
+仓位号 / 数量 / 方向并置 `acted=True`，避免一个止损失败吞掉同根 K 线其他仓位决策，
+也避免在止损失败后继续开新仓。`force=True`（止损 / 强制离场）默认覆盖为
+`PlaceOrderBehavior.NORMAL`，不再使用 post-only 追单；可平量为 0 的强制离场必须 ERROR。
+回归见 `tests/test_strategy_runtime.py`（冲突）、
+`tests/test_position_reconciler.py`（尘埃）、
+`tests/test_stop_loss.py`（隔离 + NORMAL）。
+
 ### 17. 单层规模：金额 / 数量换算（Step 35）
 
 **单一来源**：配置用 `per_order_amount` + `per_order_unit`（`OrderSizeUnit.BASE` /
