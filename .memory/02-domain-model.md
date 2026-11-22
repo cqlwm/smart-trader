@@ -296,32 +296,22 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
 
 放行规则：
 
-1. **只有一层已成交仓位**：无条件放行第二层 —— 不论新价格在成本价上方
-   （顺势）还是下方（逆势）。
-2. **两层及以上**，满足任一即可：
-   - **顺势间距**：`profit_and_loss_ratio(close) >= trend_spacing_rate`（含等号），
-     基准取**最外层仓位**（盈利方向极值：多头取最高价层、空头取最低价层）；
-   - **最外层回踩带**：按价格高低取**最外层两层** `quantity > 0` 的仓位均价
-     `p1, p2`，收盘价落在 `[min(p1, p2), max(p1, p2)]`（闭区间）内即放行。
-     含义是"小回踩不破最外层两层开仓价"仍属于顶部加仓区，按加仓成功处理，
-     而不是失败层。
+1. **没有已成交仓位**：放行第一单（含只有零数量虚拟仓位的情况）。
+2. **有已成交仓位**：取最外层（多头最高价、空头最低价）的 `quantity > 0` 层，
+   要求 `profit_and_loss_ratio(close) >= trend_spacing_rate`（含等号）。
+   只在盈利方向加仓；回踩 / 逆势一律拦截。
 
-无仓位直接放行（第一层不受间距约束）。
+零数量层（未成交 / 已耗尽）不参与基准，也不能改变加仓方向。
 
-示例（多头）：已有 `100, 101, 103, 106`，信号价 `105` 落在最外层两层
-`103..106` 之间 → 放行，新增 `105`，持仓变为 `100, 101, 103, 105, 106`。
-只有一层时：已有 `100`，新价格 `99` → `99, 100`；新价格 `101` → `100, 101`。
-
-"最外层两层"按**价格高低**取（多头最高两层、空头最低两层），不按创建顺序；
-零数量层（未成交 / 已耗尽）不参与。
+示例（多头）：已有 `100, 101, 103, 106`，信号价 `105` → **不加仓**（回踩）；
+只有 `106 × (1 + trend_spacing_rate)` 及以上的收盘价才加下一层。空头对称。
 
 **优先级**：策略仍是"先平后开"——同一根完成 K 线若反向信号触发信号止损
-（浮亏层 ≥ 2），本根先批量止损，回踩带不再加仓；回踩带只过滤"只有一层浮亏"
-的噪声场景。
+（浮亏层 ≥ 2），本根先批量止损，不再加仓。
 
 - 与 `GridSpacingGate` 的**方向相反**：后者基准是亏损方向极值层（多头取最低价层），
-  只放行"走出亏损间距"的加仓（逆势补仓）；前者只放行"顺盈利方向再加一层"的加仓。
-- 二者**语义互斥**（同一链内 AND 组合会把绝大多数行情拦死），由
+  只放行"走出亏损间距"的加仓（逆势补仓）；前者只放行"顺盈利方向再走出一层"的加仓。
+- 二者**语义互斥**：同一链内 AND 组合会把绝大多数行情拦死，由
   `SignalGridStrategyConfig.entry_mode` 显式二选一装配：
   `EntryMode.GRID` → 装配 `GridSpacingGate`；`EntryMode.TREND` → 装配
   `TrendSpacingGate`。模式与字段必须一致：`grid` 模式要求 `grid_spacing_rate`
@@ -333,8 +323,9 @@ timeframe 是普通字符串（如 `"1m"` / `"1h"` / `"1d"`），不设枚举（
   决定 —— `AlphaTrendSignal` 是翻转事件信号，若需"趋势延续中每隔 X% 加一层"，
   需配合状态型信号（趋势持续期间恒输出方向）。
 
-该语义由 `tests/test_entry_gate.py` 的 `test_trend_spacing_*` 与
-`tests/test_signal_grid_rules.py` 的装配契约测试锁定。
+该语义由 `tests/test_entry_gate.py` 的 `test_trend_spacing_*`、
+`tests/test_signal_grid_strategy.py` 的顺势用例与
+`tests/test_signal_grid_signal_path.py` 的严格顺势用例锁定。
 
 ### 4. 离场策略（`ExitPolicy`）
 
@@ -547,6 +538,8 @@ API 响应对象定义于 `smart_trader/api/schemas.py`，**全部是派生视�
   `paused_after_stop_loss`、`enable_trailing_stop`、`trailing_stop_rate`、
   `trailing_stop_activation_profit_rate`；
 - 执行：`place_order_behavior`。
+- 校验：`order_stop_loss_rate >= 0`（停用止损时 UI 用 0 占位仍可保存）；
+  负值会把止损放到错误方向，API 直接 422。
 
 转换：`to_strategy_config(strategy_key)` 物化 `Symbol` 与
 `AlphaTrendSignal` / `InvertedSignal(AlphaTrendSignal)` / `None`；

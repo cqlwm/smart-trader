@@ -189,7 +189,7 @@ SMART_TRADER_API_PORT=8001 uv run uvicorn run:create_application --factory --rel
 | `max_order` | `10000` | 最大逻辑仓位数（上限闸门与上限止损的唯一来源） |
 | `entry_mode` | `grid` | 加仓模式：`grid`（网格间距）/ `trend`（顺势间距）；与间距字段一致，不匹配会被拒绝 |
 | `grid_spacing_rate` | `0.01` | 网格间距，仅 `entry_mode=grid` 时填写。正数：仅亏损方向走出间距才加仓；负数：距基准不超过 \|值\| 即加仓（盈利方向也放行） |
-| `trend_spacing_rate` | 空 | 顺势阶梯间距，仅 `entry_mode=trend` 时填写；启用后不再使用网格间距 |
+| `trend_spacing_rate` | 空 | 顺势阶梯间距，仅 `entry_mode=trend` 时填写；启用后不再使用网格间距。只在盈利方向相对最外层**已成交**层走出间距时加仓，回踩 / 逆势不加仓 |
 | `enable_signal_take_profit` | `true` | 反向信号命中且该层浮盈 → 离场 |
 | `enable_signal_stop_loss` | `false` | 反向信号命中且全仓浮亏层 ≥ 2 → 全部浮亏层强制离场 |
 | `fixed_rate_take_profit` / `fixed_take_profit_rate` | `false` / `0.006` | 固定比例止盈 |

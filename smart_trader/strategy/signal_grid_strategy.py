@@ -673,6 +673,8 @@ class SignalGridStrategy(SingleTimeframeStrategy, ControllableStrategy):
         exit_qty = self._exit_quantity(position)
         if exit_qty <= 0:
             if decision.force:
+                # 强制离场无单可下是风控失败, 必须阻塞当根开仓, 不能继续加敞口
+                outcome.acted = True
                 logger.error(
                     "仓位 %s 触发强制离场但可平量为 0（数量=%s, 外部扣减=%s）, "
                     "无法下单",

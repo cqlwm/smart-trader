@@ -402,6 +402,144 @@ def test_conflicting_hot_add_is_skipped(
     assert "同一账户同一方向" in caplog.text
 
 
+def test_conflicting_disabling_strategy_still_loads_and_completes(
+    runtime_factory: RuntimeFactory,
+) -> None:
+    """停用中的策略不能被冲突护栏挡住, 否则永远停在 disabling
+
+    ABANDON 是"本地归档、不碰交易所"的处置; 若策略因 symbol+方向冲突
+    从未被运行时加载, `_supervise_lifecycle` 就没有机会执行, 状态永远
+    停在 disabling。
+    """
+    active = _record(
+        "active_short", DataSource.TIMER, position_side=PositionSide.SHORT
+    )
+    disabling = _record(
+        "disabling_short",
+        DataSource.TIMER,
+        position_side=PositionSide.SHORT,
+        enabled=False,
+        desired_running=False,
+        lifecycle=StrategyLifecycle.DISABLING,
+        disable_policy=DisablePositionPolicy.ABANDON,
+        version=2,
+    )
+    runtime_factory.configs.create(
+        strategy_key="active_short", payload=active.payload, enabled=True
+    )
+    runtime_factory.configs.create(
+        strategy_key="disabling_short", payload=disabling.payload, enabled=True
+    )
+    runtime_factory.configs.request_disable(
+        "disabling_short",
+        policy=DisablePositionPolicy.ABANDON,
+        expected_version=1,
+    )
+    state = [active, disabling]
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+
+    stored = runtime_factory.configs.get("disabling_short")
+    assert stored is not None
+    assert stored.lifecycle is StrategyLifecycle.DISABLED, (
+        f"ABANDON 必须完成到 disabled, 实际 {stored.lifecycle}"
+    )
+    assert len(timer_loops) == 1
+    assert len(timer_loops[0].tasks) == 2, (
+        "停用中的冲突策略仍必须加载以完成处置"
+    )
+
+
+def test_startup_keeps_disabling_conflicting_strategy(
+    runtime_factory: RuntimeFactory,
+) -> None:
+    """无配置监督线程的启动路径同样不得丢弃停用中的策略"""
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [
+            _record(
+                "active_short",
+                DataSource.TIMER,
+                position_side=PositionSide.SHORT,
+            ),
+            _record(
+                "disabling_short",
+                DataSource.TIMER,
+                position_side=PositionSide.SHORT,
+                enabled=False,
+                desired_running=False,
+                lifecycle=StrategyLifecycle.DISABLING,
+                disable_policy=DisablePositionPolicy.ABANDON,
+                version=2,
+            ),
+        ],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+    )
+    runtime.start()
+
+    assert len(timer_loops) == 1
+    assert len(timer_loops[0].tasks) == 2, (
+        "停用中的策略必须加载, 否则无法完成 ABANDON 处置"
+    )
+
+
+def test_resume_is_blocked_when_another_strategy_occupies_symbol_side(
+    runtime_factory: RuntimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """恢复暂停策略时同样要检查仓位归属, 否则热恢复会绕过冲突护栏"""
+    state = [
+        _record(
+            "a_trend_paused",
+            DataSource.TIMER,
+            position_side=PositionSide.SHORT,
+            desired_running=False,
+        ),
+        _record(
+            "z_short_active",
+            DataSource.TIMER,
+            position_side=PositionSide.SHORT,
+        ),
+    ]
+    timer_loops: list[RecordingTimerLoop] = []
+    runtime = runtime_factory(
+        [],
+        exchange_factory=_UnusedExchange,
+        timer_loops=timer_loops,
+        configs_provider=lambda: list(state),
+    )
+    runtime.start()
+
+    paused = next(
+        _strategy_of(task)
+        for task in timer_loops[0].tasks
+        if _strategy_of(task).config.strategy_key == "a_trend_paused"
+    )
+    assert paused.is_running is False
+
+    state[0] = _record(
+        "a_trend_paused",
+        DataSource.TIMER,
+        position_side=PositionSide.SHORT,
+        desired_running=True,
+        version=2,
+    )
+    with caplog.at_level(logging.ERROR):
+        runtime.sync_configs_once()
+
+    assert paused.is_running is False, (
+        "另一策略仍占用同 symbol+方向时, 不得热恢复"
+    )
+    assert "同一账户同一方向" in caplog.text
+
+
 def _heartbeat(runtime_factory: RuntimeFactory) -> RuntimeSnapshot | None:
     """读取心跳快照; 运行态由 CommandRunner 同步写入"""
     return runtime_factory.registry.read()

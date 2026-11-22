@@ -4,6 +4,8 @@
 空头方向的止损判定、已有出场挂单时不重复下单、暂停后仍跟踪出场单。
 """
 
+import logging
+
 import pytest
 
 from smart_trader.exceptions import ErrorCode, SmartTraderError
@@ -15,8 +17,14 @@ from smart_trader.model import (
     PositionSide,
     TimeInForce,
 )
-from tests.fakes import DEFAULT_SYMBOL, make_order_record
+from tests.fakes import (
+    DEFAULT_SYMBOL,
+    FakeAccountPort,
+    make_exchange_position,
+    make_order_record,
+)
 from tests.test_signal_grid_strategy import (
+    TIMESTAMP,
     build_strategy,
     push_kline,
     seed_position,
@@ -258,3 +266,106 @@ def test_pending_exit_is_tracked_even_when_paused():
         "出场成交且可平量归零 -> 归档, 与 is_running 无关"
     )
     assert trading.placed == [], "跟踪出场单不应产生新委托"
+
+
+# ------------------------------------------------- 多层隔离 / 外部扣减 / 快照
+
+
+def test_stop_loss_only_closes_triggering_layer():
+    """多层仓位: 只有跌破自身止损价的层离场, 其他层不动"""
+    strategy, trading, _, _ = build_strategy(
+        enable_order_stop_loss=True, order_stop_loss_rate=0.05
+    )
+    triggered = seed_position(
+        strategy,
+        "POS-TRIGGERED",
+        entry_price=0.5,
+        quantity=100.0,
+        enable_stop_loss=True,
+        stop_loss_rate=0.05,
+    )
+    safe = seed_position(
+        strategy,
+        "POS-SAFE",
+        entry_price=0.4,
+        quantity=100.0,
+        enable_stop_loss=True,
+        stop_loss_rate=0.05,
+    )
+
+    push_kline(strategy, 0.47)
+
+    assert triggered.pending_exit_order is not None, "跌破 0.475 的层应止损"
+    assert safe.pending_exit_order is None, "止损价 0.38 的安全层不得被平"
+    assert [request.quantity for request in trading.placed] == [100.0]
+
+
+def test_stop_loss_quantity_clamped_by_external_reduction():
+    """外部平掉部分仓位: 止损出场按剩余可平量下单"""
+    account = FakeAccountPort()
+    strategy, trading, _, _ = build_strategy(
+        account=account,
+        enable_order_stop_loss=True,
+        order_stop_loss_rate=0.05,
+    )
+    seed_position(
+        strategy,
+        "POS-CLAMP",
+        entry_price=0.5,
+        quantity=100.0,
+        enable_stop_loss=True,
+        stop_loss_rate=0.05,
+    )
+    account.set_positions(make_exchange_position(60.0))  # 外部已平 40
+
+    push_kline(strategy, 0.47)
+
+    assert [request.quantity for request in trading.placed] == [60.0], (
+        f"止损单应按剩余可平量 60 下单, 实际 {[r.quantity for r in trading.placed]}"
+    )
+
+
+def test_zero_quantity_forced_exit_blocks_new_entries(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """强制离场可平量为 0 时必须 ERROR, 且当根不得开新仓"""
+    strategy, trading, _, _ = build_strategy()
+    seed_position(
+        strategy,
+        "POS-EMPTY",
+        quantity=0.0,
+        opening_price=0.5,
+        enable_stop_loss=True,
+        stop_loss_rate=0.05,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        push_kline(strategy, 0.47)
+
+    assert "可平量为 0" in caplog.text, "强制离场无单可下必须 ERROR"
+    assert trading.placed == [], "可平量为 0 时不得下单, 也不得开新仓"
+
+
+def test_config_hot_update_does_not_retroactively_enable_stop():
+    """止损开关/费率是开仓快照: 热更新只影响新仓, 不回溯存量仓位"""
+    strategy, _, _, _ = build_strategy(enable_order_stop_loss=False)
+    push_kline(strategy, 0.5)
+    old = strategy.positions[0]
+    assert old.enable_stop_loss is False
+
+    strategy.apply_config(
+        strategy.config.model_copy(
+            update={"enable_order_stop_loss": True, "order_stop_loss_rate": 0.01}
+        )
+    )
+
+    assert old.enable_stop_loss is False, "存量仓位不得被热更新回溯开启止损"
+    assert old.stop_loss_rate == 0.0
+
+    push_kline(strategy, 0.49, timestamp=TIMESTAMP + 60_000)
+
+    assert old.pending_exit_order is None, "存量仓位不因新配置获得止损"
+    assert len(strategy.positions) == 2, "新层应按新配置开启止损建仓"
+    new = strategy.positions[1]
+    assert new.enable_stop_loss is True
+    assert new.stop_loss_rate == pytest.approx(0.01)

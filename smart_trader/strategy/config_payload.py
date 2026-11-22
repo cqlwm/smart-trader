@@ -81,7 +81,7 @@ class StrategyConfigPayload(BaseModel):
     enable_max_order_stop_loss: bool = False
     paused_after_stop_loss: bool = True
     enable_order_stop_loss: bool = False
-    order_stop_loss_rate: float = 0.05
+    order_stop_loss_rate: float = Field(default=0.05, ge=0)
     enable_trailing_stop: bool = False
     trailing_stop_rate: float = 0.02
     trailing_stop_activation_profit_rate: float = 0.01

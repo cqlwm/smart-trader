@@ -155,21 +155,20 @@ class GridSpacingGate(EntryGate):
 
 
 class TrendSpacingGate(EntryGate):
-    """顺势间距: 顺盈利方向走出间距, 或回踩不破最外层两层开仓价时加仓
+    """顺势间距: 只在盈利方向走出间距时加仓
 
-    放行规则:
+    无论已成交层数多少, 都要求相对最外层**已成交**仓位的
+    `profit_and_loss_ratio(close) >= spacing_rate`（含等号）：
 
-    1. **只有一层已成交仓位**: 无条件放行第二层（不论逆势 / 顺势）;
-    2. **两层及以上**, 满足任一即可:
-       - **顺势间距**: `profit_and_loss_ratio(close) >= spacing_rate`（含等号），
-         基准取**最外层仓位**（盈利方向极值: 多头取最高价层、空头取最低价层）;
-       - **回踩带**: 按价格高低取**最外层两层**已成交仓位, 收盘价落在两者开仓价
-         闭区间内 —— 小回踩仍属顶部加仓区, 视为加仓成功。
+    - 多头取最高价层, 空头取最低价层;
+    - 零数量层（未成交 / 已耗尽）不参与基准;
+    - 不存在"只有一层时第二层无条件加仓"的特例，也不存在"回踩带"：
+      价格回踩到最外层下方（多头）或上方（空头）一律不加仓。
 
-    无仓位时直接放行（第一单不受间距约束）。
+    无任何仓位时放行第一单；只有零数量虚拟仓位时同样视为首单。
 
-    与 `GridSpacingGate` 方向相反（后者以亏损方向极值为基准, 只放行逆势补仓）,
-    二者语义互斥, 由配置二选一装配。
+    与 `GridSpacingGate` 方向相反（后者只放行亏损方向补仓），
+    二者语义互斥，由配置 `entry_mode` 二选一装配。
 
     @param spacing_rate 顺势间距阈值
     @param master_side 网格主攻方向, 决定取哪一端为最外层基准
@@ -186,33 +185,12 @@ class TrendSpacingGate(EntryGate):
         if close is None:
             return False
         filled = [position for position in ctx.positions if position.quantity > 0]
-        if len(filled) == 1:
-            return True  # 只有一层: 第二层无论逆势 / 顺势都加
-        return self._beyond_spacing(ctx, close) or self._inside_outermost_entries(filled, close)
-
-    def _beyond_spacing(self, ctx: EntryContext, close: float) -> bool:
-        """顺盈利方向走出间距（原顺势阶梯判定）"""
+        if not filled:
+            return True  # 只有未成交 / 零数量虚拟仓位: 仍视为首单
         benchmark: GridPosition = self._master_side.reversal().extremum_fun()(
-            ctx.positions, key=lambda position: position.price
+            filled, key=lambda position: position.price
         )
         return benchmark.profit_and_loss_ratio(close) >= self._spacing_rate
-
-    def _inside_outermost_entries(self, filled: list[GridPosition], close: float) -> bool:
-        """收盘价落在最外层两层已成交仓位的开仓价闭区间内
-
-        最外层两层按价格高低取: 多头取最高两层, 空头取最低两层。
-        """
-        if len(filled) < 2:
-            return False
-        by_outermost = sorted(
-            filled,
-            key=lambda position: position.price,
-            reverse=self._master_side == OrderSide.BUY,
-        )
-        first, second = by_outermost[0], by_outermost[1]
-        low = min(first.price, second.price)
-        high = max(first.price, second.price)
-        return low <= close <= high
 
 
 class MaxOrderStopLossGate(EntryGate):

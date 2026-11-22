@@ -283,6 +283,14 @@ class StrategyRuntime:
             except (ValueError, TypeError):
                 kept.append(record)
                 continue
+            if record.lifecycle in (
+                StrategyLifecycle.DISABLING,
+                StrategyLifecycle.GUARD,
+            ):
+                # 停用/守护态必须加载以完成持仓处置或继续跟踪出场单;
+                # 它不占冲突键, 避免挡住后续活跃策略
+                kept.append(record)
+                continue
             conflict = _conflict_key(payload)
             owner = claimed.get(conflict)
             if owner is not None and owner != record.strategy_key:
@@ -295,13 +303,28 @@ class StrategyRuntime:
     def _conflict_owner(
         self, conflict: tuple[str, str], key: str
     ) -> str | None:
-        """返回已占用该 symbol+方向的运行中策略 key"""
+        """返回已占用该 symbol+方向的运行中策略 key
+
+        暂停且已无持仓的策略不占用交易所仓位, 允许同方向策略接管;
+        运行中或仍有持仓的暂停策略仍视为占用。
+        """
         for running_key, running in self._running.items():
             if running_key == key:
                 continue
-            if running.conflict_key == conflict:
+            if running.conflict_key != conflict:
+                continue
+            if self._occupies_exchange_position(running):
                 return running_key
         return None
+
+    @staticmethod
+    def _occupies_exchange_position(running: _RunningStrategy) -> bool:
+        strategy = running.task.strategy
+        if not isinstance(strategy, SignalGridStrategy):
+            return True
+        if strategy.is_running:
+            return True
+        return any(position.quantity > 0 for position in strategy.positions)
 
     def _report_conflict(
         self,
@@ -351,10 +374,14 @@ class StrategyRuntime:
         try:
             payload = StrategyConfigPayload.from_json(record.payload)
             conflict = _conflict_key(payload)
-            owner = self._conflict_owner(conflict, key)
-            if owner is not None:
-                self._report_conflict(record, owner, conflict)
-                return
+            if record.lifecycle not in (
+                StrategyLifecycle.DISABLING,
+                StrategyLifecycle.GUARD,
+            ):
+                owner = self._conflict_owner(conflict, key)
+                if owner is not None:
+                    self._report_conflict(record, owner, conflict)
+                    return
             tasks = build_strategy_tasks(
                 [record],
                 data_source=payload.data_source,
@@ -527,6 +554,14 @@ class StrategyRuntime:
             self._pause_running(running)
             return
         if record.desired_running and not strategy.is_running:
+            owner = self._conflict_owner(
+                running.conflict_key, record.strategy_key
+            )
+            if owner is not None:
+                self._report_conflict(
+                    record, owner, running.conflict_key
+                )
+                return
             strategy.resume()
         elif not record.desired_running and strategy.is_running:
             strategy.pause()

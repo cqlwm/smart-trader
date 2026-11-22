@@ -156,6 +156,7 @@ storage (queries.py / reader.py)           只读仓储: 只发 SELECT, 不建�
 | Step 38 | **策略详情页（前端信息架构收敛）**：侧边栏从 5 项收敛为 总览 / 策略 / 行情；策略页为实例列表（合并配置与运行态摘要），点击进入 `/strategies/{strategy_key}` 详情；详情页集中展示配置启用/进程在线/决策运行状态，提供暂停/恢复与启用/停用，并以 配置 / 持仓 / 归档 / 订单 / 行情 五个 Tab 复用已有 API 的 `strategy_key` 过滤；配置编辑器与仓位/订单表格抽为共享组件，删除旧 Configs/Positions/Orders 页面 | 已完成 |
 | Step 39 | **策略生命周期与停用编排**：`strategy_configs` 增加 `desired_running` / `lifecycle` / `disable_policy` / 时间戳与错误字段；停用改为异步流程（立即暂停 + 后台处置），支持 `close_all`（等待清零）/ `limit_exit`（挂单后守护）/ `keep`（冻结守护）/ `abandon`（本地归档不再管理）；`guard`/`disabling` 配置重启后以暂停态加载并继续跟踪出场与对账；暂停/恢复持久化 `desired_running`；新增 enable/disable API，PUT 仅修改参数；迁移脚本 `009_add_strategy_lifecycle.py` | 已完成 |
 | Step 40 | **同账户 symbol+方向唯一策略 + 尘埃残量止损保护**：`StrategyRuntime` 启动装配（`_drop_conflicting_records`）与热新增（`_add_strategy`）按 `(symbol, position_side)` 去重，后到策略 ERROR 跳过；交易所净持仓不按 `strategy_key` 隔离，同方向并行会互相把成交对账成外部平仓。`PositionReconciler` 接收 `SymbolInfo` 与最新收盘价，部分外部扣减后残量低于 `min_qty` / `min_notional` 时整层归档，避免留下永远下不出去的止损；`check_close_position` 按仓位隔离下单异常并置 `acted`，强制出场默认走 `PlaceOrderBehavior.NORMAL`。回归：`tests/test_strategy_runtime.py` / `test_position_reconciler.py` / `test_stop_loss.py` | 已完成 |
+| Step 41 | **严格顺势加仓**：删除 `TrendSpacingGate` 的"只有一层时第二层无条件"与"最外层两层回踩带"；无论层数，只允许相对最外层**已成交**层在盈利方向走出 `trend_spacing_rate` 后加仓，基准不再包含零数量未成交层。避免逆势 / 回踩加仓，以及在 `alpha_trend_inverse` 下放大逆势敞口。回归：`tests/test_entry_gate.py` / `test_signal_grid_strategy.py` / `test_signal_grid_signal_path.py` | 已完成 |
 
 ### 待办清单（Step 5）
 
@@ -559,7 +560,10 @@ API 不复制公式；`limit` 20–1000，默认 300。非法交易对 / 周期 
   策略运行。`StrategyRuntime` 在启动装配与热新增时按冲突键去重，后到者记录 ERROR
   并跳过，冲突解除后下一轮自动重试。交易所净持仓不按 `strategy_key` 隔离，
   多策略同方向并行会让 `PositionReconciler` 把对方成交误判为外部平仓，
-  并把本地仓位扣成不可下单的尘埃残量；
+  并把本地仓位扣成不可下单的尘埃残量。护栏只拦截 ACTIVE 策略：
+  `disabling` / `guard` 必须加载（ABANDON 处置、出场单跟踪），不占冲突键；
+  暂停且已无持仓的策略不占用交易所仓位，暂停但仍有持仓的仍视为占用；
+  热恢复（`desired_running=True`）前同样复查占用，避免绕过护栏。
 - 单条配置解析或装配失败只记录日志，不影响其它策略与后续轮询。
 
 **端点**：

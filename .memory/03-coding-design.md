@@ -205,21 +205,20 @@ v2 的累积计数不存在此问题，`first_run` 已删除。
 因此由 config 的 `entry_mode`（`grid` / `trend`）显式二选一装配，而不是提供两个
 可叠加的闸门；模式与间距字段不一致（必填字段为空 / 无关字段非空）由共享校验函数拒绝。
 
-**`TrendSpacingGate` 的回踩带与第二层特例（Step 29）**：
-- 只有一层已成交仓位时，第二层**无条件放行**（逆势 / 顺势都加）——单层网格不存在
-  "顺势阶梯"可言，先让第二层落地；
-- 两层及以上，除"顺势间距"外，再按**价格高低**取最外层两层 `quantity > 0` 的仓位均价，
-  收盘价落在 `[min, max]` 闭区间内也放行。它表达"价格在最外层两层开仓价之间的小回踩
-  仍属顶部加仓区"——避免刚加的一层被反向信号立即剥掉的震荡磨损，同时让新层继续堆在
-  价格顶部。回踩带只对至少两层已成交仓位生效。
+**`TrendSpacingGate` 严格顺势（Step 41）**：
+- 无论已成交层数多少，都只在盈利方向相对**最外层已成交层**走出间距时放行：
+  `profit_and_loss_ratio(close) >= trend_spacing_rate`（含等号）；
+- 基准只统计 `quantity > 0` 的层，零数量未成交挂单不参与，也不能改变加仓方向；
+- 删除 Step 29 的"第二层无条件放行"与"最外层两层回踩带"：价格回踩到最外层下方
+  （多头）或上方（空头）一律不加仓。原因：这两条会让逆势 / 回踩也加仓，与
+  "顺势"语义冲突，并在 `alpha_trend_inverse` 等配置下放大逆势敞口；
+- 无任何已成交层（含只有零数量虚拟仓位）时仍放行第一单。
 
-示例：多头已有 `100, 101, 103, 106`，信号价 `105 ∈ [103, 106]` → 加一层 `105`，
-持仓变为 `100, 101, 103, 105, 106`；只有一层 `100` 时，新价格 `99` → `99, 100`，
-新价格 `101` → `100, 101`。
+示例：多头已有 `100, 101, 103, 106`，信号价 `105` **不加仓**；只有收盘价
+`>= 106 × (1 + trend_spacing_rate)` 才加下一层。空头对称取最低价层。
 
 **优先级（先平后开）**：反向信号命中且浮亏层 ≥ 2 时，本根先批量止损，
-`outcome.acted` 为真，回踩带不再加仓 —— "确认反转"优先于"区间内小回踩"；
-回踩带只负责过滤"只有一层浮亏"的噪声场景（Step 29）。
+`outcome.acted` 为真，不再加仓。
 
 ### 11. `LayeredReducePolicy` 与 `ExitContext.positions`
 
@@ -463,7 +462,14 @@ A 的成交会让 B 的本地数量显得过多，B 的对账把 A 的仓位当"
 - 启动装配 `_drop_conflicting_records` 按 `(symbol, position_side)` 先到先得；
 - 热新增 `_add_strategy` 查 `_running` 的 `conflict_key`，冲突时 ERROR 并跳过；
 - 不设置 `_failed_versions`，冲突解除后下一轮轮询自动重试；同一占用者/版本只告警一次。
-- 暂停 / 守护态配置同样占用交易所仓位，不能只看 `desired_running`。
+- **停用 / 守护态必须绕过护栏**：`disabling` / `guard` 策略需要加载后由
+  `_supervise_lifecycle` 完成 ABANDON 处置或继续跟踪出场单，若被冲突护栏挡住会
+  永远停在 `disabling`；它们不占冲突键。
+- **占用判定**：运行中的策略占用；暂停但仍有持仓的策略占用；暂停且已平的策略
+  不占用，允许同方向新策略接管。
+- **恢复也要校验**：`desired_running=True` 触发热恢复前，`_apply_desired_running`
+  再查一次占用，避免"先加载为暂停、后被另一策略占用、再恢复"绕过护栏。
+- 暂停 / 守护态配置同样可能占用交易所仓位，不能只看 `desired_running`。
 
 **尘埃残量**：部分外部扣减后残量低于 `min_qty`，或按最新收盘价计算的名义价值低于
 `min_notional` 时，该残量在交易所无法独立下单（实测：0.002 ETH ≈ 3.36 USDC < 20）。
@@ -473,10 +479,12 @@ A 的成交会让 B 的本地数量显得过多，B 的对账把 A 的仓位当"
 **止损执行隔离**：`check_close_position` 对每个仓位单独 try/except，失败只记录
 仓位号 / 数量 / 方向并置 `acted=True`，避免一个止损失败吞掉同根 K 线其他仓位决策，
 也避免在止损失败后继续开新仓。`force=True`（止损 / 强制离场）默认覆盖为
-`PlaceOrderBehavior.NORMAL`，不再使用 post-only 追单；可平量为 0 的强制离场必须 ERROR。
-回归见 `tests/test_strategy_runtime.py`（冲突）、
+`PlaceOrderBehavior.NORMAL`，不再使用 post-only 追单；可平量为 0 的强制离场必须
+ERROR 并置 `acted=True`（阻塞当根开新仓）。`order_stop_loss_rate` 要求非负
+（停用止损时的 0 占位允许）。回归见 `tests/test_strategy_runtime.py`（冲突）、
 `tests/test_position_reconciler.py`（尘埃）、
-`tests/test_stop_loss.py`（隔离 + NORMAL）。
+`tests/test_stop_loss.py`（隔离 + NORMAL + 多层隔离 + 快照）、
+`tests/test_exit_policy.py`（单层信号止损边界）。
 
 ### 17. 单层规模：金额 / 数量换算（Step 35）
 

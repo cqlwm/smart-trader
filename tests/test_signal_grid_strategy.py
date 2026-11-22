@@ -255,8 +255,8 @@ def test_trend_spacing_blocks_loss_direction():
     assert trading.placed == []
 
 
-def test_trend_spacing_allows_second_layer_in_loss_direction():
-    """只有一层已成交仓位时, 第二层逆势也应加仓"""
+def test_trend_spacing_second_layer_requires_profit_direction():
+    """只有一层已成交仓位时, 第二层也必须顺盈利方向走出间距"""
     strategy, trading, _, _ = build_strategy(
         entry_mode=EntryMode.TREND,
         grid_spacing_rate=None,
@@ -264,9 +264,12 @@ def test_trend_spacing_allows_second_layer_in_loss_direction():
     )
     seed_position(strategy)
 
-    push_kline(strategy, 0.495)
+    push_kline(strategy, 0.495)  # -1%: 逆势, 不得加仓
+    assert len(strategy.positions) == 1, "第二层逆势不得加仓"
+    assert trading.placed == []
 
-    assert len(strategy.positions) == 2, "只有一层时第二层逆势也应加仓"
+    push_kline(strategy, 0.51, timestamp=TIMESTAMP + 60_000)  # +2%: 顺势
+    assert len(strategy.positions) == 2, "第二层顺盈利方向走出间距应加仓"
     assert [request.side for request in trading.placed] == [OrderSide.BUY]
 
 

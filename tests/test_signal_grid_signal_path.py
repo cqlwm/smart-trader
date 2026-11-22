@@ -182,6 +182,101 @@ def test_single_losing_layer_kept_without_single_layer_switch():
     assert trading.placed == [], "默认两层门槛下单层浮亏不应离场"
 
 
+def test_single_layer_signal_stop_loss_short_side():
+    """单层信号止损: 空头一层浮亏也应离场"""
+    strategy, trading, _, _ = build_strategy(
+        position_side=PositionSide.SHORT,
+        master_side=OrderSide.SELL,
+        signal_kind=SignalKind.DIRECTIONAL,
+        enable_signal_take_profit=False,
+        enable_signal_stop_loss=True,
+        enable_single_layer_signal_stop_loss=True,
+        signal=FakeSignal([SignalDirection.LONG]),
+    )
+    seed_position(
+        strategy,
+        "SHORT",
+        position_side=PositionSide.SHORT,
+        main_order_side=OrderSide.SELL,
+        entry_price=0.5,
+        quantity=100.0,
+    )
+
+    push_kline(strategy, 0.5001)
+
+    assert [request.side for request in trading.placed] == [OrderSide.BUY], (
+        "空头一层浮亏应买入平仓"
+    )
+
+
+def test_single_layer_switch_alone_assembles_min_one_policy():
+    """只开单层开关、两层开关关闭时也必须装配 min=1 策略"""
+    strategy, trading, _, _ = _layered_reduce(
+        enable_signal_stop_loss=False,
+        enable_single_layer_signal_stop_loss=True,
+    )
+    seed_position(strategy, entry_price=0.5, quantity=100.0)
+
+    push_kline(strategy, 0.4999)
+
+    assert [request.side for request in trading.placed] == [OrderSide.SELL], (
+        "单层开关单独开启时一层浮亏应止损"
+    )
+
+
+def test_single_layer_switch_hot_update_takes_effect():
+    """热更新打开单层开关后, 同一层浮亏应立即按 min=1 止损"""
+    strategy, trading, _, _ = _layered_reduce()
+    seed_position(strategy, entry_price=0.5, quantity=100.0)
+
+    push_kline(strategy, 0.4999, timestamp=TIMESTAMP)
+    assert trading.placed == [], "默认两层门槛下, 单层浮亏不应止损"
+
+    strategy.apply_config(
+        strategy.config.model_copy(
+            update={"enable_single_layer_signal_stop_loss": True}
+        )
+    )
+    push_kline(strategy, 0.4998, timestamp=TIMESTAMP + 60_000)
+
+    assert [request.side for request in trading.placed] == [OrderSide.SELL], (
+        "热更新后单层浮亏应止损"
+    )
+
+
+def test_single_layer_signal_stop_force_replaces_pending_exit():
+    """单层信号止损已有未成交出场单时, 下一根 force 撤单重挂"""
+    strategy, trading, _, _ = _layered_reduce(
+        enable_single_layer_signal_stop_loss=True
+    )
+    seed_position(strategy, entry_price=0.5, quantity=100.0)
+
+    push_kline(strategy, 0.4999, timestamp=TIMESTAMP)
+    pending = strategy.positions[0].pending_exit_order
+    assert pending is not None, "前置条件: 单层浮亏应已挂出止损单"
+
+    push_kline(strategy, 0.4998, timestamp=TIMESTAMP + 60_000)
+
+    assert pending.order_id in trading.canceled, "force 应撤掉上一根未成交的止损单"
+    assert len(trading.placed) == 2, "撤单后应按最新价重挂一张止损单"
+
+
+def test_single_layer_signal_stop_trigger_kind_accepts_any_non_neutral():
+    """TRIGGER + min=1: 任何非中性信号都能触发单层信号止损"""
+    strategy, trading, _, _ = _layered_reduce(
+        signal_kind=SignalKind.TRIGGER,
+        signal=FakeSignal([SignalDirection.LONG]),
+        enable_single_layer_signal_stop_loss=True,
+    )
+    seed_position(strategy, entry_price=0.5, quantity=100.0)
+
+    push_kline(strategy, 0.4999)
+
+    assert [request.side for request in trading.placed] == [OrderSide.SELL], (
+        "TRIGGER 模式下非中性信号应触发单层止损"
+    )
+
+
 
 def test_no_signal_exit_when_signal_is_neutral():
     """中性信号不触发离场"""
@@ -231,11 +326,11 @@ def test_directional_signal_exit_requires_opposite_direction():
     assert trading.placed == [], "看涨信号与出场方向(卖出)相反, 不应平仓"
 
 
-# ---- 入场: 最外层两层回踩带 ----
+# ---- 入场: 严格顺势, 回踩不加仓 ----
 
 
-def test_adds_inside_outermost_two_entry_prices_instead_of_stopping():
-    """103..106 + 105: 只有一层浮亏 → 不止损, 回踩带放行加仓 105"""
+def test_pullback_below_outermost_layer_neither_adds_nor_stops():
+    """103..106 + 105: 严格顺势不加仓; 只有一层浮亏也不触发双层信号止损"""
     strategy, trading, _, _ = _long(
         entry_mode=EntryMode.TREND,
         grid_spacing_rate=None,
@@ -259,13 +354,10 @@ def test_adds_inside_outermost_two_entry_prices_instead_of_stopping():
         100.0,
         101.0,
         103.0,
-        105.0,
         106.0,
-    ], "105 应作为新层插入最外层两层之间"
+    ], "105 相对最外层 106 是回踩, 严格顺势不得加仓"
     assert top.has_pending_exit is False, "106 单层浮亏不应被信号止损"
-    assert [request.side for request in trading.placed] == [OrderSide.BUY], (
-        "应加仓而不是止损"
-    )
+    assert trading.placed == [], "既不加仓也不止损"
 
 
 def test_stops_all_losing_layers_when_two_layers_lose():

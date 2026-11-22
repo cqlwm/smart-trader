@@ -202,6 +202,18 @@ def test_stop_loss_policy_fixed_stop_matches_incident_expectation():
     )
 
 
+def test_stop_loss_policy_zero_rate_stops_at_entry():
+    """费率 0: 止损价等于仓位均价, 收盘触及均价即离场"""
+    policy = StopLossPolicy()
+    position = _holding(enable_stop_loss=True, stop_loss_rate=0.0)
+
+    assert policy.evaluate(position, ExitContext(close=0.5)).should_exit is True, (
+        "费率 0 时止损价 = 均价, 收盘持平即触发（含等号）"
+    )
+    assert policy.evaluate(position, ExitContext(close=0.4999)).should_exit is True
+    assert policy.evaluate(position, ExitContext(close=0.5001)).should_exit is False
+
+
 def test_stop_loss_policy_without_cost_basis_does_not_trigger():
     """无成本基准（无成交且无开仓参考价）时无法判定止损（空值）"""
     policy = StopLossPolicy()
@@ -438,6 +450,45 @@ def test_layered_reduce_with_single_layer_threshold_stops_one_losing_layer():
     assert decision.force is True, "逆势减仓必须能覆盖休息中的挂单"
     assert policy.evaluate(profitable, ctx).should_exit is False, (
         "浮盈层不归止损分支"
+    )
+
+
+def test_layered_reduce_single_layer_threshold_short_side():
+    """单层信号止损: 空头一层浮亏也应离场（方向对称）"""
+    policy = LayeredReducePolicy(
+        SignalKind.DIRECTIONAL, OrderSide.BUY, min_losing_layers=1
+    )
+    lost = _holding("SHORT-LOST", position_side=PositionSide.SHORT, entry_price=0.5)
+    ctx = _exit_ctx([lost], close=0.5001, direction=SignalDirection.LONG)
+
+    decision = policy.evaluate(lost, ctx)
+    assert decision.should_exit is True, "空头一层浮亏应止损"
+    assert decision.force is True
+
+
+def test_layered_reduce_single_layer_threshold_ignores_breakeven():
+    """单层信号止损: 恰好持平不算浮亏, 不得离场"""
+    policy = LayeredReducePolicy(
+        SignalKind.DIRECTIONAL, OrderSide.SELL, min_losing_layers=1
+    )
+    flat = _holding("FLAT", entry_price=0.5)
+    ctx = _exit_ctx([flat], close=0.5, direction=SignalDirection.SHORT)
+
+    assert policy.evaluate(flat, ctx).should_exit is False, (
+        "持平层不计入浮亏层数"
+    )
+
+
+def test_layered_reduce_single_layer_threshold_ignores_zero_quantity():
+    """单层信号止损: 零数量层不参与浮亏统计"""
+    policy = LayeredReducePolicy(
+        SignalKind.DIRECTIONAL, OrderSide.SELL, min_losing_layers=1
+    )
+    empty = _holding("EMPTY", entry_price=0.6, quantity=0.0)
+    ctx = _exit_ctx([empty], close=0.55, direction=SignalDirection.SHORT)
+
+    assert policy.evaluate(empty, ctx).should_exit is False, (
+        "零数量层不得离场"
     )
 
 

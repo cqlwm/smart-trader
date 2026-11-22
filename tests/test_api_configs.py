@@ -247,6 +247,29 @@ def test_post_rejects_trend_mode_without_trend_spacing(client: TestClient):
     assert "trend_spacing_rate 必填" in response.text
 
 
+def test_post_rejects_negative_order_stop_loss_rate(client: TestClient):
+    """止损率不能为负: 负值会把止损放到错误方向"""
+    response = _create(
+        client,
+        enable_order_stop_loss=True,
+        order_stop_loss_rate=-0.01,
+    )
+
+    assert response.status_code == 422
+    assert "order_stop_loss_rate" in response.text
+
+
+def test_post_accepts_zero_order_stop_loss_rate_when_disabled(client: TestClient):
+    """停用止损时 UI 用 0 占位, 必须仍可保存"""
+    response = _create(
+        client,
+        enable_order_stop_loss=False,
+        order_stop_loss_rate=0,
+    )
+
+    assert response.status_code == 201
+
+
 def test_positions_hide_take_profit_line_when_fixed_take_profit_disabled(
     client: TestClient, journal: OrderJournal
 ):

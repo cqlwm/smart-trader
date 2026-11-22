@@ -98,7 +98,7 @@ class SignalGridStrategyConfig(BaseModel):
     paused_after_stop_loss: bool = True
     # 单笔订单止损
     enable_order_stop_loss: bool = False
-    order_stop_loss_rate: float = 0.05
+    order_stop_loss_rate: float = Field(default=0.05, ge=0)
     # 跟踪止损
     enable_trailing_stop: bool = False
     trailing_stop_rate: float = 0.02
