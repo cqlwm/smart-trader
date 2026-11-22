@@ -203,6 +203,13 @@ export function StrategyDetailPage() {
   const pausedUnknown = summary === undefined || summary.running === null;
   const canPause = summary?.alive === true;
   const lifecycleActive = record.lifecycle === "active" && record.enabled;
+  // 进程实际仍在决策时按运行中处理: 配置可能残留 enabled=false（历史数据），
+  // 此时不能显示"启用", 必须允许暂停 / 停用
+  const runningNow = summary?.alive === true && summary.running === true;
+  const disableInProgress =
+    record.lifecycle === "disabling" || record.lifecycle === "guard";
+  const showRunningActions =
+    lifecycleActive || (runningNow && !disableInProgress);
   const lifecycleLabel =
     record.lifecycle === "disabling"
       ? "停用中"
@@ -240,7 +247,7 @@ export function StrategyDetailPage() {
         meta={`v${record.version} · ${formatUtc(record.updated_at)} UTC`}
         actions={
           <div className="config-head-actions">
-            {lifecycleActive ? (
+            {showRunningActions ? (
               <>
                 <button
                   type="button"
