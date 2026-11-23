@@ -157,6 +157,7 @@ storage (queries.py / reader.py)           只读仓储: 只发 SELECT, 不建�
 | Step 39 | **策略生命周期与停用编排**：`strategy_configs` 增加 `desired_running` / `lifecycle` / `disable_policy` / 时间戳与错误字段；停用改为异步流程（立即暂停 + 后台处置），支持 `close_all`（等待清零）/ `limit_exit`（挂单后守护）/ `keep`（冻结守护）/ `abandon`（本地归档不再管理）；`guard`/`disabling` 配置重启后以暂停态加载并继续跟踪出场与对账；暂停/恢复持久化 `desired_running`；新增 enable/disable API，PUT 仅修改参数；迁移脚本 `009_add_strategy_lifecycle.py` | 已完成 |
 | Step 40 | **同账户 symbol+方向唯一策略 + 尘埃残量止损保护**：`StrategyRuntime` 启动装配（`_drop_conflicting_records`）与热新增（`_add_strategy`）按 `(symbol, position_side)` 去重，后到策略 ERROR 跳过；交易所净持仓不按 `strategy_key` 隔离，同方向并行会互相把成交对账成外部平仓。`PositionReconciler` 接收 `SymbolInfo` 与最新收盘价，部分外部扣减后残量低于 `min_qty` / `min_notional` 时整层归档，避免留下永远下不出去的止损；`check_close_position` 按仓位隔离下单异常并置 `acted`，强制出场默认走 `PlaceOrderBehavior.NORMAL`。回归：`tests/test_strategy_runtime.py` / `test_position_reconciler.py` / `test_stop_loss.py` | 已完成 |
 | Step 41 | **严格顺势加仓**：删除 `TrendSpacingGate` 的"只有一层时第二层无条件"与"最外层两层回踩带"；无论层数，只允许相对最外层**已成交**层在盈利方向走出 `trend_spacing_rate` 后加仓，基准不再包含零数量未成交层。避免逆势 / 回踩加仓，以及在 `alpha_trend_inverse` 下放大逆势敞口。回归：`tests/test_entry_gate.py` / `test_signal_grid_strategy.py` / `test_signal_grid_signal_path.py` | 已完成 |
+| Step 42 | **策略详情盈亏汇总**：详情页状态条下方新增四张盈亏卡片（已实现盈亏合计及活跃/归档拆分、平仓笔数、胜率、平均每笔盈亏），前端复用 `GET /api/positions?include_closed=true` 的账本派生数据聚合，不新增接口、不含浮动盈亏；`entry_discarded` 归档不计入平仓笔数与胜率 | 已完成 |
 
 ### 待办清单（Step 5）
 

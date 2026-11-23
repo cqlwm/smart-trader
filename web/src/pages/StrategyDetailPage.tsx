@@ -17,6 +17,7 @@ import {
 } from "../api/hooks";
 import type {
   DisablePositionPolicy,
+  PositionView,
   StrategyConfigPayload,
   StrategyConfigView,
 } from "../api/types";
@@ -36,8 +37,9 @@ import {
   LoadingBlock,
   PageHeader,
   Pill,
+  StatCard,
 } from "../components/ui";
-import { formatNumber, formatUtc } from "../utils/format";
+import { formatNumber, formatSigned, formatUtc } from "../utils/format";
 
 type Tab = "config" | "positions" | "archived" | "orders" | "market";
 
@@ -350,6 +352,8 @@ export function StrategyDetailPage() {
         </StatusItem>
       </section>
 
+      <PnlSummaryPanel strategyKey={strategyKey} />
+
       <section className="toolbar reveal" aria-label="策略详情导航">
         <div className="segmented">
           {TABS.map((item) => (
@@ -511,6 +515,141 @@ export function StrategyDetailPage() {
         <p className="modal-desc">{disableHint}</p>
       </ConfirmDialog>
     </>
+  );
+}
+
+interface PnlStats {
+  total: number;
+  activeRealized: number;
+  archivedRealized: number;
+  closedCount: number;
+  wins: number;
+  losses: number;
+  flats: number;
+  winRate: number | null;
+  averagePerClosed: number | null;
+}
+
+function pnlTone(value: number): "positive" | "negative" | "neutral" {
+  if (value > 0) {
+    return "positive";
+  }
+  if (value < 0) {
+    return "negative";
+  }
+  return "neutral";
+}
+
+function summarizePnl(positions: PositionView[]): PnlStats {
+  let total = 0;
+  let activeRealized = 0;
+  let archivedRealized = 0;
+  let closedRealized = 0;
+  let closedCount = 0;
+  let wins = 0;
+  let losses = 0;
+  let flats = 0;
+
+  for (const position of positions) {
+    total += position.realized_pnl;
+    if (position.active) {
+      activeRealized += position.realized_pnl;
+      continue;
+    }
+    archivedRealized += position.realized_pnl;
+    // 入场单丢弃没有真实成交, 不计入平仓笔数与胜率
+    if (position.closed_reason === "entry_discarded") {
+      continue;
+    }
+    closedRealized += position.realized_pnl;
+    closedCount += 1;
+    const pnl = Number(position.realized_pnl.toFixed(4));
+    if (pnl > 0) {
+      wins += 1;
+    } else if (pnl < 0) {
+      losses += 1;
+    } else {
+      flats += 1;
+    }
+  }
+
+  return {
+    total,
+    activeRealized,
+    archivedRealized,
+    closedCount,
+    wins,
+    losses,
+    flats,
+    winRate: closedCount > 0 ? wins / closedCount : null,
+    averagePerClosed: closedCount > 0 ? closedRealized / closedCount : null,
+  };
+}
+
+function PnlSummaryPanel({ strategyKey }: { strategyKey: string }) {
+  const positions = usePositions(strategyKey, true);
+
+  if (positions.isPending) {
+    return <LoadingBlock label="读取盈亏汇总" />;
+  }
+  if (positions.isError) {
+    return (
+      <ErrorPanel
+        message={messageOf(positions.error)}
+        onRetry={() => {
+          void positions.refetch();
+        }}
+      />
+    );
+  }
+
+  const stats = summarizePnl(positions.data ?? []);
+
+  return (
+    <section className="stat-grid reveal" aria-label="策略盈亏汇总">
+      <StatCard
+        label="已实现盈亏 / REALIZED"
+        value={formatSigned(stats.total)}
+        sub={`活跃 ${formatSigned(stats.activeRealized)} · 归档 ${formatSigned(stats.archivedRealized)}`}
+        tone={pnlTone(stats.total)}
+        delay={0}
+      />
+      <StatCard
+        label="平仓笔数 / CLOSED"
+        value={String(stats.closedCount)}
+        sub={`盈利 ${stats.wins} · 亏损 ${stats.losses} · 持平 ${stats.flats}`}
+        delay={60}
+      />
+      <StatCard
+        label="胜率 / WIN RATE"
+        value={
+          stats.winRate === null
+            ? "—"
+            : `${(stats.winRate * 100).toFixed(1)}%`
+        }
+        sub={
+          stats.closedCount > 0
+            ? `盈利 ${stats.wins} / 平仓 ${stats.closedCount} · 不含丢弃入场`
+            : "暂无已平仓记录"
+        }
+        delay={120}
+      />
+      <StatCard
+        label="平均每笔 / AVG PNL"
+        value={
+          stats.averagePerClosed === null
+            ? "—"
+            : formatSigned(stats.averagePerClosed)
+        }
+        sub="已平仓已实现盈亏 ÷ 平仓笔数"
+        tone={
+          stats.averagePerClosed === null
+            ? "neutral"
+            : pnlTone(stats.averagePerClosed)
+        }
+        delay={180}
+      />
+    </section>
   );
 }
 
